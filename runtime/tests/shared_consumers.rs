@@ -650,6 +650,38 @@ fn setup_transaction_at(root: &Path) -> String {
         .to_owned()
 }
 
+fn git_arg_path(path: &Path) -> String {
+    let text = path.to_str().unwrap();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else {
+        text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+    }
+}
+
+#[test]
+fn git_arg_path_strips_windows_verbatim_prefix() {
+    assert_eq!(
+        git_arg_path(Path::new(r"\\?\C:\tmp\hooks")),
+        r"C:\tmp\hooks"
+    );
+    assert_eq!(
+        git_arg_path(Path::new(r"\\?\UNC\server\share\hooks")),
+        r"\\server\share\hooks"
+    );
+    assert_eq!(git_arg_path(Path::new("/tmp/hooks")), "/tmp/hooks");
+}
+
+fn assert_same_path(actual: &Path, expected: &Path, context: &str) {
+    assert_eq!(
+        actual.canonicalize().unwrap(),
+        expected.canonicalize().unwrap(),
+        "{context}: actual={} expected={}",
+        actual.display(),
+        expected.display()
+    );
+}
+
 /// A, the original setup guard owner, retires into shared custody and is pruned;
 /// B, the surviving borrower, then moves `core.hooksPath`.
 struct MovedCustody {
@@ -1387,23 +1419,19 @@ fn main_hook_path_drift_keeps_sibling_shared_hooks() {
             "config",
             "--worktree",
             "core.hooksPath",
-            empty.to_str().unwrap(),
+            &git_arg_path(&empty),
         ],
     );
-    assert_eq!(
-        PathBuf::from(git(
-            &f.root,
-            &["rev-parse", "--path-format=absolute", "--git-path", "hooks"]
-        )),
-        empty
+    let main_hooks = git(
+        &f.root,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
     );
-    assert_eq!(
-        PathBuf::from(git(
-            &f.sibling,
-            &["rev-parse", "--path-format=absolute", "--git-path", "hooks"]
-        )),
-        f.hooks
+    assert_same_path(Path::new(&main_hooks), &empty, "main hooks");
+    let sibling_hooks = git(
+        &f.sibling,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
     );
+    assert_same_path(Path::new(&sibling_hooks), &f.hooks, "sibling hooks");
     let report = cli(&f.root, &["setup", "--rollback", &main_id]);
     let retained = report["evidence"]["retained"]
         .as_array()
@@ -1445,51 +1473,58 @@ fn dynamic_hook_path_change_keeps_shared_hooks_until_the_last_demand() {
     for case in ["missing_include", "empty_include", "onbranch"] {
         let f = Fixture::new();
         git(&f.root, &["config", "extensions.worktreeConfig", "true"]);
-        let linked_git = PathBuf::from(git(&f.sibling, &["rev-parse", "--absolute-git-dir"]));
         let extra = f.root.parent().unwrap().join("dynamic-hooks.config");
         let other = f.root.parent().unwrap().join("other-hooks");
         fs::create_dir(&other).unwrap();
-        let include = match case {
+        match case {
             "missing_include" | "empty_include" => {
-                format!("[include]\n\tpath = {}\n", extra.display())
+                git(
+                    &f.sibling,
+                    &[
+                        "config",
+                        "--worktree",
+                        "include.path",
+                        &git_arg_path(&extra),
+                    ],
+                );
             }
-            "onbranch" => format!(
-                "[includeIf \"onbranch:other\"]\n\tpath = {}\n",
-                extra.display()
-            ),
+            "onbranch" => {
+                git(
+                    &f.sibling,
+                    &[
+                        "config",
+                        "--worktree",
+                        "includeIf.onbranch:other.path",
+                        &git_arg_path(&extra),
+                    ],
+                );
+            }
             _ => unreachable!(),
-        };
-        fs::write(linked_git.join("config.worktree"), include).unwrap();
+        }
         if case == "empty_include" {
             fs::write(&extra, b"").unwrap();
         }
         let id = setup_transaction_at(&f.root);
         setup_transaction_at(&f.sibling);
         f.assert_guard(true);
-        match case {
-            "missing_include" | "empty_include" => fs::write(
-                &extra,
-                format!("[core]\n\thooksPath = {}\n", other.display()),
-            )
-            .unwrap(),
-            "onbranch" => {
-                fs::write(
-                    &extra,
-                    format!("[core]\n\thooksPath = {}\n", other.display()),
-                )
-                .unwrap();
-                git(&f.sibling, &["switch", "-q", "-c", "other"]);
-            }
-            _ => unreachable!(),
-        }
-        assert_eq!(
-            PathBuf::from(git(
-                &f.sibling,
-                &["rev-parse", "--path-format=absolute", "--git-path", "hooks"]
-            )),
-            other,
-            "{case}"
+        git(
+            &f.root,
+            &[
+                "config",
+                "--file",
+                &git_arg_path(&extra),
+                "core.hooksPath",
+                &git_arg_path(&other),
+            ],
         );
+        if case == "onbranch" {
+            git(&f.sibling, &["switch", "-q", "-c", "other"]);
+        }
+        let actual = git(
+            &f.sibling,
+            &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+        );
+        assert_same_path(Path::new(&actual), &other, case);
         let report = cli(&f.root, &["setup", "--rollback", &id]);
         assert!(
             !report["evidence"]["retained"]
@@ -1506,7 +1541,7 @@ fn dynamic_hook_path_change_keeps_shared_hooks_until_the_last_demand() {
                 "config",
                 "--worktree",
                 "core.hooksPath",
-                f.hooks.to_str().unwrap(),
+                &git_arg_path(&f.hooks),
             ],
         );
         cli(&f.sibling, &["setup", "--uninstall"]);
