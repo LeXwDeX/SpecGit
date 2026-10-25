@@ -626,14 +626,16 @@ guidance: the merged request accepts no new work, and additional work starts
 from a new branch or worktree with a new Issue selection. Merged requests with
 open Issues keep the unresolved inspection text and issue IDs; the same
 local-divergence guidance is recorded in the event reason, so the action message
-stays within its 1024-byte storage limit. Unknown closure keeps its verification
-step and records in the reason that current request and issue facts must be
-verified first; that guidance covers only additional local work. Closed-unmerged
-requests keep the explicit reopen or follow-up choice and state that a push
-cannot reopen them. These notes never claim a checkpoint was saved. Open
-requests keep the existing local-ahead and dirty pending behavior. Watch, inbox
-and Hook actions are advisory and never ready, merge or close anything
-automatically.
+stays within its 1024-byte storage limit. The message previews whole Issue IDs in
+order and counts omitted display entries when the complete list exceeds that
+limit; the typed `issue_ids` still carries the complete deduplicated set. Unknown
+closure keeps its verification step and records in the reason that current
+request and issue facts must be verified first; that guidance covers only
+additional local work. Closed-unmerged requests keep the explicit reopen or
+follow-up choice and state that a push cannot reopen them. These notes never
+claim a checkpoint was saved. Open requests keep the existing local-ahead and
+dirty pending behavior. Watch, inbox and Hook actions are advisory and never
+ready, merge or close anything automatically.
 
 Project setup-managed host hooks use only SessionStart and PreToolUse. Context
 purpose registers both. Guard purpose installs native Git pre-commit/pre-push

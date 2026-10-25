@@ -1440,6 +1440,147 @@ fn merged_open_issue_action_stays_bounded_when_local_commits_diverge() {
     assert_eq!(inbox["next_actions"][0], *next_step, "{inbox}");
 }
 
+/// Checks the bounded human preview and the complete typed Issue set together.
+fn assert_bounded_open_issue_action(event: &Value, ids: &[u64], closure_preference: bool) {
+    let next = &event["next_step"];
+    assert_eq!(next["kind"], "inspect_open_issues", "{event}");
+    assert_eq!(next["issue_ids"], json!(ids), "{event}");
+    assert_eq!(next["close_issues_after_merge"], json!(closure_preference));
+    assert_eq!(event["next_action"], next["message"], "{event}");
+    let message = next["message"].as_str().unwrap();
+    assert!(message.len() <= 1024, "{}", message.len());
+    assert!(std::str::from_utf8(message.as_bytes()).is_ok());
+    assert!(
+        message.ends_with(if closure_preference {
+            "The Agent closure preference is on, but it does not grant authorization and this observer will not close issues."
+        } else {
+            "The Agent closure preference is off and this observer will not close issues."
+        }),
+        "{message}"
+    );
+    let list = message
+        .strip_prefix("The request is merged, but these associated issues remain open: ")
+        .unwrap()
+        .split_once(". Read the current native status and issue facts. ")
+        .unwrap()
+        .0;
+    let (shown, omitted) = list
+        .split_once(" and ")
+        .expect("a bounded preview states every omitted display entry");
+    let omitted: usize = omitted
+        .strip_suffix(" more")
+        .expect("the preview counts omitted entries")
+        .parse()
+        .unwrap();
+    let shown: Vec<u64> = shown
+        .split(", ")
+        .map(|entry| entry.strip_prefix('#').unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(shown, ids[..shown.len()], "{message}");
+    assert_eq!(shown.len() + omitted, ids.len(), "{message}");
+    assert!(omitted > 0, "{message}");
+}
+
+#[test]
+fn merged_open_issue_action_bounds_long_issue_preview_without_losing_typed_ids() {
+    let f = fixture("github");
+    let ids: Vec<u64> = (0..100).map(|i| 2_147_483_500 + i).collect();
+    let selection = f.root.join(".git/specgit-v2/selection.json");
+    let mut selected: Value = serde_json::from_slice(&std::fs::read(&selection).unwrap()).unwrap();
+    selected["issues"] = json!([]);
+    selected["adopted"] = json!([]);
+    std::fs::write(&selection, selected.to_string()).unwrap();
+    f.edit(|state| {
+        state["native_closing"] = json!(&ids);
+        state["issues"] = json!(
+            ids.iter()
+                .map(|id| json!({
+                    "id": id,
+                    "number": id,
+                    "title": format!("Issue {id}"),
+                    "body": "",
+                    "labels": [],
+                    "state": "open",
+                    "updated_at": "2026-09-09T00:00:00Z",
+                }))
+                .collect::<Vec<_>>()
+        );
+        state["requests"][0]["body"] = json!("Scoped native observation.");
+        state["requests"][0]["description"] = json!("Scoped native observation.");
+        state["requests"][0]["state"] = json!("closed");
+        state["requests"][0]["merged"] = json!(true);
+    });
+
+    let observed = f.run(&watch("lifecycle"));
+    assert_eq!(observed["status"], "merged_issues_open", "{observed}");
+    let first = &observed["evidence"]["events"][0];
+    assert_bounded_open_issue_action(first, &ids, false);
+    assert_eq!(
+        observed["next_actions"][0], first["next_step"],
+        "{observed}"
+    );
+    let identity: Identity =
+        serde_json::from_value(observed["evidence"]["subscription"].clone()).unwrap();
+    let first_id = first["id"].as_str().unwrap().to_owned();
+
+    let status = f.run(&["pr", "--status", "--request", "41"]);
+    assert_eq!(status["status"], "merged_issues_open", "{status}");
+    assert_eq!(
+        status["evidence"]["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue["id"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        ids,
+        "{status}"
+    );
+    assert!(
+        status["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| {
+                action["kind"] == "inspect_open_issues" && action["agent_close_preference"] == false
+            })
+    );
+
+    let offered = f.run(&inbox_for("lifecycle"));
+    assert_eq!(offered["evidence"]["events"][0]["id"], json!(first_id));
+    assert_eq!(offered["next_actions"][0], first["next_step"], "{offered}");
+
+    // A changed native head replaces the receipt without dropping the retained event.
+    f.edit(|state| state["requests"][0]["head"]["sha"] = json!("9".repeat(40)));
+    let superseded = f.run(&inbox_for("lifecycle"));
+    assert_eq!(superseded["status"], "merged_issues_open", "{superseded}");
+    let second = &superseded["evidence"]["events"][0];
+    assert_ne!(second["id"], json!(first_id));
+    assert_bounded_open_issue_action(second, &ids, false);
+    let second_id = second["id"].as_str().unwrap().to_owned();
+    let state = watch_store::read(&identity).unwrap().unwrap();
+    assert!(
+        state
+            .events
+            .iter()
+            .any(|event| event.id == first_id && event.superseded)
+    );
+    assert!(state.events.iter().any(|event| {
+        event.id == second_id && !event.superseded && event.acknowledged_at.is_none()
+    }));
+
+    let mut args = inbox_for("lifecycle").to_vec();
+    args.extend(["--ack", second_id.as_str()]);
+    let acknowledged = f.run(&args);
+    assert_eq!(acknowledged["status"], "acknowledged");
+    assert_eq!(acknowledged["evidence"]["human_read"], false);
+    assert!(
+        f.run(&inbox_for("lifecycle"))["evidence"]["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[test]
 fn enabled_agent_closure_preference_does_not_authorize_or_execute_issue_closure() {
     for provider in ["github", "gitlab"] {
