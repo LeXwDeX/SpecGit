@@ -2,7 +2,7 @@
 use crate::{
     delivery_model::AutoMerge,
     observation::{CheckOutcome, Observation as NativeObservation, Status},
-    watch_store::{ActionKind, EventState, Goal, NextAction},
+    watch_store::{ActionKind, EventState, Goal, NEXT_ACTION_MAX_BYTES, NextAction},
 };
 
 pub(super) fn next_step(
@@ -65,10 +65,7 @@ pub(super) fn next_step(
             };
             (
                 ActionKind::InspectOpenIssues,
-                format!(
-                    "The request is merged, but these associated issues remain open: {}. Read the current native status and issue facts. {closure_preference}",
-                    open_issue_ids.iter().map(|id| format!("#{id}")).collect::<Vec<_>>().join(", ")
-                ),
+                merged_issues_open_message(&open_issue_ids, closure_preference),
                 Some(format!("specgit pr --status --request {request_id} --json")),
                 false,
                 open_issue_ids,
@@ -152,6 +149,47 @@ pub(super) fn next_step(
         command,
         requires_user_authorization,
     }
+}
+
+/// Keep the human preview within the persisted action bound. Only whole Issue
+/// IDs enter the list; the omitted display entries are counted, not truncated.
+fn merged_issues_open_message(ids: &[u64], closure_preference: &str) -> String {
+    const PREFIX: &str = "The request is merged, but these associated issues remain open: ";
+    let suffix = format!(". Read the current native status and issue facts. {closure_preference}");
+    let list = |ids: &[u64]| {
+        ids.iter()
+            .map(|id| format!("#{id}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let complete = format!("{PREFIX}{}{suffix}", list(ids));
+    if complete.len() <= NEXT_ACTION_MAX_BYTES {
+        return complete;
+    }
+    let mut shown = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        let omitted = ids.len() - index - 1;
+        let omission = if omitted == 0 {
+            String::new()
+        } else {
+            format!(" and {omitted} more")
+        };
+        let candidate = format!("{PREFIX}{}{omission}{suffix}", list(&ids[..=index]));
+        if candidate.len() > NEXT_ACTION_MAX_BYTES {
+            break;
+        }
+        shown.push(*id);
+    }
+    let omitted = ids.len() - shown.len();
+    if shown.is_empty() {
+        return format!(
+            "{PREFIX}{omitted} open Issues were omitted from this bounded preview{suffix}"
+        );
+    }
+    if omitted == 0 {
+        return complete;
+    }
+    format!("{PREFIX}{} and {omitted} more{suffix}", list(&shown))
 }
 
 type SuggestedAction = (ActionKind, String, Option<String>, bool, Vec<u64>);
@@ -270,4 +308,110 @@ fn checks_action(
         ),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merged_issues_open_message;
+    use crate::watch_store::NEXT_ACTION_MAX_BYTES;
+
+    const OFF: &str =
+        "The Agent closure preference is off and this observer will not close issues.";
+    const ON: &str = "The Agent closure preference is on, but it does not grant authorization and this observer will not close issues.";
+
+    fn legacy(ids: &[u64], closure_preference: &str) -> String {
+        format!(
+            "The request is merged, but these associated issues remain open: {}. Read the current native status and issue facts. {closure_preference}",
+            ids.iter()
+                .map(|id| format!("#{id}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    fn preview(ids: &[u64], closure_preference: &str) -> (Vec<u64>, usize) {
+        let message = merged_issues_open_message(ids, closure_preference);
+        assert!(message.len() <= NEXT_ACTION_MAX_BYTES, "{}", message.len());
+        assert!(std::str::from_utf8(message.as_bytes()).is_ok());
+        let list = message
+            .strip_prefix("The request is merged, but these associated issues remain open: ")
+            .unwrap()
+            .split_once(". Read the current native status and issue facts.")
+            .unwrap()
+            .0;
+        let (shown, omitted) = match list.split_once(" and ") {
+            Some((shown, omitted)) => (
+                shown,
+                omitted
+                    .strip_suffix(" more")
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap(),
+            ),
+            None => (list, 0),
+        };
+        let shown = if shown.is_empty() {
+            Vec::new()
+        } else {
+            shown
+                .split(", ")
+                .map(|entry| entry.strip_prefix('#').unwrap().parse().unwrap())
+                .collect()
+        };
+        (shown, omitted)
+    }
+
+    #[test]
+    fn small_sets_keep_the_existing_message() {
+        for preference in [OFF, ON] {
+            for ids in [vec![1, 2, 3], vec![u64::MAX]] {
+                assert_eq!(
+                    merged_issues_open_message(&ids, preference),
+                    legacy(&ids, preference)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn preview_omits_the_next_whole_id_near_the_byte_limit() {
+        for preference in [OFF, ON] {
+            let mut ids = vec![1];
+            let mut next = u64::MAX;
+            loop {
+                let mut candidate = ids.clone();
+                candidate.push(next);
+                if legacy(&candidate, preference).len() > NEXT_ACTION_MAX_BYTES {
+                    let near = merged_issues_open_message(&ids, preference);
+                    assert_eq!(near, legacy(&ids, preference));
+                    assert!(near.len() > NEXT_ACTION_MAX_BYTES - 64, "{}", near.len());
+                    let bounded = merged_issues_open_message(&candidate, preference);
+                    assert!(bounded.len() <= NEXT_ACTION_MAX_BYTES);
+                    assert_ne!(bounded, legacy(&candidate, preference));
+                    assert!(!bounded.contains(&format!("#{next}")));
+                    let (shown, omitted) = preview(&candidate, preference);
+                    assert_eq!(shown, candidate[..shown.len()]);
+                    assert_eq!(shown.len() + omitted, candidate.len());
+                    assert!(omitted > 0);
+                    break;
+                }
+                ids = candidate;
+                next -= 1;
+            }
+        }
+    }
+
+    #[test]
+    fn preview_keeps_long_ids_whole_when_the_set_exceeds_the_bound() {
+        for preference in [OFF, ON] {
+            let ids: Vec<u64> = (0..100).map(|i| u64::MAX - i).collect();
+            let bounded = merged_issues_open_message(&ids, preference);
+            assert!(bounded.len() <= NEXT_ACTION_MAX_BYTES);
+            let (shown, omitted) = preview(&ids, preference);
+            assert_eq!(shown, ids[..shown.len()]);
+            assert!(omitted > 0);
+            assert_eq!(shown.len() + omitted, ids.len());
+            assert!(bounded.contains(&format!(" and {omitted} more")));
+        }
+    }
 }
