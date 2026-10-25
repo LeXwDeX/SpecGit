@@ -63,17 +63,20 @@ specgit update --json
 ```
 
 `--check` only reads release metadata. `--dry-run` downloads and verifies the
-release without replacement. The default replaces only the running executable,
-keeps `specgit.backup-<previous-version>` beside it and reports that path; move
-the backup back to roll back. Use `--version <x.y.z>` for an exact release,
-including a deliberate downgrade. See [self-update](../runtime/REFERENCE.md#self-update).
+release without replacement. The default replaces only the running executable
+and reports the actual backup path (`specgit.backup-<previous-version>` beside
+it, or inside a unique `.specgit-backup-*` directory on Windows). Update never
+restores automatically: a readback failure preserves the target and backup and
+lists both paths and SHA-256 values for manual verification; an installation
+failure preserves any owned backup and reports the paths and hashes it has.
+Use `--version <x.y.z>` for an exact release, including a deliberate downgrade.
+See [self-update](../runtime/REFERENCE.md#self-update).
 For installed users, `specgit update` is the upgrade entry point; the agent guide
 covers legacy executable cases and permissions that block an update.
 
 After CLI upgrades, verify the executable and its selected PATH first:
 `command -v specgit` on Unix or `Get-Command specgit` in PowerShell. An older npm
-shim can otherwise continue selecting the retired CLI. The agent preserves the previous executable before any explicit replacement and
-can restore that backup to roll back the local upgrade.
+shim can otherwise continue selecting the retired CLI. The agent preserves the previous executable before any explicit replacement. A failed update does not restore it automatically; verify the reported paths and hashes before restoring manually.
 
 After installing or upgrading the shared CLI, use the [agent installation guide](agent-install.md#4-choose-project-integration-by-capability)
 to discover host constraints and choose project integration. The catalog is

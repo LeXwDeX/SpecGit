@@ -150,15 +150,27 @@ pub async fn run() {
         )
     });
     if cancel.is_cancelled() {
-        report = Report::failure(
+        let diagnostic = Diagnostic::new(
+            Code::Cancelled,
             "runtime",
-            Diagnostic::new(
-                Code::Cancelled,
-                "runtime",
-                "The operation was interrupted.",
-                "Resume explicitly when ready.",
-            ),
+            "The operation was interrupted.",
+            "Resume explicitly when ready.",
         );
+        // Update may already have replaced the executable and recorded effects.
+        // Keep that evidence and report cancellation instead of replacing it.
+        if report.operation == "update" {
+            report.exit = 130;
+            report.status = "unknown".into();
+            if !report
+                .diagnostics
+                .iter()
+                .any(|existing| existing.code == Code::Cancelled)
+            {
+                report.diagnostics.push(diagnostic);
+            }
+        } else {
+            report = Report::failure("runtime", diagnostic);
+        }
     }
     let exit = report.exit;
     emit(report, json);

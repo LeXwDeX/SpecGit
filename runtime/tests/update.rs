@@ -59,8 +59,63 @@ fn zip_bytes(entry: &str, bytes: &[u8]) -> Vec<u8> {
     writer.finish().unwrap().into_inner()
 }
 
+struct Running(Option<std::process::Child>);
+impl Running {
+    #[cfg(unix)]
+    fn id(&self) -> u32 {
+        self.0.as_ref().unwrap().id()
+    }
+    fn finish(mut self) -> std::process::Output {
+        self.0.take().unwrap().wait_with_output().unwrap()
+    }
+    #[cfg(unix)]
+    fn finish_within(mut self, duration: std::time::Duration) -> Option<std::process::Output> {
+        let child = self.0.as_mut()?;
+        let deadline = std::time::Instant::now() + duration;
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Some(self.finish())
+    }
+    fn kill(mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+impl Drop for Running {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn wait_for(path: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !path.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {}",
+            path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
+    base: PathBuf,
     root: PathBuf,
     bin: PathBuf,
     target: PathBuf,
@@ -87,6 +142,7 @@ impl Fixture {
         fs::create_dir(&home).unwrap();
         let fixture = Self {
             _temp: temp,
+            base: base.clone(),
             root,
             bin,
             target,
@@ -100,11 +156,16 @@ impl Fixture {
     }
 
     // Linux debug fixtures embed debug info beyond the release size bound, so Unix
-    // archives carry a small launcher for the `specgit` role copy instead.
-    fn release_executable(&self) -> Vec<u8> {
+    // archives carry a small launcher for the `specgit` role copy instead. The
+    // launcher pins its release version so concurrent releases stay distinct.
+    fn release_executable(&self, version: &str) -> Vec<u8> {
         let fixture = self.bin.join(executable_file("specgit"));
         if cfg!(unix) {
-            format!("#!/bin/sh\nexec '{}' \"$@\"\n", fixture.display()).into_bytes()
+            format!(
+                "#!/bin/sh\n: \"${{SPECGIT_FIXTURE_BINARY_VERSION:={version}}}\"\nexport SPECGIT_FIXTURE_BINARY_VERSION\nexec '{}' \"$@\"\n",
+                fixture.display()
+            )
+            .into_bytes()
         } else {
             fs::read(fixture).unwrap()
         }
@@ -123,7 +184,7 @@ impl Fixture {
         let archive_name = format!("specgit-{version}-{}.zip", self.platform);
         let archive = zip_bytes(
             self_update::executable_name(self.platform),
-            &self.release_executable(),
+            &self.release_executable(version),
         );
         let digest = if tamper == Tamper::WrongHash {
             "0".repeat(64)
@@ -194,12 +255,21 @@ impl Fixture {
     }
 
     fn run_with(&self, program: &Path, args: &[&str]) -> Value {
+        self.run_with_env(program, args, &[])
+    }
+
+    fn run_with_env(&self, program: &Path, args: &[&str], envs: &[(&str, &str)]) -> Value {
         let output = self
             .command(program)
             .args(args)
             .arg("--json")
+            .envs(envs.iter().copied())
             .output()
             .unwrap();
+        self.report(output)
+    }
+
+    fn report(&self, output: std::process::Output) -> Value {
         let report: Value = serde_json::from_slice(&output.stdout)
             .unwrap_or_else(|_| panic!("stdout={:?} stderr={:?}", output.stdout, output.stderr));
         assert_eq!(report["exit"].as_i64(), output.status.code().map(i64::from));
@@ -219,6 +289,32 @@ impl Fixture {
             );
         }
         report
+    }
+
+    fn spawn(&self, args: &[&str], envs: &[(&str, &str)]) -> Running {
+        let child = self
+            .command(Path::new(env!("CARGO_BIN_EXE_specgit")))
+            .args(args)
+            .arg("--json")
+            .envs(envs.iter().copied())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        Running(Some(child))
+    }
+
+    fn finish(&self, running: Running) -> Value {
+        self.report(running.finish())
+    }
+
+    fn gate(&self, name: &str) -> (PathBuf, PathBuf) {
+        let directory = self.base.join("gates");
+        fs::create_dir_all(&directory).unwrap();
+        (
+            directory.join(format!("{name}.parked")),
+            directory.join(format!("{name}.release")),
+        )
     }
 
     fn calls(&self) -> Vec<Value> {
@@ -340,7 +436,7 @@ fn dry_run_verifies_everything_without_replacing() {
     assert_eq!(verification["extracted_version"], NEXT);
     assert_eq!(
         verification["executable_sha256"],
-        hex(&fixture.release_executable())
+        hex(&fixture.release_executable(NEXT))
     );
     assert_eq!(
         fixture.roles(),
@@ -360,11 +456,20 @@ fn apply_replaces_the_target_and_keeps_a_restorable_backup() {
     assert_eq!(installation["previous_version"], CURRENT);
     assert_eq!(installation["installed_version"], NEXT);
     let backup = PathBuf::from(installation["backup"].as_str().unwrap());
-    assert_eq!(backup.parent(), fixture.target.parent());
+    assert!(backup.starts_with(fixture.target.parent().unwrap()));
     assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+    assert!(
+        fixture
+            .target
+            .parent()
+            .unwrap()
+            .join(".specgit-update.lock")
+            .is_file(),
+        "the persistent update lock remains beside the executable"
+    );
     assert_eq!(
         fs::read(&fixture.target).unwrap(),
-        fixture.release_executable()
+        fixture.release_executable(NEXT)
     );
     assert_eq!(report["effects"]["outcome"], "applied");
     assert_eq!(
@@ -391,8 +496,8 @@ fn apply_replaces_the_target_and_keeps_a_restorable_backup() {
         fs::read_dir(fixture.target.parent().unwrap())
             .unwrap()
             .count(),
-        2,
-        "target and backup only"
+        3,
+        "target, backup and persistent lock only"
     );
 }
 
@@ -495,7 +600,7 @@ fn refresh_failure_never_rolls_back_a_successful_binary_install() {
         );
         assert_eq!(
             fs::read(&fixture.target).unwrap(),
-            fixture.release_executable()
+            fixture.release_executable(NEXT)
         );
         assert_eq!(fs::read_to_string(&skill).unwrap(), bytes);
         assert_eq!(report["effects"]["operations"][0]["outcome"], "applied");
@@ -714,10 +819,19 @@ fn missing_platform_asset_fails_closed_before_download() {
 fn wrong_extracted_version_fails_closed() {
     let fixture = Fixture::new();
     fixture.publish(NEXT, Tamper::None);
-    let mut state = fixture.state();
-    state["binary_version"] = json!("8.8.8");
-    fixture.write_state(&state);
-    let report = fixture.run(&["update"]);
+    #[cfg(unix)]
+    let report = fixture.run_with_env(
+        Path::new(env!("CARGO_BIN_EXE_specgit")),
+        &["update"],
+        &[("SPECGIT_FIXTURE_BINARY_VERSION", "8.8.8")],
+    );
+    #[cfg(windows)]
+    let report = {
+        let mut state = fixture.state();
+        state["binary_version"] = json!("8.8.8");
+        fixture.write_state(&state);
+        fixture.run(&["update"])
+    };
     fixture.assert_rejected(&report, 1, "evidence_rejected", "update_smoke");
 }
 
@@ -751,4 +865,652 @@ fn unwritable_install_directory_fails_before_download() {
         fs::remove_file(directory.join("probe")).unwrap();
     }
     fixture.assert_unchanged();
+}
+
+fn backup_name(target: &Path, previous: &str, suffix: usize) -> PathBuf {
+    let name = target.file_name().unwrap().to_string_lossy();
+    let (stem, extension) = name
+        .rsplit_once('.')
+        .filter(|(stem, extension)| extension.eq_ignore_ascii_case("exe") && !stem.is_empty())
+        .map(|(stem, extension)| (stem.to_owned(), format!(".{extension}")))
+        .unwrap_or_else(|| (name.into_owned(), String::new()));
+    let suffix = if suffix == 0 {
+        String::new()
+    } else {
+        format!("-{suffix}")
+    };
+    target
+        .parent()
+        .unwrap()
+        .join(format!("{stem}.backup-{previous}{suffix}{extension}"))
+}
+
+#[test]
+fn backup_create_race_preserves_the_winner() {
+    let fixture = Fixture::new();
+    fixture.publish(NEXT, Tamper::None);
+    let (parked, release) = fixture.gate("backup-race");
+    let winner = backup_name(&fixture.target, CURRENT, 0);
+    let running = fixture.spawn(
+        &["update"],
+        &[
+            ("SPECGIT_TEST_UPDATE_STRATEGY", "atomic_replace"),
+            ("SPECGIT_TEST_UPDATE_PAUSE", "backup-selected"),
+            ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+            (
+                "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                release.to_str().unwrap(),
+            ),
+        ],
+    );
+    wait_for(&parked);
+    fs::write(&winner, b"winner").unwrap();
+    fs::write(&release, b"").unwrap();
+    let report = fixture.finish(running);
+    assert_eq!(report["exit"], 3, "{report}");
+    assert_eq!(report["diagnostics"][0]["code"], "concurrent_edit");
+    assert_eq!(report["diagnostics"][0]["operation"], "update_install");
+    assert_eq!(fs::read(&winner).unwrap(), b"winner");
+    assert_eq!(fs::read(&fixture.target).unwrap(), OLD_BINARY);
+    assert!(report["evidence"]["installation"].is_null());
+    assert_eq!(report["effects"]["outcome"], "not_applied", "{report}");
+    assert!(
+        report["effects"]["operations"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{report}"
+    );
+    assert!(
+        fixture
+            .target
+            .parent()
+            .unwrap()
+            .join(".specgit-update.lock")
+            .is_file()
+    );
+    assert!(
+        fs::read_dir(fixture.target.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".specgit-update-"))
+    );
+}
+
+#[test]
+fn rename_aside_publish_failure_never_overwrites_a_recreated_target() {
+    let fixture = Fixture::new();
+    fixture.publish(NEXT, Tamper::None);
+    let (parked, release) = fixture.gate("target-aside");
+    let running = fixture.spawn(
+        &["update"],
+        &[
+            ("SPECGIT_TEST_UPDATE_STRATEGY", "rename_aside"),
+            ("SPECGIT_TEST_UPDATE_PAUSE", "target-aside"),
+            ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+            (
+                "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                release.to_str().unwrap(),
+            ),
+        ],
+    );
+    wait_for(&parked);
+    fs::write(&fixture.target, b"INTRUDER").unwrap();
+    fs::write(&release, b"").unwrap();
+    let report = fixture.finish(running);
+    assert_eq!(report["exit"], 3, "{report}");
+    assert_eq!(report["diagnostics"][0]["code"], "rollback_conflict");
+    assert_eq!(report["diagnostics"][0]["operation"], "update_install");
+    assert!(
+        report["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("No automatic restore"),
+        "{report}"
+    );
+    assert_eq!(fs::read(&fixture.target).unwrap(), b"INTRUDER");
+    assert_eq!(
+        report["effects"]["operations"][0]["recovery"]["backup_complete"],
+        true
+    );
+    let backup = PathBuf::from(
+        report["effects"]["operations"][0]["recovery"]["backup"]
+            .as_str()
+            .unwrap(),
+    );
+    assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+    assert!(
+        backup
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with(".specgit-backup-")
+    );
+    assert!(report["evidence"]["installation"].is_null());
+    assert!(
+        report["effects"]["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|operation| operation["action"] != "restore_executable")
+    );
+}
+
+#[test]
+fn failed_readback_preserves_target_and_backup_for_manual_recovery() {
+    for strategy in ["atomic_replace", "rename_aside"] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let report = fixture.run_with_env(
+            Path::new(env!("CARGO_BIN_EXE_specgit")),
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_READBACK_VERSION", "8.8.8"),
+            ],
+        );
+        assert_eq!(report["exit"], 3, "{strategy}: {report}");
+        assert_eq!(report["diagnostics"][0]["code"], "rollback_conflict");
+        assert_eq!(report["diagnostics"][0]["operation"], "update_readback");
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable(NEXT)
+        );
+        assert!(report["evidence"]["installation"].is_null());
+        assert_eq!(report["effects"]["outcome"], "applied");
+        let operations = report["effects"]["operations"].as_array().unwrap();
+        assert_eq!(operations.len(), 1, "{strategy}: {report}");
+        assert_eq!(operations[0]["action"], "replace_executable");
+        assert_eq!(operations[0]["outcome"], "applied");
+        let backup = PathBuf::from(operations[0]["recovery"]["backup"].as_str().unwrap());
+        assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+        let expected = hex(&fixture.release_executable(NEXT));
+        let previous = hex(OLD_BINARY);
+        assert_eq!(operations[0]["recovery"]["expected_sha256"], expected);
+        assert_eq!(operations[0]["recovery"]["previous_sha256"], previous);
+        assert_eq!(operations[0]["recovery"]["backup_complete"], true);
+        assert_eq!(operations[0]["recovery"]["target_sha256"], expected);
+        assert_eq!(operations[0]["recovery"]["backup_sha256"], previous);
+        let remedy = report["diagnostics"][0]["remedy"].as_str().unwrap();
+        assert!(remedy.contains(&fixture.target.display().to_string()));
+        assert!(remedy.contains(&backup.display().to_string()));
+        assert!(remedy.contains(&expected));
+        assert!(remedy.contains(&previous));
+        assert!(
+            fixture
+                .target
+                .parent()
+                .unwrap()
+                .join(".specgit-update.lock")
+                .is_file()
+        );
+    }
+}
+
+#[test]
+fn cancelled_readback_preserves_target_and_backup() {
+    for strategy in ["atomic_replace", "rename_aside"] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let report = fixture.run_with_env(
+            Path::new(env!("CARGO_BIN_EXE_specgit")),
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_READBACK_CANCELLED", "1"),
+            ],
+        );
+        assert_eq!(report["exit"], 130, "{strategy}: {report}");
+        assert_eq!(report["diagnostics"][0]["code"], "cancelled");
+        assert_eq!(report["diagnostics"][0]["operation"], "update_readback");
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable(NEXT)
+        );
+        assert!(report["evidence"]["installation"].is_null());
+        let operations = report["effects"]["operations"].as_array().unwrap();
+        assert_eq!(operations.len(), 1, "{strategy}: {report}");
+        assert_eq!(operations[0]["action"], "replace_executable");
+        assert_eq!(operations[0]["outcome"], "applied");
+        let backup = PathBuf::from(operations[0]["recovery"]["backup"].as_str().unwrap());
+        assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+        assert_eq!(
+            operations[0]["recovery"]["target_sha256"],
+            hex(&fixture.release_executable(NEXT))
+        );
+        assert_eq!(operations[0]["recovery"]["backup_sha256"], hex(OLD_BINARY));
+        let remedy = report["diagnostics"][0]["remedy"].as_str().unwrap();
+        assert!(remedy.contains(&fixture.target.display().to_string()));
+        assert!(remedy.contains(&backup.display().to_string()));
+    }
+}
+
+#[test]
+fn failed_readback_preserves_a_newer_target_and_the_backup() {
+    for strategy in ["atomic_replace", "rename_aside"] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let (parked, release) = fixture.gate(strategy);
+        let running = fixture.spawn(
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_READBACK_VERSION", "8.8.8"),
+                ("SPECGIT_TEST_UPDATE_PAUSE", "readback-failed"),
+                ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&parked);
+        fs::write(&fixture.target, b"NEWER").unwrap();
+        fs::write(&release, b"").unwrap();
+        let report = fixture.finish(running);
+        assert_eq!(report["exit"], 3, "{strategy}: {report}");
+        assert_eq!(report["diagnostics"][0]["code"], "rollback_conflict");
+        assert_eq!(report["diagnostics"][0]["operation"], "update_readback");
+        assert_eq!(fs::read(&fixture.target).unwrap(), b"NEWER");
+        assert_eq!(
+            report["effects"]["operations"][0]["recovery"]["target_sha256"],
+            hex(b"NEWER")
+        );
+        let backup = PathBuf::from(
+            report["effects"]["operations"][0]["recovery"]["backup"]
+                .as_str()
+                .unwrap(),
+        );
+        assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+        assert!(report["evidence"]["installation"].is_null());
+        assert!(
+            report["effects"]["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|operation| operation["action"] != "restore_executable")
+        );
+    }
+}
+
+#[test]
+fn failed_readback_never_restores_a_replaced_backup() {
+    for strategy in ["atomic_replace", "rename_aside"] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let (parked, release) = fixture.gate(&format!("backup-{strategy}"));
+        let running = fixture.spawn(
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_READBACK_VERSION", "8.8.8"),
+                ("SPECGIT_TEST_UPDATE_PAUSE", "readback-failed"),
+                ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&parked);
+        let backup = if strategy == "atomic_replace" {
+            backup_name(&fixture.target, CURRENT, 0)
+        } else {
+            let transaction = fs::read_dir(fixture.target.parent().unwrap())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.is_dir()
+                        && path
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".specgit-backup-")
+                })
+                .expect("rename-aside transaction directory");
+            transaction.join(
+                backup_name(&fixture.target, CURRENT, 0)
+                    .file_name()
+                    .unwrap(),
+            )
+        };
+        assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+        fs::write(&backup, b"REPLACED_BACKUP").unwrap();
+        fs::write(&release, b"").unwrap();
+        let report = fixture.finish(running);
+        assert_eq!(report["exit"], 3, "{strategy}: {report}");
+        assert_eq!(report["diagnostics"][0]["code"], "rollback_conflict");
+        assert!(
+            report["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("No automatic restore was attempted"),
+            "{strategy}: {report}"
+        );
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable(NEXT)
+        );
+        assert_eq!(fs::read(&backup).unwrap(), b"REPLACED_BACKUP");
+        assert_eq!(
+            report["effects"]["operations"][0]["recovery"]["target_sha256"],
+            hex(&fixture.release_executable(NEXT))
+        );
+        assert_eq!(
+            report["effects"]["operations"][0]["recovery"]["backup_sha256"],
+            hex(b"REPLACED_BACKUP")
+        );
+        assert!(report["evidence"]["installation"].is_null());
+        assert!(
+            report["effects"]["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|operation| operation["action"] != "restore_executable")
+        );
+    }
+}
+
+#[test]
+fn concurrent_same_version_update_fails_closed_without_replacing_the_winner() {
+    for strategy in ["atomic_replace", "rename_aside"] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let (a_parked, a_release) = fixture.gate(&format!("winner-{strategy}"));
+        let (b_parked, b_release) = fixture.gate(&format!("loser-{strategy}"));
+        let a = fixture.spawn(
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_PAUSE", "backup-selected"),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_PARKED",
+                    a_parked.to_str().unwrap(),
+                ),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    a_release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&a_parked);
+        let b = fixture.spawn(
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_PAUSE", "before-lock"),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_PARKED",
+                    b_parked.to_str().unwrap(),
+                ),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    b_release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&b_parked);
+        fs::write(&a_release, b"").unwrap();
+        let a_report = fixture.finish(a);
+        assert_eq!(a_report["exit"], 0, "{strategy}: {a_report}");
+        assert_eq!(a_report["status"], "updated");
+        fs::write(&b_release, b"").unwrap();
+        let b_report = fixture.finish(b);
+        assert_eq!(b_report["exit"], 3, "{strategy}: {b_report}");
+        assert_eq!(b_report["diagnostics"][0]["code"], "concurrent_edit");
+        assert_eq!(b_report["diagnostics"][0]["operation"], "update_install");
+        assert!(b_report.get("effects").is_none(), "{strategy}: {b_report}");
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable(NEXT)
+        );
+        let backup = PathBuf::from(
+            a_report["evidence"]["installation"]["backup"]
+                .as_str()
+                .unwrap(),
+        );
+        assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn concurrent_different_versions_fail_closed_and_rerun_installs_latest_choice() {
+    for strategy in ["atomic_replace", "rename_aside"] {
+        let fixture = Fixture::new();
+        fixture.publish("9.0.0", Tamper::None);
+        fixture.publish("10.0.0", Tamper::None);
+        let (a_parked, a_release) = fixture.gate(&format!("version-9-{strategy}"));
+        let (b_parked, b_release) = fixture.gate(&format!("version-10-{strategy}"));
+        let a = fixture.spawn(
+            &["update", "--version", "9.0.0"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_PAUSE", "backup-selected"),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_PARKED",
+                    a_parked.to_str().unwrap(),
+                ),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    a_release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&a_parked);
+        let b = fixture.spawn(
+            &["update", "--version", "10.0.0"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_PAUSE", "before-lock"),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_PARKED",
+                    b_parked.to_str().unwrap(),
+                ),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    b_release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&b_parked);
+        fs::write(&a_release, b"").unwrap();
+        let a_report = fixture.finish(a);
+        assert_eq!(a_report["exit"], 0, "{strategy}: {a_report}");
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable("9.0.0")
+        );
+        fs::write(&b_release, b"").unwrap();
+        let b_report = fixture.finish(b);
+        assert_eq!(b_report["exit"], 3, "{strategy}: {b_report}");
+        assert_eq!(b_report["diagnostics"][0]["code"], "concurrent_edit");
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable("9.0.0")
+        );
+        let rerun = fixture.run(&["update", "--version", "10.0.0"]);
+        assert_eq!(rerun["exit"], 0, "{strategy}: {rerun}");
+        assert_eq!(rerun["status"], "updated");
+        assert_eq!(
+            fs::read(&fixture.target).unwrap(),
+            fixture.release_executable("10.0.0")
+        );
+        let backup = PathBuf::from(
+            rerun["evidence"]["installation"]["backup"]
+                .as_str()
+                .unwrap(),
+        );
+        assert_eq!(
+            fs::read(&backup).unwrap(),
+            fixture.release_executable("9.0.0")
+        );
+    }
+}
+
+#[test]
+fn lock_timeout_and_process_exit_release_the_installation_lock() {
+    let fixture = Fixture::new();
+    fixture.publish(NEXT, Tamper::None);
+    let (parked, release) = fixture.gate("lock");
+    let running = fixture.spawn(
+        &["update"],
+        &[
+            ("SPECGIT_TEST_UPDATE_PAUSE", "readback"),
+            ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+            (
+                "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                release.to_str().unwrap(),
+            ),
+        ],
+    );
+    wait_for(&parked);
+    assert_eq!(
+        fs::read(&fixture.target).unwrap(),
+        fixture.release_executable(NEXT)
+    );
+    let blocked = fixture.run_with_env(
+        Path::new(env!("CARGO_BIN_EXE_specgit")),
+        &["update"],
+        &[("SPECGIT_TEST_UPDATE_LOCK_TIMEOUT_MS", "150")],
+    );
+    assert_eq!(blocked["exit"], 3, "{blocked}");
+    assert_eq!(blocked["diagnostics"][0]["code"], "lock_busy");
+    assert_eq!(blocked["diagnostics"][0]["operation"], "update_install");
+    assert!(blocked.get("effects").is_none(), "{blocked}");
+    running.kill();
+    let report = fixture.run(&["update"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(report["status"], "updated");
+    let backup = PathBuf::from(
+        report["evidence"]["installation"]["backup"]
+            .as_str()
+            .unwrap(),
+    );
+    assert_eq!(fs::read(&backup).unwrap(), fixture.release_executable(NEXT));
+}
+
+#[cfg(unix)]
+#[test]
+fn real_interrupt_during_readback_preserves_update_effects() {
+    for (name, signal) in [("int", libc::SIGINT), ("term", libc::SIGTERM)] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let (parked, release) = fixture.gate(&format!("readback-signal-{name}"));
+        let running = fixture.spawn(
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_PAUSE", "readback"),
+                ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&parked);
+        // SAFETY: this is the exact child spawned and still owned by this test.
+        assert_eq!(unsafe { libc::kill(running.id() as i32, signal) }, 0);
+        let output = running
+            .finish_within(std::time::Duration::from_secs(5))
+            .unwrap_or_else(|| panic!("{name}: update did not respond to the signal"));
+        let report = fixture.report(output);
+        assert_eq!(report["exit"], 130, "{name}: {report}");
+        assert!(
+            report["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == "cancelled"),
+            "{name}: {report}"
+        );
+        assert_eq!(report["evidence"]["installation"], Value::Null);
+        let operations = report["effects"]["operations"].as_array().unwrap();
+        assert_eq!(operations.len(), 1, "{name}: {report}");
+        assert_eq!(operations[0]["action"], "replace_executable");
+        assert_eq!(operations[0]["outcome"], "applied");
+        assert_eq!(operations[0]["recovery"]["backup_complete"], true);
+        let expected = fixture.release_executable(NEXT);
+        assert_eq!(operations[0]["recovery"]["target_sha256"], hex(&expected));
+        assert_eq!(fs::read(&fixture.target).unwrap(), expected);
+        let backup = PathBuf::from(operations[0]["recovery"]["backup"].as_str().unwrap());
+        assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
+        assert!(
+            operations
+                .iter()
+                .all(|operation| operation["action"] != "restore_executable")
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn real_interrupt_while_waiting_for_lock_finishes_without_effects() {
+    let fixture = Fixture::new();
+    fixture.publish(NEXT, Tamper::None);
+    let (parked, release) = fixture.gate("lock-signal-readback");
+    let (lock_parked, lock_release) = fixture.gate("lock-signal-wait");
+    let running = fixture.spawn(
+        &["update"],
+        &[
+            ("SPECGIT_TEST_UPDATE_PAUSE", "readback"),
+            ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+            (
+                "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                release.to_str().unwrap(),
+            ),
+        ],
+    );
+    wait_for(&parked);
+    let blocked = fixture.spawn(
+        &["update"],
+        &[
+            ("SPECGIT_TEST_UPDATE_LOCK_TIMEOUT_MS", "60000"),
+            ("SPECGIT_TEST_UPDATE_PAUSE", "lock-wait"),
+            (
+                "SPECGIT_TEST_UPDATE_PAUSE_PARKED",
+                lock_parked.to_str().unwrap(),
+            ),
+            (
+                "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                lock_release.to_str().unwrap(),
+            ),
+        ],
+    );
+    wait_for(&lock_parked);
+    // SAFETY: this is the exact child spawned and still owned by this test.
+    assert_eq!(unsafe { libc::kill(blocked.id() as i32, libc::SIGINT) }, 0);
+    let output = blocked
+        .finish_within(std::time::Duration::from_secs(5))
+        .unwrap_or_else(|| panic!("lock wait did not respond to the signal"));
+    let report = fixture.report(output);
+    assert_eq!(report["exit"], 130, "{report}");
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "cancelled"),
+        "{report}"
+    );
+    assert!(report.get("effects").is_none(), "{report}");
+    assert_eq!(report["evidence"]["installation"], Value::Null);
+    assert_eq!(
+        fs::read(&fixture.target).unwrap(),
+        fixture.release_executable(NEXT)
+    );
+    fs::write(&release, b"").unwrap();
+    let first = fixture.finish(running);
+    assert_eq!(first["exit"], 0, "{first}");
+    let backup = PathBuf::from(
+        first["evidence"]["installation"]["backup"]
+            .as_str()
+            .unwrap(),
+    );
+    assert_eq!(fs::read(&backup).unwrap(), OLD_BINARY);
 }

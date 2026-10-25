@@ -759,12 +759,43 @@ version with `--human --version`. Missing Cosign, any mismatch, a missing asset
 or an oversized file stops with no replacement; there is no skip option.
 
 Apply replaces only the executable that is running, never a project copy. An
-unwritable directory fails before download. The previous executable is kept
-beside it as `specgit.backup-<previous-version>` (before `.exe` on Windows).
-Unix renames the new file over the executable atomically; Windows renames the
-running file aside first and restores it if the move fails. The installed file
-is read back by hash and version. Evidence reports the backup path. To roll
-back, move the backup over the executable path. Project configuration is not
+unwritable directory fails before download. Update records the target SHA-256
+before download and, after taking a persistent `.specgit-update.lock` in the
+installation directory, requires the same bytes before replacement. A changed
+target fails with `concurrent_edit` and is not replaced; rerun the command. An
+unreadable baseline is `io_failed` with "Nothing was replaced"; it is not a
+recoverable backup claim.
+
+The lock serializes cooperating updates for up to 30 seconds, then reports
+`lock_busy`. It also covers installed readback and failure reporting. Process
+exit releases the lock; the file remains. Do not delete the lock file: replacing
+it creates a second inode and breaks serialization.
+
+The previous executable is kept as `specgit.backup-<previous-version>` (before
+`.exe` on Windows). It is created exclusively; a failed exclusive create keeps
+the existing file, and a partial copy is retained. Unix publishes with an atomic
+rename under the lock and baseline check. That protects cooperating updates, not
+a writer that can modify the directory after the final check. Windows uses a
+unique `.specgit-backup-*` directory for the renamed previous file, leaves the
+target path briefly absent, and publishes with a no-clobber move. If the target
+is recreated or publication fails during that window, update never restores
+automatically; it keeps the backup and reports `rollback_conflict`. The target
+may be absent or hold a recreated file, so verify both paths before recovery.
+
+The installed file is read back by hash and version while the lock is held.
+Evidence reports the backup path. Readback failure or cancellation never
+restores or overwrites either file: update preserves the installed target and
+the backup, reports `rollback_conflict` (or `cancelled`), and the diagnostic
+remedy lists both paths plus the expected, target and backup SHA-256 values.
+`evidence.installation` stays null on failure; the backup path, hashes and
+`backup_complete` flag are in `effects.operations[].recovery`. When no backup
+was created, `effects.outcome` is `not_applied` with no operations, so no path
+is claimed as recoverable.
+Verify both hashes before manual recovery. `effects` records the attempted
+replacement and any user-Skill refresh as write evidence; `applied` does not
+make a failed command successful. Success describes the version verified at
+that moment, not a promise about later changes. To roll back later, move the
+backup over the executable path after verification. Project configuration is not
 changed; refresh projects as described in the installation guide.
 
 After successful replacement and readback, both `updated` and `downgraded`

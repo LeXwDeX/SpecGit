@@ -380,6 +380,14 @@ fn console_interrupt(args: &[String]) {
 /// Release transport (`gh`), signature verifier (`cosign`) and packaged
 /// executable (`specgit`) for `specgit update`, selected by executable name.
 /// The fake signature binds the bundle to the exact manifest bytes.
+fn binary_version(state: &serde_json::Value) -> String {
+    std::env::var("SPECGIT_FIXTURE_BINARY_VERSION")
+        .ok()
+        .filter(|version| !version.is_empty())
+        .or_else(|| state["binary_version"].as_str().map(str::to_owned))
+        .expect("fixture binary version")
+}
+
 fn update_release(role: &str, args: &[String], directory: &std::path::Path) {
     use sha2::{Digest, Sha256};
     let state: serde_json::Value =
@@ -493,14 +501,14 @@ fn update_release(role: &str, args: &[String], directory: &std::path::Path) {
                 });
                 let exit = report.exit;
                 let mut report = serde_json::to_value(report).unwrap();
-                report["version"] = state["binary_version"].clone();
+                report["version"] = serde_json::json!(binary_version(&state));
                 println!("{report}");
                 std::process::exit(i32::from(exit));
             }
             if args != ["--human", "--version"] {
                 std::process::exit(2);
             }
-            println!("specgit {}", state["binary_version"].as_str().unwrap());
+            println!("specgit {}", binary_version(&state));
         }
     }
 }
