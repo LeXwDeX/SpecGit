@@ -115,7 +115,7 @@ impl Observation {
         self.diagnostics
             .iter()
             .map(|d| d.exit())
-            .max_by_key(|exit| exit_priority(*exit))
+            .max_by_key(|exit| crate::diagnostic::exit_priority(*exit))
             .unwrap_or(0)
     }
     pub fn checks_outcome(&self) -> CheckOutcome {
@@ -135,15 +135,6 @@ impl Observation {
         } else {
             CheckOutcome::Pending
         }
-    }
-}
-fn exit_priority(exit: u8) -> u8 {
-    match exit {
-        130 => 4,
-        2 => 3,
-        1 => 2,
-        3 => 1,
-        _ => 0,
     }
 }
 /// Describe only supplied native lifecycle facts; this cannot authorize merging.

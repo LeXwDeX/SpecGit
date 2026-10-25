@@ -21,7 +21,7 @@ async fn observe(
     budget: Duration,
     cycle: &Cycle<'_>,
     verified: &mut Option<String>,
-) -> Observation {
+) -> (Observation, Option<Diagnostic>) {
     let read = async {
         let collected =
             observation::collect(identity.request, process.clone(), &context.root).await?;
@@ -51,38 +51,44 @@ async fn observe(
         Ok::<_, Diagnostic>((assessment, (complete && !terminal).then_some(fingerprint)))
     };
     let result = tokio::time::timeout(budget, Box::pin(read)).await;
-    let assessment = match result {
+    let (assessment, persistence_failure) = match result {
         Ok(Ok((assessment, fingerprint))) => {
             *verified = fingerprint;
-            retire_delivered(context, &assessment);
-            assessment
+            let persistence_failure = retire_delivered(context, &assessment);
+            (assessment, persistence_failure)
         }
         Ok(Err(d)) => {
             *verified = None;
-            NativeObservation::unavailable(d)
+            (NativeObservation::unavailable(d), None)
         }
         Err(_) => {
             *verified = None;
-            NativeObservation::unavailable(Diagnostic::new(
-                Code::Timeout,
-                "watch",
-                "The native observation deadline expired.",
-                "Resume; partial evidence is not acceptance.",
-            ))
+            (
+                NativeObservation::unavailable(Diagnostic::new(
+                    Code::Timeout,
+                    "watch",
+                    "The native observation deadline expired.",
+                    "Resume; partial evidence is not acceptance.",
+                )),
+                None,
+            )
         }
     };
-    normalized(
-        &assessment,
-        context,
-        identity.goal,
-        identity.request,
-        cycle.digest.as_deref(),
+    (
+        normalized(
+            &assessment,
+            context,
+            identity.goal,
+            identity.request,
+            cycle.digest.as_deref(),
+        ),
+        persistence_failure,
     )
 }
 
-/// A verified merged read of this checkpoint's own request retires it. The
-/// record is best effort: a failed write leaves the checkpoint unchanged.
-fn retire_delivered(context: &Context, assessment: &NativeObservation) {
+/// A verified merged read of this checkpoint's own request retires it. A failed
+/// write leaves the checkpoint unchanged and stays visible to the caller.
+fn retire_delivered(context: &Context, assessment: &NativeObservation) -> Option<Diagnostic> {
     use crate::observation::Status;
     if !matches!(
         assessment.status,
@@ -90,14 +96,15 @@ fn retire_delivered(context: &Context, assessment: &NativeObservation) {
     ) || !assessment.diagnostics.is_empty()
         || assessment.evidence.repository.as_ref() != Some(&context.repository)
     {
-        return;
+        return None;
     }
-    if let (Some(request), Some(project_id)) = (
-        assessment.evidence.request.as_ref(),
-        assessment.evidence.project_id,
-    ) {
-        let _ = crate::selection::record_delivery(context, project_id, request);
-    }
+    let (request, project_id) = (
+        assessment.evidence.request.as_ref()?,
+        assessment.evidence.project_id?,
+    );
+    crate::selection::record_delivery(context, project_id, request)
+        .err()
+        .map(|d| crate::selection::delivered_persistence_failure(d, true))
 }
 
 struct Cycle<'a> {
@@ -111,7 +118,7 @@ pub(super) async fn subscribe(
     process: Process,
     cwd: &Path,
     stop_on_attention: bool,
-) -> Result<ObservedEvents, Diagnostic> {
+) -> Result<(ObservedEvents, Option<Diagnostic>), Diagnostic> {
     let (initial, mut declaration, mut digest) = local_snapshot(&process, cwd).await?;
     let configured = declaration.observation.clone();
     let timing = timing(&o, &configured)?;
@@ -155,14 +162,17 @@ pub(super) async fn subscribe(
             once: o.once,
         };
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let mut observation = if let Some(d) = declaration_error {
+        let (mut observation, persistence_failure) = if let Some(d) = declaration_error {
             verified = None;
-            normalized(
-                &NativeObservation::unavailable(d),
-                &context,
-                identity.goal,
-                identity.request,
-                digest.as_deref(),
+            (
+                normalized(
+                    &NativeObservation::unavailable(d),
+                    &context,
+                    identity.goal,
+                    identity.request,
+                    digest.as_deref(),
+                ),
+                None,
             )
         } else {
             current_observation(
@@ -205,10 +215,13 @@ pub(super) async fn subscribe(
                     EventState::ChecksPassed | EventState::ChecksCompleted
                 ))
         {
-            break ObservedEvents {
-                state,
-                event_state: observation.state,
-            };
+            break (
+                ObservedEvents {
+                    state,
+                    event_state: observation.state,
+                },
+                persistence_failure,
+            );
         }
         failures = if observation.retryable {
             failures.saturating_add(1).min(4)
@@ -381,31 +394,34 @@ async fn current_observation(
     remaining: Duration,
     cycle: &Cycle<'_>,
     verified: &mut Option<String>,
-) -> Observation {
+) -> (Observation, Option<Diagnostic>) {
     if remaining.is_zero() || process.cancellation.is_cancelled() {
-        Observation {
-            revision: Revision {
-                head: context.head.clone(),
-                local_head: context.head.clone(),
-                target: String::new(),
-                declaration: String::new(),
-                evidence_digest: String::new(),
+        (
+            Observation {
+                revision: Revision {
+                    head: context.head.clone(),
+                    local_head: context.head.clone(),
+                    target: String::new(),
+                    declaration: String::new(),
+                    evidence_digest: String::new(),
+                },
+                state: if process.cancellation.is_cancelled() {
+                    EventState::Cancelled
+                } else {
+                    EventState::TimedOut
+                },
+                reason: "The bounded subscription remains resumable.".into(),
+                next_step: empty_next_step(
+                    identity,
+                    ActionKind::ResumeSubscription,
+                    "The bounded observation stopped before confirming the goal. Resume this exact subscription to collect fresh native evidence.",
+                ),
+                terminal: true,
+                retryable: false,
+                same_source_mismatch: false,
             },
-            state: if process.cancellation.is_cancelled() {
-                EventState::Cancelled
-            } else {
-                EventState::TimedOut
-            },
-            reason: "The bounded subscription remains resumable.".into(),
-            next_step: empty_next_step(
-                identity,
-                ActionKind::ResumeSubscription,
-                "The bounded observation stopped before confirming the goal. Resume this exact subscription to collect fresh native evidence.",
-            ),
-            terminal: true,
-            retryable: false,
-            same_source_mismatch: false,
-        }
+            None,
+        )
     } else {
         observe(
             identity,

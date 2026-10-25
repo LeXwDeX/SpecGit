@@ -73,6 +73,17 @@ impl std::fmt::Display for Diagnostic {
 }
 impl std::error::Error for Diagnostic {}
 
+/// Shared exit precedence for reports that combine independent diagnostics.
+pub(crate) fn exit_priority(exit: u8) -> u8 {
+    match exit {
+        130 => 4,
+        2 => 3,
+        1 => 2,
+        3 => 1,
+        _ => 0,
+    }
+}
+
 pub(crate) const REQUEST_LIFECYCLE_OPERATION: &str = "request_lifecycle";
 
 /// A valid GitLab request can be briefly unobservable while native state is

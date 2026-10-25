@@ -566,6 +566,8 @@ impl AssetStore {
                 "The checkpoint changed outside the held operation lock.",
             ));
         }
+        #[cfg(feature = "test-fixtures")]
+        fixture_atomic_pause(path, "checkpoint-before-atomic-write");
         atomic_expected(path, bytes, actual.permissions.as_ref(), &actual)
     }
     pub fn lock(root: &Path, allowed: &[PathBuf], timeout: Duration) -> Result<Self, Diagnostic> {
