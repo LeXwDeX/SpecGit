@@ -1,6 +1,7 @@
 //! Classify lifecycle facts without reads, writes or transport state.
 use crate::{
-    diagnostic::Code,
+    delivery_model::PullRequest,
+    diagnostic::{Code, Diagnostic},
     observation::{CheckOutcome, Observation as NativeObservation, Status},
     project::Context,
     watch_store::{EventState, Goal, Revision},
@@ -58,20 +59,7 @@ pub(super) fn classify(
     } else {
         EventState::Pending
     };
-    let retryable = assessment
-        .diagnostics
-        .iter()
-        .any(|d| d.code == Code::MalformedResponse && d.operation == "checks_state")
-        || codes.iter().any(|c| {
-            matches!(
-                c,
-                Code::NetworkFailed
-                    | Code::RateLimited
-                    | Code::Timeout
-                    | Code::ProcessFailed
-                    | Code::ConcurrentEdit
-            )
-        });
+    let retryable = retryable_diagnostics(&assessment.diagnostics, request);
     let terminal = matches!(
         state,
         EventState::Completed
@@ -92,6 +80,27 @@ pub(super) fn classify(
         terminal,
         retryable,
     }
+}
+
+fn retryable_diagnostics(diagnostics: &[Diagnostic], request: Option<&PullRequest>) -> bool {
+    if diagnostics.is_empty() {
+        return false;
+    }
+    diagnostics.iter().all(|diagnostic| {
+        (diagnostic.code == Code::UnsupportedOperation
+            && diagnostic.operation == crate::diagnostic::REQUEST_LIFECYCLE_OPERATION
+            && request.is_some_and(|request| request.is_locked()))
+            || (diagnostic.code == Code::MalformedResponse
+                && diagnostic.operation == "checks_state")
+            || matches!(
+                diagnostic.code,
+                Code::NetworkFailed
+                    | Code::RateLimited
+                    | Code::Timeout
+                    | Code::ProcessFailed
+                    | Code::ConcurrentEdit
+            )
+    })
 }
 
 fn reason(assessment: &NativeObservation, codes: &[&Code]) -> String {
@@ -129,4 +138,104 @@ fn reason(assessment: &NativeObservation, codes: &[&Code]) -> String {
     }
     reason.truncate(end);
     reason
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retryable_diagnostics;
+    use crate::{
+        delivery_model::PullRequest,
+        diagnostic::{Code, Diagnostic, REQUEST_LIFECYCLE_OPERATION},
+    };
+
+    fn request(state: &str) -> PullRequest {
+        PullRequest {
+            id: 41,
+            title: "fix: example".into(),
+            body: "Closes #1".into(),
+            labels: vec![],
+            state: state.into(),
+            draft: false,
+            head: "a".repeat(40),
+            source: "feature".into(),
+            target: "main".into(),
+            source_project: 7,
+            target_project: 7,
+            updated_at: "2026-10-25T00:00:00Z".into(),
+        }
+    }
+
+    fn diagnostic(code: Code, operation: &str) -> Diagnostic {
+        Diagnostic::new(code, operation, "message", "remedy")
+    }
+
+    fn transient() -> Diagnostic {
+        diagnostic(Code::UnsupportedOperation, REQUEST_LIFECYCLE_OPERATION)
+    }
+
+    #[test]
+    fn exact_locked_transient_is_retryable() {
+        assert!(!retryable_diagnostics(&[], Some(&request("locked"))));
+        let retry = [transient()];
+        assert!(retryable_diagnostics(&retry, Some(&request("locked"))));
+        assert!(!retryable_diagnostics(&retry, Some(&request("opened"))));
+        assert!(!retryable_diagnostics(&retry, None));
+    }
+
+    #[test]
+    fn locked_transient_accepts_only_intrinsically_retryable_companions() {
+        for code in [
+            Code::NetworkFailed,
+            Code::RateLimited,
+            Code::Timeout,
+            Code::ProcessFailed,
+            Code::ConcurrentEdit,
+        ] {
+            let diagnostics = [transient(), diagnostic(code, "read")];
+            assert!(retryable_diagnostics(
+                &diagnostics,
+                Some(&request("locked"))
+            ));
+        }
+        let diagnostics = [
+            transient(),
+            diagnostic(Code::MalformedResponse, "checks_state"),
+        ];
+        assert!(retryable_diagnostics(
+            &diagnostics,
+            Some(&request("locked"))
+        ));
+    }
+
+    #[test]
+    fn locked_transient_cannot_mask_terminal_diagnostics() {
+        for (code, operation) in [
+            (Code::PermissionDenied, "read"),
+            (Code::IdentityMismatch, "observe"),
+            (Code::InvalidInput, "input"),
+            (Code::Cancelled, "watch"),
+            (Code::AuthenticationFailed, "read"),
+            (Code::UnsupportedOperation, "native_checks"),
+            (Code::MalformedResponse, "observe"),
+        ] {
+            let diagnostics = [transient(), diagnostic(code, operation)];
+            assert!(
+                !retryable_diagnostics(&diagnostics, Some(&request("locked"))),
+                "{operation} must stay terminal"
+            );
+        }
+    }
+
+    #[test]
+    fn unrelated_unsupported_operation_stays_terminal() {
+        let diagnostics = [diagnostic(Code::UnsupportedOperation, "native_checks")];
+        assert!(!retryable_diagnostics(
+            &diagnostics,
+            Some(&request("locked"))
+        ));
+        assert!(!retryable_diagnostics(
+            &diagnostics,
+            Some(&request("opened"))
+        ));
+    }
 }

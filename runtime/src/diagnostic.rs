@@ -73,6 +73,20 @@ impl std::fmt::Display for Diagnostic {
 }
 impl std::error::Error for Diagnostic {}
 
+pub(crate) const REQUEST_LIFECYCLE_OPERATION: &str = "request_lifecycle";
+
+/// A valid GitLab request can be briefly unobservable while native state is
+/// `locked`. Reuse `UnsupportedOperation` with this exact operation instead of
+/// expanding the public diagnostic enum; no merge or closure fact is inferred.
+pub(crate) fn transient_locked() -> Diagnostic {
+    Diagnostic::new(
+        Code::UnsupportedOperation,
+        REQUEST_LIFECYCLE_OPERATION,
+        "GitLab reports the merge request in a transitional locked state. Merged, closed, and discussion-lock facts are not inferred.",
+        "Refresh the exact request within the bounded observation window. Do not create, ready, update, or retire it until a settled native state is read.",
+    )
+}
+
 /// Raw provider stderr may contain private URLs, commands or credentials.
 /// Only classification crosses the adapter boundary; raw bytes are never logged.
 pub fn classify_failure(operation: &str, stderr: &[u8]) -> Diagnostic {

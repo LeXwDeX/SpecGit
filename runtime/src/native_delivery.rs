@@ -100,11 +100,16 @@ pub fn current_request_candidates(candidates: Vec<PullRequest>, head: &str) -> V
     let has_open = candidates
         .iter()
         .any(|r| matches!(r.state.as_str(), "open" | "opened"));
+    let has_locked = candidates.iter().any(PullRequest::is_locked);
     candidates
         .into_iter()
         .filter(|r| {
             if has_open {
                 matches!(r.state.as_str(), "open" | "opened")
+            } else if has_locked {
+                // A transient lock may explain a moved head. Keep the request
+                // visible so creation/adoption cannot treat it as absent.
+                r.is_locked()
             } else {
                 r.head == head
             }

@@ -88,6 +88,13 @@ pub(super) fn next_step(
             false,
             Vec::new(),
         ),
+        EventState::Unknown if request.is_some_and(|request| request.is_locked()) => (
+            ActionKind::RefreshNativeEvidence,
+            "GitLab reports a transitional locked merge request. Merged, closed, and discussion-lock facts are not inferred. Inspect every reported diagnostic and refresh the exact request; do not create, ready, update, or retire it until a settled native state is read.".into(),
+            Some(format!("specgit pr --status --request {request_id} --json")),
+            false,
+            Vec::new(),
+        ),
         EventState::Unknown if assessment.status == Status::Merged => {
             let issue_ids = evidence
                 .associations

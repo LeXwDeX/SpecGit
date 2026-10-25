@@ -1,7 +1,7 @@
 //! Presentation changes prose only; machine codes, identifiers and keys are stable.
 use crate::{
     declaration::Language,
-    diagnostic::{Code, Diagnostic},
+    diagnostic::{Code, Diagnostic, REQUEST_LIFECYCLE_OPERATION},
     report::Report,
 };
 pub fn diagnostic(d: &mut Diagnostic, language: Language) {
@@ -54,6 +54,10 @@ pub fn diagnostic(d: &mut Diagnostic, language: Language) {
             "保留用户修改和事务备份，检查路径、权限和恢复记录。",
         ),
         Code::LockBusy => ("另一个事务持有文件锁。", "等待当前事务结束后重试。"),
+        Code::UnsupportedOperation if d.operation == REQUEST_LIFECYCLE_OPERATION => (
+            "原生请求处于短暂过渡状态，尚未确认合并或关闭。",
+            "在限定观察期内刷新该请求；状态稳定前不要创建、标记就绪、更新或退役。",
+        ),
         Code::MissingExecutable | Code::UnsupportedOperation | Code::UnsupportedProvider => (
             "当前原生命令缺失或不支持所需操作。",
             "检查所选 Git、gh 或 glab 版本，并通过 doctor 重新验证。",
