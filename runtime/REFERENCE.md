@@ -451,6 +451,11 @@ specgit watch --request 42 --session task-42 --goal lifecycle --json
 SpecGit does not create binding-only commits or silently push source changes.
 Native auto-merge registration belongs to an already authorized Agent gh/glab
 action outside these commands. The preference does not authorize a new session.
+Branch discovery keeps a GitLab `locked` request as a candidate even when its
+head moved, so it is not mistaken for an absent request and recreated. Read-only
+`--inspect` or `--dry-run` shows that request with `native_lifecycle: "unknown"`,
+`head_verification: "not_checked"` and `transient_state: "locked"`; every
+mutation remains blocked while locked.
 
 Issue/request writes retain intent before submission. On an uncertain response,
 resume the same selection/request to reconcile native state; inspect ambiguous
@@ -517,6 +522,22 @@ checks only; the runtime does not reconstruct native merge eligibility. A merged
 request with open linked Issues produces attention. Agent supplementary closure
 is optional, defaults off, and requires existing authorization plus native
 readback of merge, intended associations and resulting Issue closure.
+
+GitLab may report a short-lived `locked` merge-request state. It is valid
+protocol evidence, not malformed input and not proof of merge, closure or
+`discussion_locked`. Such a request is reported as `unknown` with an
+`unsupported_operation` diagnostic whose `operation` is `request_lifecycle`;
+the raw request `state` remains `locked` and its verified identity remains
+visible. It never retires a checkpoint or authorizes create, ready, update or
+other request writes. Bounded `watch` refreshes only a verified request whose
+raw state is `locked` and whose diagnostic is exactly
+`unsupported_operation`/`request_lifecycle`; unrelated unsupported operations
+stay terminal. A later settled state can return to `open` or proceed through
+normal merged and Issue-closure checks. Contradictory or incomplete identity
+stays `unknown`. `Observation::exit()` uses diagnostic precedence: cancellation
+(130), invalid input (2), rejected evidence (1), then unknown (3). A transient
+locked diagnostic does not mask those failures. Watch retains its event-state
+exit mapping; an `unknown` event returns 3.
 
 For GitHub, the complete current-head check-run pages are validated before
 selecting the highest native run ID for each `(app ID, check name, check suite)`

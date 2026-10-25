@@ -110,7 +110,13 @@ impl Observation {
         }
     }
     pub fn exit(&self) -> u8 {
-        self.diagnostics.first().map_or(0, Diagnostic::exit)
+        // Cancellation, invalid input and rejected evidence stay ahead of an
+        // unknown lifecycle fact even when an optional diagnostic was appended.
+        self.diagnostics
+            .iter()
+            .map(|d| d.exit())
+            .max_by_key(|exit| exit_priority(*exit))
+            .unwrap_or(0)
     }
     pub fn checks_outcome(&self) -> CheckOutcome {
         let Some(checks) = self.evidence.checks.as_ref() else {
@@ -131,6 +137,15 @@ impl Observation {
         }
     }
 }
+fn exit_priority(exit: u8) -> u8 {
+    match exit {
+        130 => 4,
+        2 => 3,
+        1 => 2,
+        3 => 1,
+        _ => 0,
+    }
+}
 /// Describe only supplied native lifecycle facts; this cannot authorize merging.
 pub fn describe(evidence: Evidence) -> Observation {
     let invalid = || {
@@ -148,7 +163,7 @@ pub fn describe(evidence: Evidence) -> Observation {
         || request.source_project == 0
         || request.target_project == 0
         || !crate::identity::valid_oid(&request.head)
-        || !["open", "opened", "closed", "merged"].contains(&request.state.as_str())
+        || !["open", "opened", "locked", "closed", "merged"].contains(&request.state.as_str())
         || evidence.issues.as_ref().is_some_and(|issues| {
             let mut ids = std::collections::BTreeSet::new();
             issues.iter().any(|i| {
@@ -163,6 +178,13 @@ pub fn describe(evidence: Evidence) -> Observation {
             .is_some_and(|checks| checks.iter().any(|c| !c.valid_for(request, checks)))
     {
         return Observation::unavailable(invalid());
+    }
+    if request.is_locked() {
+        return Observation {
+            status: Status::Unknown,
+            evidence: Box::new(evidence),
+            diagnostics: vec![crate::diagnostic::transient_locked()],
+        };
     }
     let status = match evidence.request.as_ref().map(|r| r.state.as_str()) {
         Some("open" | "opened") => Status::Open,
