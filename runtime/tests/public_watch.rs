@@ -12,13 +12,9 @@ use specgit::{
     watch,
     watch_store::{self, EventState, Goal, Identity},
 };
-use std::{
-    collections::BTreeMap,
-    ffi::OsString,
-    fs,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, ffi::OsString, fs, time::Duration};
+#[cfg(unix)]
+use std::{path::Path, time::Instant};
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -45,6 +41,7 @@ impl Environment {
         set("PATH", std::env::join_paths(paths).unwrap());
         Self { saved }
     }
+    #[cfg(unix)]
     fn set(&self, key: &'static str, value: impl AsRef<std::ffi::OsStr>) {
         set(key, value);
     }
@@ -151,6 +148,7 @@ fn expect_public_error(
     }
 }
 
+#[cfg(unix)]
 fn await_pause(pause: &Path) {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !pause.join("ready").exists() {

@@ -1540,11 +1540,52 @@ fn checkpoint_path(f: &delivery::Fixture) -> std::path::PathBuf {
     f.root.join(".git/specgit-v2/selection.json")
 }
 
-/// Start a real CLI entry point and hold it immediately before the delivered
-/// checkpoint replacement. The test can then change permissions or content
-/// after the lock and identity recheck but before persistence.
-fn paused_checkpoint_command(f: &delivery::Fixture, args: &[&str], pause: &Path) -> Child {
-    f.command(args)
+/// Park the fake provider on the second exact request read. The first read is
+/// collection; the second is the final equality read before retirement. This
+/// works with installed binaries because no fixture hook is compiled into them.
+fn request_read_gate(f: &delivery::Fixture, pause: &Path) {
+    let existing = f.state()["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|call| {
+            call["method"] == "GET"
+                && call["endpoint"].as_str().is_some_and(|endpoint| {
+                    (endpoint.ends_with("/pulls/41") || endpoint.ends_with("/merge_requests/41"))
+                        && !endpoint.ends_with("/closes_issues")
+                })
+        })
+        .count() as u64;
+    f.edit(|s| {
+        s["request_read_gate"] = json!({
+            "request_id": 41,
+            "after_calls": existing + 2,
+            "parked": pause.join("request-read-parked"),
+            "release": pause.join("request-read-release"),
+        });
+    });
+}
+
+fn await_request_read_gate(f: &delivery::Fixture, pause: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !pause.join("request-read-parked").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "CLI did not reach the final provider request read: {:?}",
+            f.state()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn release_request_read_gate(pause: &Path) {
+    fs::write(pause.join("request-read-release"), b"release").unwrap();
+}
+
+/// Source-only barrier used to prove the atomic concurrent-edit branch. The
+/// installed equivalent is covered separately before the record attempt.
+fn paused_checkpoint_feature_command(f: &delivery::Fixture, args: &[&str], pause: &Path) -> Child {
+    f.feature_command(args)
         .env(
             "SPECGIT_FIXTURE_ASSET_PAUSE",
             "checkpoint-before-atomic-write",
@@ -1563,7 +1604,7 @@ fn await_checkpoint_pause(pause: &Path, child: &mut Child) {
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("CLI did not reach the delivered-checkpoint write barrier");
+            panic!("source CLI did not reach the delivered-checkpoint write barrier");
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -1611,10 +1652,16 @@ fn permission_denied_delivery_record_keeps_native_facts_and_retries_once() {
     complete_request(&f, "github");
     let writes = f.writes();
     let pause = tempfile::tempdir().unwrap();
-    let mut child = paused_checkpoint_command(&f, &["pr", "--status"], pause.path());
-    await_checkpoint_pause(pause.path(), &mut child);
+    request_read_gate(&f, pause.path());
+    let child = f
+        .command(&["pr", "--status"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    await_request_read_gate(&f, pause.path());
     let denied = DeniedCheckpointDirectory::new(&f.root.join(".git/specgit-v2"));
-    fs::write(pause.path().join("go"), b"go").unwrap();
+    release_request_read_gate(pause.path());
     let output = child.wait_with_output().unwrap();
     drop(denied);
     let failed = child_report(output);
@@ -1781,12 +1828,49 @@ fn watch_preserves_completed_event_when_delivery_record_is_blocked() {
 }
 
 #[test]
-fn concurrent_selection_change_rejects_delivery_record_without_overwrite() {
+fn concurrent_selection_change_before_delivery_record_is_never_retired() {
     let f = fixture("github");
     complete_request(&f, "github");
     let writes = f.writes();
     let pause = tempfile::tempdir().unwrap();
-    let mut child = paused_checkpoint_command(&f, &["pr", "--status"], pause.path());
+    request_read_gate(&f, pause.path());
+    let child = f
+        .command(&["pr", "--status"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    await_request_read_gate(&f, pause.path());
+    let mut concurrent = checkpoint(&f);
+    concurrent["request"] = json!(42);
+    fs::write(
+        checkpoint_path(&f),
+        serde_json::to_vec(&concurrent).unwrap(),
+    )
+    .unwrap();
+    release_request_read_gate(pause.path());
+    let output = child.wait_with_output().unwrap();
+    let report = child_report(output);
+
+    assert_eq!(report["exit"], 0, "{report}");
+    assert_eq!(report["status"], "completed", "{report}");
+    assert!(report["effects"].is_null(), "{report}");
+    let after = checkpoint(&f);
+    assert_eq!(after["request"], 42, "{after}");
+    assert!(after.get("delivered_request").is_none(), "{after}");
+    assert_eq!(f.writes(), writes);
+}
+
+/// The installed profile runs the equivalent pre-record test above with the
+/// real binary and fake-provider barrier. This source-only test keeps the
+/// atomic conflict assertion at the checkpoint replacement barrier.
+#[test]
+fn concurrent_selection_change_during_delivery_write_is_rejected_in_source_mode() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let writes = f.writes();
+    let pause = tempfile::tempdir().unwrap();
+    let mut child = paused_checkpoint_feature_command(&f, &["pr", "--status"], pause.path());
     await_checkpoint_pause(pause.path(), &mut child);
     let mut concurrent = checkpoint(&f);
     concurrent["request"] = json!(42);
