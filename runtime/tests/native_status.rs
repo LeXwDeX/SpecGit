@@ -5,7 +5,12 @@ mod acceptance;
 mod delivery;
 use acceptance::fixture;
 use serde_json::{Value, json};
-use std::{fs, process::Command};
+use std::{
+    fs,
+    path::Path,
+    process::{Child, Command, Stdio},
+    time::{Duration, Instant},
+};
 const STAMP: &str = "2026-09-09T00:00:00Z";
 fn git(f: &delivery::Fixture, args: &[&str]) {
     let output = Command::new("git")
@@ -1310,6 +1315,26 @@ fn a_merged_read_retires_the_checkpoint_until_new_issues_are_selected() {
 }
 
 #[test]
+fn a_merged_request_with_open_issues_also_retires_and_keeps_the_open_fact() {
+    let f = fixture("github");
+    f.edit(|s| {
+        s["native_closing"] = json!([1]);
+        s["requests"][0]["state"] = json!("closed");
+        s["requests"][0]["merged"] = json!(true);
+        s["issues"][0]["state"] = json!("open");
+    });
+    let writes = f.writes();
+    let merged = f.run(&["pr", "--status"]);
+    assert_eq!(merged["status"], "merged_issues_open", "{merged}");
+    assert_eq!(merged["exit"], 0, "{merged}");
+    assert_eq!(merged["evidence"]["request"]["id"], 41, "{merged}");
+    assert_eq!(merged["evidence"]["issues"][0]["state"], "open", "{merged}");
+    assert_eq!(merged["effects"]["outcome"], "applied", "{merged}");
+    assert_eq!(checkpoint(&f)["delivered_request"], 41);
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
 fn a_merged_lifecycle_watch_also_retires_the_checkpoint() {
     let f = fixture("github");
     complete_request(&f, "github");
@@ -1509,4 +1534,294 @@ fn a_checkpoint_without_its_recorded_request_is_never_retired() {
         assert!(read["effects"].is_null(), "{read}");
         assert!(checkpoint(&f).get("delivered_request").is_none(), "{read}");
     }
+}
+
+fn checkpoint_path(f: &delivery::Fixture) -> std::path::PathBuf {
+    f.root.join(".git/specgit-v2/selection.json")
+}
+
+/// Start a real CLI entry point and hold it immediately before the delivered
+/// checkpoint replacement. The test can then change permissions or content
+/// after the lock and identity recheck but before persistence.
+fn paused_checkpoint_command(f: &delivery::Fixture, args: &[&str], pause: &Path) -> Child {
+    f.command(args)
+        .env(
+            "SPECGIT_FIXTURE_ASSET_PAUSE",
+            "checkpoint-before-atomic-write",
+        )
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", pause)
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_TARGET", checkpoint_path(f))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+fn await_checkpoint_pause(pause: &Path, child: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !pause.join("ready").exists() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("CLI did not reach the delivered-checkpoint write barrier");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn child_report(output: std::process::Output) -> Value {
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("stdout={:?} stderr={:?}", output.stdout, output.stderr));
+    assert_eq!(
+        report["exit"].as_i64(),
+        output.status.code().map(i64::from),
+        "{report}"
+    );
+    report
+}
+
+#[cfg(unix)]
+struct DeniedCheckpointDirectory {
+    path: std::path::PathBuf,
+    permissions: fs::Permissions,
+}
+#[cfg(unix)]
+impl DeniedCheckpointDirectory {
+    fn new(path: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = fs::metadata(path).unwrap().permissions();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o500)).unwrap();
+        Self {
+            path: path.to_owned(),
+            permissions,
+        }
+    }
+}
+#[cfg(unix)]
+impl Drop for DeniedCheckpointDirectory {
+    fn drop(&mut self) {
+        fs::set_permissions(&self.path, self.permissions.clone()).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_denied_delivery_record_keeps_native_facts_and_retries_once() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let writes = f.writes();
+    let pause = tempfile::tempdir().unwrap();
+    let mut child = paused_checkpoint_command(&f, &["pr", "--status"], pause.path());
+    await_checkpoint_pause(pause.path(), &mut child);
+    let denied = DeniedCheckpointDirectory::new(&f.root.join(".git/specgit-v2"));
+    fs::write(pause.path().join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    drop(denied);
+    let failed = child_report(output);
+
+    assert_eq!(failed["exit"], 3, "{failed}");
+    assert_eq!(failed["ok"], false, "{failed}");
+    assert_eq!(failed["status"], "completed", "{failed}");
+    assert_eq!(failed["evidence"]["request"]["id"], 41, "{failed}");
+    assert_eq!(
+        failed["evidence"]["issues"][0]["state"], "closed",
+        "{failed}"
+    );
+    assert_eq!(failed["effects"]["outcome"], "unknown", "{failed}");
+    assert_eq!(
+        failed["effects"]["operations"][0]["action"], "record_delivered_checkpoint",
+        "{failed}"
+    );
+    assert_eq!(
+        failed["effects"]["operations"][0]["outcome"], "unknown",
+        "{failed}"
+    );
+    let diagnostic = failed["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["operation"] == "delivered_checkpoint")
+        .unwrap_or_else(|| panic!("no delivered-checkpoint diagnostic: {failed}"));
+    assert_eq!(diagnostic["code"], "io_failed", "{failed}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("PermissionDenied"),
+        "{failed}"
+    );
+    assert!(
+        diagnostic["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("specgit pr --status"),
+        "{failed}"
+    );
+    assert!(
+        checkpoint(&f).get("delivered_request").is_none(),
+        "{failed}"
+    );
+    assert_eq!(f.writes(), writes);
+
+    let retried = f.run(&["pr", "--status"]);
+    assert_eq!(retried["exit"], 0, "{retried}");
+    assert_eq!(retried["effects"]["outcome"], "applied", "{retried}");
+    assert_eq!(
+        retried["effects"]["operations"][0]["action"], "record_delivered_checkpoint",
+        "{retried}"
+    );
+    assert_eq!(checkpoint(&f)["delivered_request"], 41);
+    assert_eq!(f.writes(), writes);
+
+    let again = f.run(&["pr", "--status"]);
+    assert_eq!(again["exit"], 0, "{again}");
+    assert!(again["effects"].is_null(), "{again}");
+    assert_eq!(checkpoint(&f)["delivered_request"], 41);
+}
+
+fn hold_delivery_lock(f: &delivery::Fixture) -> specgit::assets::AssetStore {
+    let root = f.root.join(".git/specgit-v2");
+    specgit::assets::AssetStore::lock(
+        &root.join("delivery-transactions"),
+        std::slice::from_ref(&root),
+        Duration::from_millis(100),
+    )
+    .unwrap()
+}
+
+fn delivered_diagnostic(report: &Value) -> &Value {
+    report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["operation"] == "delivered_checkpoint")
+        .unwrap_or_else(|| panic!("no delivered-checkpoint diagnostic: {report}"))
+}
+
+#[test]
+fn lock_contention_reports_not_applied_and_retry_records_once() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let writes = f.writes();
+    let held = hold_delivery_lock(&f);
+    let blocked = f.run(&["pr", "--status"]);
+    assert_eq!(blocked["exit"], 3, "{blocked}");
+    assert_eq!(blocked["ok"], false, "{blocked}");
+    assert_eq!(blocked["status"], "completed", "{blocked}");
+    assert_eq!(blocked["evidence"]["request"]["id"], 41, "{blocked}");
+    assert_eq!(blocked["effects"]["outcome"], "not_applied", "{blocked}");
+    assert_eq!(blocked["effects"]["operations"], json!([]), "{blocked}");
+    let diagnostic = delivered_diagnostic(&blocked);
+    assert_eq!(diagnostic["code"], "lock_busy", "{blocked}");
+    assert!(
+        diagnostic["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("specgit pr --status"),
+        "{blocked}"
+    );
+    assert!(
+        checkpoint(&f).get("delivered_request").is_none(),
+        "{blocked}"
+    );
+    assert_eq!(f.writes(), writes);
+
+    drop(held);
+    let retried = f.run(&["pr", "--status"]);
+    assert_eq!(retried["exit"], 0, "{retried}");
+    assert_eq!(retried["effects"]["outcome"], "applied", "{retried}");
+    assert_eq!(checkpoint(&f)["delivered_request"], 41);
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn watch_preserves_completed_event_when_delivery_record_is_blocked() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let writes = f.writes();
+    let held = hold_delivery_lock(&f);
+    let watched = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+        "--once",
+    ]);
+    assert_eq!(watched["exit"], 3, "{watched}");
+    assert_eq!(watched["ok"], false, "{watched}");
+    assert_eq!(watched["status"], "completed", "{watched}");
+    assert_eq!(
+        watched["evidence"]["events"][0]["state"], "completed",
+        "{watched}"
+    );
+    assert_eq!(
+        watched["evidence"]["transport"], "offered_not_acknowledged",
+        "{watched}"
+    );
+    assert_eq!(watched["next_actions"][0]["kind"], "completed", "{watched}");
+    assert_eq!(watched["effects"]["outcome"], "not_applied", "{watched}");
+    assert_eq!(watched["effects"]["operations"], json!([]), "{watched}");
+    let diagnostic = delivered_diagnostic(&watched);
+    assert_eq!(diagnostic["code"], "lock_busy", "{watched}");
+    assert!(
+        checkpoint(&f).get("delivered_request").is_none(),
+        "{watched}"
+    );
+    assert_eq!(f.writes(), writes);
+
+    drop(held);
+    let retried = f.run(&["pr", "--status"]);
+    assert_eq!(retried["exit"], 0, "{retried}");
+    assert_eq!(retried["effects"]["outcome"], "applied", "{retried}");
+    assert_eq!(checkpoint(&f)["delivered_request"], 41);
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn concurrent_selection_change_rejects_delivery_record_without_overwrite() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let writes = f.writes();
+    let pause = tempfile::tempdir().unwrap();
+    let mut child = paused_checkpoint_command(&f, &["pr", "--status"], pause.path());
+    await_checkpoint_pause(pause.path(), &mut child);
+    let mut concurrent = checkpoint(&f);
+    concurrent["request"] = json!(42);
+    fs::write(
+        checkpoint_path(&f),
+        serde_json::to_vec(&concurrent).unwrap(),
+    )
+    .unwrap();
+    fs::write(pause.path().join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let report = child_report(output);
+
+    assert_eq!(report["exit"], 3, "{report}");
+    assert_eq!(report["ok"], false, "{report}");
+    assert_eq!(report["status"], "completed", "{report}");
+    assert_eq!(report["effects"]["outcome"], "not_applied", "{report}");
+    assert_eq!(report["effects"]["operations"], json!([]), "{report}");
+    let diagnostic = delivered_diagnostic(&report);
+    assert_eq!(diagnostic["code"], "concurrent_edit", "{report}");
+    let after = checkpoint(&f);
+    assert_eq!(after["request"], 42, "{after}");
+    assert!(after.get("delivered_request").is_none(), "{after}");
+    assert_eq!(f.writes(), writes);
+}
+
+#[test]
+fn a_writable_checkpoint_for_another_request_is_not_retired() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let mut saved = checkpoint(&f);
+    saved["request"] = json!(42);
+    fs::write(checkpoint_path(&f), serde_json::to_vec(&saved).unwrap()).unwrap();
+    let read = f.run(&["pr", "--status", "--request", "41"]);
+    assert_eq!(read["exit"], 0, "{read}");
+    assert_eq!(read["status"], "completed", "{read}");
+    assert!(read["effects"].is_null(), "{read}");
+    assert!(checkpoint(&f).get("delivered_request").is_none(), "{read}");
 }

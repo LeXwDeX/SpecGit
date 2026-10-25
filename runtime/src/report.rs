@@ -76,6 +76,44 @@ impl Report {
     }
 }
 
+/// Merge a local persistence failure into an otherwise complete observation.
+///
+/// Native evidence and the observation status stay intact. Only a call that
+/// actually attempted the record modifies effects, and existing applied
+/// operations are retained. A failure proven to happen before the write reports
+/// `not_applied`; every other attempted failure keeps an unknown write outcome
+/// until readback proves what applied. A failure before the record attempt adds
+/// only its diagnostic and exit.
+pub(crate) fn local_failure(
+    report: &mut Report,
+    action: &'static str,
+    recovery: Value,
+    diagnostic: Diagnostic,
+    record_attempted: bool,
+) {
+    if record_attempted {
+        let definitely_not_applied = matches!(
+            diagnostic.code,
+            crate::diagnostic::Code::InvalidInput
+                | crate::diagnostic::Code::InputLimit
+                | crate::diagnostic::Code::UnsafePath
+                | crate::diagnostic::Code::OwnershipConflict
+                | crate::diagnostic::Code::ConcurrentEdit
+                | crate::diagnostic::Code::LockBusy
+        );
+        let mut effects = report.effects.take().unwrap_or_default();
+        if !definitely_not_applied {
+            effects.begin("local", action, recovery);
+        }
+        report.effects = Some(effects);
+    }
+    let exit = diagnostic.exit();
+    if crate::diagnostic::exit_priority(exit) > crate::diagnostic::exit_priority(report.exit) {
+        report.exit = exit;
+    }
+    report.diagnostics.push(diagnostic);
+}
+
 impl Serialize for Report {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut out = serializer.serialize_struct("Report", 11)?;
@@ -142,5 +180,78 @@ impl Effects {
     }
     pub fn locator(&mut self, index: usize, name: &str, id: u64) {
         self.operations[index].recovery[name] = id.into();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::Code;
+
+    fn report() -> Report {
+        Report::success("test", "ok", serde_json::json!({}))
+    }
+
+    #[test]
+    fn attempted_unknown_keeps_previous_operations() {
+        let mut report = report();
+        let mut effects = Effects::default();
+        let first = effects.begin("local", "first", serde_json::json!({}));
+        effects.applied(first);
+        report.effects = Some(effects);
+
+        local_failure(
+            &mut report,
+            "second",
+            serde_json::json!({}),
+            Diagnostic::new(Code::IoFailed, "test", "failed", "retry"),
+            true,
+        );
+
+        let effects = report.effects.as_ref().unwrap();
+        assert_eq!(effects.outcome, "unknown");
+        assert_eq!(effects.operations.len(), 2);
+        assert_eq!(effects.operations[0].outcome, "applied");
+        assert_eq!(effects.operations[1].outcome, "unknown");
+        assert_eq!(report.exit, 3);
+    }
+
+    #[test]
+    fn prepare_failure_does_not_claim_a_write() {
+        let mut report = report();
+        local_failure(
+            &mut report,
+            "record",
+            serde_json::json!({}),
+            Diagnostic::new(Code::IoFailed, "prepare", "failed", "retry"),
+            false,
+        );
+
+        assert!(report.effects.is_none());
+        assert_eq!(report.exit, 3);
+        assert_eq!(report.diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn attempted_prewrite_failure_keeps_previous_success() {
+        let mut report = report();
+        let mut effects = Effects::default();
+        let first = effects.begin("local", "first", serde_json::json!({}));
+        effects.applied(first);
+        report.effects = Some(effects);
+
+        local_failure(
+            &mut report,
+            "second",
+            serde_json::json!({}),
+            Diagnostic::new(Code::LockBusy, "test", "busy", "retry"),
+            true,
+        );
+
+        let effects = report.effects.as_ref().unwrap();
+        assert_eq!(effects.outcome, "applied");
+        assert_eq!(effects.operations.len(), 1);
+        assert_eq!(effects.operations[0].outcome, "applied");
+        assert_eq!(report.exit, 3);
     }
 }
