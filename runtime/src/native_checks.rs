@@ -170,13 +170,21 @@ async fn github_workflows(
             .collect::<Result<Vec<_>, _>>()?;
         prs.sort_unstable();
         prs.dedup();
+        let id = number(&run, "id")?;
+        // GitHub's workflow-run schema declares head_branch as string|null.
+        // A null branch has no native context, so it cannot prove that another
+        // run replaced this one. Keep each such run under its own id.
+        let branch = match run.get("head_branch") {
+            Some(Value::String(branch)) if !branch.is_empty() => (Some(branch.clone()), None),
+            Some(Value::Null) => (None, Some(id)),
+            _ => return Err(malformed()),
+        };
         let key = (
             number(&run, "workflow_id")?,
             text(&run, "event")?.to_owned(),
-            text(&run, "head_branch")?.to_owned(),
+            branch,
             prs,
         );
-        let id = number(&run, "id")?;
         number(&run, "run_attempt")?;
         github_result(&run)?;
         match contexts.get(&key) {
