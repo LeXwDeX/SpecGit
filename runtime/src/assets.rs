@@ -497,19 +497,28 @@ impl MaintenancePlan {
                 "An interrupted transaction requires explicit recovery before maintenance.",
             ));
         }
-        let pending: Vec<_> = self
+        let filtered: Vec<_> = self
             .changes
             .iter()
+            .filter(|change| !change.unchanged() || self.observations.contains(&change.path))
+            .collect();
+        let pending: Vec<_> = filtered
+            .iter()
+            .copied()
             .filter(|change| !change.unchanged())
             .collect();
         let recheck = |written: usize| {
             if let Some(check) = &self.precondition {
                 check()?;
             }
+            let changed_before = filtered[..written]
+                .iter()
+                .filter(|change| !change.unchanged())
+                .count();
             for dependency in &self.dependencies {
                 safe_path(&dependency.path)?;
                 let current = Snapshot::read(&dependency.path)?;
-                let own_write = pending[..written]
+                let own_write = pending[..changed_before]
                     .iter()
                     .find(|change| change.path == dependency.path);
                 let matches = own_write.map_or_else(
@@ -1989,6 +1998,238 @@ fn persist_windows(
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod maintenance_observation_tests {
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn temporary_root() -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        (temp, root)
+    }
+
+    fn planned(
+        root: &Path,
+        changes: Vec<Change>,
+        dependencies: Vec<Change>,
+        observations: Vec<PathBuf>,
+    ) -> MaintenancePlan {
+        let mut plan = MaintenancePlan::new(
+            root.join("state"),
+            vec![root.to_owned()],
+            changes,
+            dependencies,
+        );
+        plan.observe(observations);
+        plan
+    }
+
+    #[test]
+    fn leading_observations_match_only_the_written_changed_prefix() {
+        let (_temp, root) = temporary_root();
+        let hook = root.join("pre-commit");
+        let push = root.join("pre-push");
+        let changed = root.join("changed");
+        let dependency = root.join("dependency");
+        fs::write(&hook, b"hook\n").unwrap();
+        fs::write(&push, b"hook\n").unwrap();
+        fs::write(&changed, b"old\n").unwrap();
+        fs::write(&dependency, b"dependency\n").unwrap();
+        let changes = vec![
+            Change::new(hook.clone(), Some(b"hook\n".to_vec())).unwrap(),
+            Change::new(push.clone(), Some(b"hook\n".to_vec())).unwrap(),
+            Change::new(changed.clone(), Some(b"new\n".to_vec())).unwrap(),
+        ];
+        let dependencies =
+            vec![Change::new(dependency.clone(), Some(b"dependency\n".to_vec())).unwrap()];
+        let plan = planned(
+            &root,
+            changes,
+            dependencies,
+            vec![hook.clone(), push.clone()],
+        );
+        let applied = plan.apply().unwrap();
+        assert_eq!(fs::read(&changed).unwrap(), b"new\n");
+        assert_eq!(fs::read(&hook).unwrap(), b"hook\n");
+        assert_eq!(fs::read(&push).unwrap(), b"hook\n");
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        store.rollback(&applied.transaction).unwrap();
+        assert_eq!(fs::read(&changed).unwrap(), b"old\n");
+    }
+
+    #[test]
+    fn between_observations_match_an_overlapping_dependency_only_after_its_write() {
+        let (_temp, root) = temporary_root();
+        let first = root.join("first");
+        let observed = root.join("observed");
+        let second = root.join("second");
+        fs::write(&first, b"first-old\n").unwrap();
+        fs::write(&observed, b"observed\n").unwrap();
+        fs::write(&second, b"second-old\n").unwrap();
+        let changes = vec![
+            Change::new(first.clone(), Some(b"first-new\n".to_vec())).unwrap(),
+            Change::new(observed.clone(), Some(b"observed\n".to_vec())).unwrap(),
+            Change::new(second.clone(), Some(b"second-new\n".to_vec())).unwrap(),
+        ];
+        let dependencies = vec![
+            Change::new(first.clone(), Some(b"first-old\n".to_vec())).unwrap(),
+            Change::new(second.clone(), Some(b"second-old\n".to_vec())).unwrap(),
+        ];
+        let plan = planned(&root, changes, dependencies, vec![observed.clone()]);
+        plan.apply().unwrap();
+        assert_eq!(fs::read(&first).unwrap(), b"first-new\n");
+        assert_eq!(fs::read(&observed).unwrap(), b"observed\n");
+        assert_eq!(fs::read(&second).unwrap(), b"second-new\n");
+    }
+
+    #[test]
+    fn trailing_observations_do_not_index_past_the_changed_prefix() {
+        let (_temp, root) = temporary_root();
+        let changed = root.join("changed");
+        let first = root.join("observed-1");
+        let second = root.join("observed-2");
+        let dependency = root.join("dependency");
+        fs::write(&changed, b"old\n").unwrap();
+        fs::write(&first, b"first\n").unwrap();
+        fs::write(&second, b"second\n").unwrap();
+        fs::write(&dependency, b"dependency\n").unwrap();
+        let changes = vec![
+            Change::new(changed.clone(), Some(b"new\n".to_vec())).unwrap(),
+            Change::new(first.clone(), Some(b"first\n".to_vec())).unwrap(),
+            Change::new(second.clone(), Some(b"second\n".to_vec())).unwrap(),
+        ];
+        let dependencies =
+            vec![Change::new(dependency.clone(), Some(b"dependency\n".to_vec())).unwrap()];
+        let plan = planned(
+            &root,
+            changes,
+            dependencies,
+            vec![first.clone(), second.clone()],
+        );
+        plan.apply().unwrap();
+        assert_eq!(fs::read(&changed).unwrap(), b"new\n");
+        assert_eq!(fs::read(&first).unwrap(), b"first\n");
+        assert_eq!(fs::read(&second).unwrap(), b"second\n");
+    }
+
+    #[test]
+    fn a_failed_write_restores_written_bytes_and_clears_the_pending_barrier() {
+        let (_temp, root) = temporary_root();
+        let first = root.join("first");
+        let second = root.join("second");
+        let next_path = root.join("next");
+        fs::write(&first, b"first-old\n").unwrap();
+        fs::write(&second, b"second-old\n").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let visits = Arc::clone(&calls);
+        let plan = planned(
+            &root,
+            vec![
+                Change::new(first.clone(), Some(b"first-new\n".to_vec())).unwrap(),
+                Change::new(second.clone(), Some(b"second-new\n".to_vec())).unwrap(),
+            ],
+            vec![],
+            vec![],
+        )
+        .with_precondition(move || {
+            if visits.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                return Err(error(Code::ConcurrentEdit, "Stop before the second write."));
+            }
+            Ok(())
+        });
+        assert_eq!(plan.apply().unwrap_err().code, Code::ConcurrentEdit);
+        assert_eq!(fs::read(&first).unwrap(), b"first-old\n");
+        assert_eq!(fs::read(&second).unwrap(), b"second-old\n");
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(store.pending_transactions().unwrap().is_empty());
+        drop(store);
+        let next_plan = planned(
+            &root,
+            vec![Change::new(next_path.clone(), Some(b"next\n".to_vec())).unwrap()],
+            vec![],
+            vec![],
+        );
+        next_plan.apply().unwrap();
+        assert_eq!(fs::read(&next_path).unwrap(), b"next\n");
+    }
+
+    #[test]
+    fn a_later_edit_is_preserved_and_keeps_the_pending_barrier() {
+        let (_temp, root) = temporary_root();
+        let first = root.join("first");
+        let second = root.join("second");
+        let next_path = root.join("next");
+        fs::write(&first, b"first-old\n").unwrap();
+        fs::write(&second, b"second-old\n").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let visits = Arc::clone(&calls);
+        let edited = first.clone();
+        let plan = planned(
+            &root,
+            vec![
+                Change::new(first.clone(), Some(b"first-new\n".to_vec())).unwrap(),
+                Change::new(second.clone(), Some(b"second-new\n".to_vec())).unwrap(),
+            ],
+            vec![],
+            vec![],
+        )
+        .with_precondition(move || {
+            if visits.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                fs::write(&edited, b"later edit\n").unwrap();
+                return Err(error(Code::ConcurrentEdit, "Stop after a later edit."));
+            }
+            Ok(())
+        });
+        assert_eq!(plan.apply().unwrap_err().code, Code::RollbackConflict);
+        assert_eq!(fs::read(&first).unwrap(), b"later edit\n");
+        assert_eq!(fs::read(&second).unwrap(), b"second-old\n");
+        let pending = {
+            let store = AssetStore::lock(
+                &root.join("state"),
+                std::slice::from_ref(&root),
+                Duration::from_secs(2),
+            )
+            .unwrap();
+            store.pending_transactions().unwrap()
+        };
+        assert_eq!(pending.len(), 1);
+        let next_plan = planned(
+            &root,
+            vec![Change::new(next_path.clone(), Some(b"next\n".to_vec())).unwrap()],
+            vec![],
+            vec![],
+        );
+        assert_eq!(next_plan.apply().unwrap_err().code, Code::RollbackConflict);
+        assert!(!next_path.exists());
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(
+            store.rollback(&pending[0]).unwrap_err().code,
+            Code::RollbackConflict
+        );
+        assert_eq!(fs::read(&first).unwrap(), b"later edit\n");
+        assert_eq!(store.pending_transactions().unwrap(), pending);
     }
 }
 
