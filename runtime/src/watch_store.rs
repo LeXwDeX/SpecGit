@@ -13,6 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 pub const RETENTION: u64 = 7 * 24 * 60 * 60;
+pub(crate) const NEXT_ACTION_MAX_BYTES: usize = 1024;
 const MAX_EVENTS: usize = 64;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
@@ -202,7 +203,7 @@ fn validate(state: &State, identity: &Identity) -> Result<(), Diagnostic> {
             e.id.len() != 64
                 || e.fingerprint.len() != 64
                 || e.reason.len() > 4096
-                || e.next_action.len() > 1024
+                || e.next_action.len() > NEXT_ACTION_MAX_BYTES
         })
         || state
             .events
