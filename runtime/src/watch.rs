@@ -128,7 +128,11 @@ impl ObservedEvents {
             .collect()
     }
 }
-fn report(state: &State, event_state: &EventState) -> Report {
+fn report(
+    state: &State,
+    event_state: &EventState,
+    persistence_failure: Option<Diagnostic>,
+) -> Report {
     let events: Vec<_> = state
         .events
         .iter()
@@ -164,11 +168,20 @@ fn report(state: &State, event_state: &EventState) -> Report {
         EventState::Unknown | EventState::TimedOut | EventState::IdentityChanged => 3,
         _ => 0,
     };
+    if let Some(d) = persistence_failure {
+        crate::report::local_failure(
+            &mut result,
+            "record_delivered_checkpoint",
+            json!({"request":state.identity.request}),
+            d,
+            true,
+        );
+    }
     result
 }
 pub async fn run(o: Options, process: Process, cwd: &Path) -> Report {
-    match Box::pin(observe_subscription(o, process, cwd)).await {
-        Ok(r) => report(&r.state, &r.event_state),
+    match Box::pin(transport::subscribe(o, process, cwd, false)).await {
+        Ok((r, persistence_failure)) => report(&r.state, &r.event_state, persistence_failure),
         Err(d) => Report::failure("watch", d),
     }
 }
@@ -177,14 +190,20 @@ pub async fn observe_subscription(
     process: Process,
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
-    transport::subscribe(o, process, cwd, false).await
+    match transport::subscribe(o, process, cwd, false).await? {
+        (_, Some(d)) => Err(d),
+        (events, None) => Ok(events),
+    }
 }
 pub async fn observe_until_attention(
     o: Options,
     process: Process,
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
-    transport::subscribe(o, process, cwd, true).await
+    match transport::subscribe(o, process, cwd, true).await? {
+        (_, Some(d)) => Err(d),
+        (events, None) => Ok(events),
+    }
 }
 pub async fn inbox(o: InboxOptions, process: Process, cwd: &Path) -> Report {
     match Box::pin(inbox_inner(o, process, cwd)).await {

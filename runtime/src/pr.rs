@@ -55,6 +55,12 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
             crate::observation::observe(None, process.clone(), cwd).await
         };
         let retired = retire_delivered(&process, cwd, &observation).await;
+        let recovery = observation
+            .evidence
+            .request
+            .as_ref()
+            .map(|r| serde_json::json!({"branch":r.source,"request":r.id}))
+            .unwrap_or_else(|| serde_json::json!({}));
         let mut report = Report::observation("pr.status", observation);
         match retired {
             Ok(Some((branch, request))) => {
@@ -68,7 +74,18 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
                 report.effects = Some(effects);
             }
             Ok(None) => {}
-            Err(d) => report.diagnostics.push(d),
+            Err(failure) => {
+                let record_attempted = failure.record_attempted;
+                let d =
+                    selection::delivered_persistence_failure(failure.diagnostic, record_attempted);
+                crate::report::local_failure(
+                    &mut report,
+                    "record_delivered_checkpoint",
+                    recovery,
+                    d,
+                    record_attempted,
+                );
+            }
         }
         return report;
     }
@@ -83,13 +100,33 @@ pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
 mod preparation;
 mod write;
 
+/// A failed retirement keeps its stage so a read failure never claims a write.
+struct RetireFailure {
+    diagnostic: Diagnostic,
+    record_attempted: bool,
+}
+impl RetireFailure {
+    fn prepare(diagnostic: Diagnostic) -> Self {
+        Self {
+            diagnostic,
+            record_attempted: false,
+        }
+    }
+    fn record(diagnostic: Diagnostic) -> Self {
+        Self {
+            diagnostic,
+            record_attempted: true,
+        }
+    }
+}
+
 /// Record that this worktree's checkpoint was delivered when the verified read
 /// shows its own request merged. The record only stops new commits.
 async fn retire_delivered(
     process: &Process,
     cwd: &Path,
     observation: &crate::observation::Observation,
-) -> Result<Option<(String, u64)>, Diagnostic> {
+) -> Result<Option<(String, u64)>, RetireFailure> {
     use crate::observation::Status;
     let (Some(request), Some(project_id)) = (
         observation.evidence.request.as_ref(),
@@ -104,13 +141,16 @@ async fn retire_delivered(
     {
         return Ok(None);
     }
-    let bytes = crate::project::git(process, cwd, &["rev-parse", "--show-toplevel"]).await?;
+    let bytes = crate::project::git(process, cwd, &["rev-parse", "--show-toplevel"])
+        .await
+        .map_err(RetireFailure::prepare)?;
     let root = PathBuf::from(
         String::from_utf8(bytes)
-            .map_err(|_| Diagnostic::input("Invalid Git root."))?
+            .map_err(|_| Diagnostic::input("Invalid Git root."))
+            .map_err(RetireFailure::prepare)?
             .trim_end_matches(['\r', '\n']),
     );
-    let Some(declaration) = crate::config::read(&root)? else {
+    let Some(declaration) = crate::config::read(&root).map_err(RetireFailure::prepare)? else {
         return Ok(None);
     };
     let context = crate::config::resolve(
@@ -120,11 +160,13 @@ async fn retire_delivered(
         declaration.provider,
         None,
     )
-    .await?;
+    .await
+    .map_err(RetireFailure::prepare)?;
     if observation.evidence.repository.as_ref() != Some(&context.repository) {
         return Ok(None);
     }
-    Ok(selection::record_delivery(&context, project_id, request)?
+    Ok(selection::record_delivery(&context, project_id, request)
+        .map_err(RetireFailure::record)?
         .map(|id| (request.source.clone(), id)))
 }
 

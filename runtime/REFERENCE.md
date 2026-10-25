@@ -139,8 +139,8 @@ commands use the global input/output contract above.
 | `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; naming a new host selects its guidance and Skill only. Hooks require explicit `--hook-purpose guard|context`; an existing installation retains recorded choices when purposes are omitted. `--remove-hook-purpose guard|context` removes a purpose from the hosts named by `--agent`, or all recorded hosts if `--agent` is omitted; it cannot select a host not already recorded. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update, purpose removal or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. A new project without a setup receipt also installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, so every commit binds an Issue; `--dry-run` lists its hook paths. Tracked hook directories such as Husky, external `core.hooksPath` locations and linked worktrees need explicit `setup --hook-purpose guard`. A recorded installation keeps its purposes, including an explicit `setup --remove-hook-purpose guard`. |
 | `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. A checkpoint recorded as delivered admits no new Issues on its branch; `--branch <name>` replaces it when it has no pending write. |
-| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. When a verified read shows the current branch checkpoint's recorded request merged, `--status` records it as delivered in Git-private state and reports the `record_delivered_checkpoint` local effect. |
-| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. |
+| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. When a verified read shows the current branch checkpoint's recorded request merged, `--status` records it as delivered in Git-private state and reports the `record_delivered_checkpoint` local effect. A failure while preparing the local record (Git, declaration or context) reports `delivered_checkpoint_prepare` and adds no write effect. A failed record attempt keeps the verified native request and Issue evidence but reports a non-success result, with `not_applied` or `unknown` effects and a `delivered_checkpoint` retry diagnostic; rerun `pr --status` after fixing the lock or permission problem. |
+| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. A verified merged request retires the current checkpoint as described under commit binding. A failed local record keeps the published event and adds the `delivered_checkpoint` retry diagnostic without changing the event state or transport receipt. The CLI and refreshing `inbox` keep that evidence and report `not_applied` or `unknown` effects; library `observe_subscription` and `observe_until_attention` keep the published event and return the same diagnostic as `Err`. |
 | `hook` | Advisory host context with `--event SessionStart\|PreToolUse`. SessionStart briefly states rules and points to the project Skill; PreToolUse adds pending context and recovery guidance without tool denial. Retired PostToolUse/Stop callbacks return quietly before input is read. `--observe` does not launch automatic observation; use bounded watch/inbox. State is Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
 | `guard` | Local Git-hook entrypoint. `--install --dry-run` and `--uninstall --dry-run` preview the same plans without creating hooks, state, directories or locks; use `--json` for machine output. Dry-run requires an install/uninstall operation and conflicts with `--stage`. Management, health planning and repair reject `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` overrides before creating any lock, directory or transaction; `--stage` keeps Git's hook environment. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while an active setup or sibling hook consumer needs the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref, and requires every new non-merge commit to carry an `Issue: #N` trailer naming a selected Issue; deletions and tag-only updates are outside this checkpoint rule. |
 | `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
@@ -505,14 +505,29 @@ When `pr --status` or `watch` verifies that the request recorded in the current
 branch checkpoint is merged (`merged`, `completed` or `merged_issues_open`), it
 records `delivered_request` in the checkpoint. A checkpoint without a recorded
 request (for example, a request created outside `specgit pr`) is never retired.
-The record is local, grants nothing and makes no forge write; `watch` records it
-best effort, so confirm with `pr --status`. The guard then rejects new commits and
-pushes on that branch. `issue` on the delivered branch fails. Switch to the updated
-target branch and run `issue <spec> --branch <name>`: a branch cut from the old
-branch may carry squash-merged commits that pre-push treats as new. A delivered
-checkpoint without pending writes gives way to that new selection. Incomplete reads,
-other requests, other branches and pending writes leave the checkpoint unchanged. The Rust
-`Selection` type gains the optional `delivered_request` field.
+The record is local, grants nothing and makes no forge write. `pr --status`
+reports a successful record as the applied `record_delivered_checkpoint` effect.
+If the local record fails, the report keeps the verified native request and Issue
+evidence but exits non-zero (normally 3, subject to the higher-priority
+cancellation, invalid-input or rejected-evidence exits), with `ok:false`. A
+failure proven before the write (`lock_busy`, `concurrent_edit` or another
+rejected destination) reports `not_applied` and no applied operation. An IO
+failure whose write stage cannot be proven reports the
+`record_delivered_checkpoint` operation as `unknown`; it is not evidence of
+success. A failure while reading Git, declaration or delivery context before
+the record attempt uses operation `delivered_checkpoint_prepare` and adds no
+write effect; it does not claim that a local record was attempted. The
+`delivered_checkpoint` diagnostic names the retry: resolve the lock,
+filesystem permission or preparation problem and rerun `specgit pr --status`
+for the same request. The record is idempotent, so a later writable read
+records it once. `watch` keeps the native event, including its `completed`
+state and `offered_not_acknowledged` transport receipt, and adds the same
+diagnostic and non-success exit. The CLI and refreshing `inbox` report
+`not_applied` or `unknown` effects, while library `observe_subscription` and
+`observe_until_attention` return the published-event diagnostic as `Err`
+instead of silently succeeding. Incomplete reads, stale identity, other
+requests, other branches and pending writes leave the checkpoint unchanged. The
+Rust `Selection` type gains the optional `delivered_request` field.
 
 ## Observation and host delivery
 
@@ -536,8 +551,12 @@ stay terminal. A later settled state can return to `open` or proceed through
 normal merged and Issue-closure checks. Contradictory or incomplete identity
 stays `unknown`. `Observation::exit()` uses diagnostic precedence: cancellation
 (130), invalid input (2), rejected evidence (1), then unknown (3). A transient
-locked diagnostic does not mask those failures. Watch retains its event-state
-exit mapping; an `unknown` event returns 3.
+locked diagnostic does not mask those failures. A local delivered-checkpoint
+persistence failure merges into the same precedence: the native lifecycle fact
+and its report status stay visible, while the added `delivered_checkpoint`
+diagnostic prevents success. Watch retains its event-state exit mapping; an
+`unknown` event returns 3, and a failed delivered-checkpoint record also returns
+non-success without replacing the published event.
 
 For GitHub, the complete current-head check-run pages are validated before
 selecting the highest native run ID for each `(app ID, check name, check suite)`

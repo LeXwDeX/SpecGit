@@ -240,6 +240,35 @@ impl Locked {
     }
 }
 
+/// Keep the verified native facts and name a concrete retry for a failed local record.
+///
+/// `record_attempted` distinguishes a failure while reading Git/declaration
+/// inputs from a failure after the local record path was entered. Only the
+/// latter may describe a local write outcome.
+pub(crate) fn delivered_persistence_failure(d: Diagnostic, record_attempted: bool) -> Diagnostic {
+    if record_attempted {
+        Diagnostic::new(
+            d.code,
+            "delivered_checkpoint",
+            &format!(
+                "The verified delivered checkpoint could not be recorded locally. {}",
+                d.message
+            ),
+            "Resolve the reported lock or filesystem permission problem, then rerun `specgit pr --status` for the same verified request. The local record is idempotent: a writable checkpoint records delivery once, and this failure does not change the verified native merge or Issue facts.",
+        )
+    } else {
+        Diagnostic::new(
+            d.code,
+            "delivered_checkpoint_prepare",
+            &format!(
+                "The verified delivered checkpoint could not be prepared locally. {}",
+                d.message
+            ),
+            "Resolve the reported Git, declaration or filesystem problem, then rerun `specgit pr --status` for the same verified request. No local delivery record was attempted, and the verified native merge or Issue facts are unchanged.",
+        )
+    }
+}
+
 /// Retire the current branch's checkpoint after its recorded request was read
 /// back merged into the recorded target. Returns the request ID, or `None` when
 /// the checkpoint has no recorded request or the facts identify another one.
