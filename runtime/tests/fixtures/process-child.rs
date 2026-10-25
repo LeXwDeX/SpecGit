@@ -666,6 +666,35 @@ fn native_api(args: &[String], path: &std::path::Path) {
         );
     }
     state["calls"].as_array_mut().unwrap().push(call);
+    if method == "GET" {
+        // A test can park the final request read before the production CLI
+        // retires its checkpoint. This barrier lives in the fake provider, so
+        // installed binaries need no fixture instrumentation.
+        let gate = state["request_read_gate"].clone();
+        if let (Some(request_id), Some(after_calls)) =
+            (gate["request_id"].as_u64(), gate["after_calls"].as_u64())
+            && gate["resumed"].is_null()
+            && (endpoint.ends_with(&format!("/pulls/{request_id}"))
+                || endpoint.ends_with(&format!("/merge_requests/{request_id}")))
+            && !endpoint.ends_with("/closes_issues")
+        {
+            let calls = state["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|call| call["method"] == "GET" && call["endpoint"] == *endpoint)
+                .count() as u64;
+            if calls == after_calls {
+                let released = pause(path, &lock, &mut state, || wait_for_gate(&gate));
+                if !released {
+                    eprintln!("fixture request-read gate was not released");
+                    std::process::exit(1);
+                }
+                state["request_read_gate"]["resumed"] = json!(calls);
+                snapshot::write(path, &state);
+            }
+        }
+    }
     if method == "GET" && (endpoint.starts_with("search/issues?") || endpoint.contains("/issues?"))
     {
         if state["edit_declaration_on_search"].as_bool() == Some(true) {
