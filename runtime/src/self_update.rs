@@ -17,8 +17,9 @@ use std::{
     fmt, fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
+use tokio_util::sync::CancellationToken;
 
 pub const REPOSITORY: &str = "LeXwDeX/SpecGit";
 pub const API_HOST: &str = "github.com";
@@ -38,6 +39,8 @@ const METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const COSIGN_TIMEOUT: Duration = Duration::from_secs(120);
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(20);
+const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+const LOCK_FILE: &str = ".specgit-update.lock";
 const OPERATION: &str = "update";
 
 #[derive(Clone, Args, Default)]
@@ -217,6 +220,15 @@ fn io_failed(operation: &str, message: &str) -> Diagnostic {
         operation,
         message,
         "Check the temporary directory and executable location, then retry.",
+    )
+}
+
+fn baseline_unreadable() -> Diagnostic {
+    Diagnostic::new(
+        Code::IoFailed,
+        "update_install",
+        "The current executable could not be read before replacement.",
+        "Check the executable path and permissions, then rerun specgit update. Nothing was replaced.",
     )
 }
 
@@ -549,8 +561,34 @@ async fn reported_version(
     cwd: &Path,
     operation: &str,
 ) -> Result<Option<Version>, Diagnostic> {
+    // Test-only cancellation; release builds never read it.
+    #[cfg(feature = "test-fixtures")]
+    if operation == "update_readback"
+        && std::env::var_os("SPECGIT_TEST_UPDATE_READBACK_CANCELLED").is_some()
+    {
+        return Err(Diagnostic::new(
+            Code::Cancelled,
+            operation,
+            "The installed executable readback was cancelled by the test fixture.",
+            "No automatic restore is attempted.",
+        ));
+    }
+    let request = Request::new(executable, cwd, operation).args(["--human", "--version"]);
+    // Test-only readback version override; release builds never read it.
+    #[cfg(feature = "test-fixtures")]
+    let request = {
+        let mut request = request;
+        if operation == "update_readback"
+            && let Ok(version) = std::env::var("SPECGIT_TEST_UPDATE_READBACK_VERSION")
+        {
+            request
+                .env
+                .insert("SPECGIT_FIXTURE_BINARY_VERSION".into(), version.into());
+        }
+        request
+    };
     let result = bounded(process, SMOKE_TIMEOUT, 64 * 1024)
-        .run(Request::new(executable, cwd, operation).args(["--human", "--version"]))
+        .run(request)
         .await;
     let output = match result {
         Err(diagnostic) if diagnostic.code == Code::Cancelled => return Err(diagnostic),
@@ -629,6 +667,19 @@ pub enum Strategy {
 }
 impl Strategy {
     pub fn native() -> Self {
+        // Test-only strategy override; release builds never read it.
+        #[cfg(feature = "test-fixtures")]
+        if let Ok(strategy) = std::env::var("SPECGIT_TEST_UPDATE_STRATEGY") {
+            return match strategy.as_str() {
+                "atomic_replace" => Self::AtomicReplace,
+                "rename_aside" => Self::RenameAside,
+                _ => Self::native_platform(),
+            };
+        }
+        Self::native_platform()
+    }
+
+    fn native_platform() -> Self {
         if cfg!(windows) {
             Self::RenameAside
         } else {
@@ -637,9 +688,179 @@ impl Strategy {
     }
 }
 
-/// Choose an unused backup path beside `target`, labelled with the previous version.
-pub fn backup_path(target: &Path, previous: &str) -> Result<PathBuf, Diagnostic> {
-    let dir = target.parent().ok_or_else(|| not_writable(target))?;
+/// The installation-directory lock is persistent. Deleting it would let two
+/// processes lock different inodes while naming the same target.
+struct UpdateLock {
+    _file: fs::File,
+    path: PathBuf,
+}
+impl UpdateLock {
+    fn acquire(dir: &Path, cancel: Option<&CancellationToken>) -> Result<Self, Diagnostic> {
+        if cancel.is_some_and(|token| token.is_cancelled()) {
+            return Err(cancelled_update("update_install"));
+        }
+        let path = dir.join(LOCK_FILE);
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| lock_error(dir, &error))?;
+        let timeout = lock_timeout();
+        let started = Instant::now();
+        #[cfg(feature = "test-fixtures")]
+        let mut paused = false;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Self { _file: file, path }),
+                Err(fs::TryLockError::WouldBlock) if started.elapsed() < timeout => {
+                    #[cfg(feature = "test-fixtures")]
+                    if !paused {
+                        paused = true;
+                        fixture_pause("lock-wait", "update_install", cancel)?;
+                    }
+                    if cancel.is_some_and(|token| token.is_cancelled()) {
+                        return Err(cancelled_update("update_install"));
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(fs::TryLockError::WouldBlock) => {
+                    return Err(Diagnostic::new(
+                        Code::LockBusy,
+                        "update_install",
+                        "Another update holds the installation lock for this executable.",
+                        "Wait for the other update to finish, then rerun specgit update. Nothing was replaced by this attempt.",
+                    ));
+                }
+                Err(fs::TryLockError::Error(error)) => return Err(lock_error(dir, &error)),
+            }
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Run a bounded blocking wait without starving the runtime's signal/select
+/// tasks on single-worker multi-thread runtimes.
+fn blocking<T>(work: impl FnOnce() -> T) -> T {
+    if tokio::runtime::Handle::current().runtime_flavor()
+        == tokio::runtime::RuntimeFlavor::MultiThread
+    {
+        tokio::task::block_in_place(work)
+    } else {
+        work()
+    }
+}
+
+fn cancelled_update(operation: &str) -> Diagnostic {
+    Diagnostic::new(
+        Code::Cancelled,
+        operation,
+        "The update was cancelled.",
+        "The target and any backup were left in place; verify both before retrying.",
+    )
+}
+
+/// Drop an effect that never owned a backup. The schema has no per-operation
+/// `not_applied` value, so an absent operation is the explicit no-ownership
+/// record rather than a recovery path that cannot exist.
+fn discard_effect(effects: &mut Effects, index: usize) {
+    effects.operations.truncate(index);
+    effects.outcome = "not_applied";
+}
+
+fn lock_timeout() -> Duration {
+    // Test-only bounded-wait override; release builds always use LOCK_TIMEOUT.
+    #[cfg(feature = "test-fixtures")]
+    if let Ok(text) = std::env::var("SPECGIT_TEST_UPDATE_LOCK_TIMEOUT_MS")
+        && let Ok(milliseconds) = text.parse::<u64>()
+    {
+        return Duration::from_millis(milliseconds.min(LOCK_TIMEOUT.as_millis() as u64));
+    }
+    LOCK_TIMEOUT
+}
+
+fn lock_error(dir: &Path, error: &std::io::Error) -> Diagnostic {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        not_writable(dir)
+    } else {
+        io_failed(
+            "update_install",
+            "The persistent update lock beside the executable could not be opened.",
+        )
+    }
+}
+
+/// The target bytes this operation started from. A change observed under the
+/// lock means another updater won; this attempt must not replace its result.
+struct Baseline {
+    sha256: String,
+}
+impl Baseline {
+    fn capture(target: &Path) -> Result<Self, Diagnostic> {
+        let bytes = fs::read(target).map_err(|_| baseline_unreadable())?;
+        Ok(Self {
+            sha256: sha256_hex(&bytes),
+        })
+    }
+
+    fn ensure_unchanged(&self, target: &Path) -> Result<(), Diagnostic> {
+        if Self::capture(target)?.sha256 == self.sha256 {
+            return Ok(());
+        }
+        Err(Diagnostic::new(
+            Code::ConcurrentEdit,
+            "update_install",
+            "The executable changed while this release was being verified. Nothing was replaced by this attempt.",
+            "Rerun specgit update against the current executable.",
+        ))
+    }
+}
+
+/// Test-only synchronization point. Release builds never contain these calls.
+#[cfg(feature = "test-fixtures")]
+fn fixture_pause(
+    point: &str,
+    operation: &str,
+    cancel: Option<&CancellationToken>,
+) -> Result<(), Diagnostic> {
+    if std::env::var("SPECGIT_TEST_UPDATE_PAUSE").ok().as_deref() != Some(point) {
+        return Ok(());
+    }
+    let (Ok(parked), Ok(release)) = (
+        std::env::var("SPECGIT_TEST_UPDATE_PAUSE_PARKED"),
+        std::env::var("SPECGIT_TEST_UPDATE_PAUSE_RELEASE"),
+    ) else {
+        return Ok(());
+    };
+    fs::write(&parked, b"").expect("fixture pause marker");
+    let started = Instant::now();
+    loop {
+        if Path::new(&release).exists() {
+            return Ok(());
+        }
+        if cancel.is_some_and(|token| token.is_cancelled()) {
+            return Err(cancelled_update(operation));
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "fixture pause timed out at {point}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn missing(path: &Path) -> bool {
+    matches!(
+        fs::symlink_metadata(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+fn backup_filename(target: &Path, previous: &str, suffix: usize) -> String {
     let name = target
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -650,15 +871,19 @@ pub fn backup_path(target: &Path, previous: &str) -> Result<PathBuf, Diagnostic>
         }
         _ => (name, String::new()),
     };
+    let suffix = if suffix == 0 {
+        String::new()
+    } else {
+        format!("-{suffix}")
+    };
+    format!("{stem}.backup-{previous}{suffix}{extension}")
+}
+
+/// Choose an unused backup path beside `target`, labelled with the previous version.
+pub fn backup_path(target: &Path, previous: &str) -> Result<PathBuf, Diagnostic> {
+    let dir = target.parent().ok_or_else(|| not_writable(target))?;
     (0..100)
-        .map(|n| {
-            let suffix = if n == 0 {
-                String::new()
-            } else {
-                format!("-{n}")
-            };
-            dir.join(format!("{stem}.backup-{previous}{suffix}{extension}"))
-        })
+        .map(|suffix| dir.join(backup_filename(target, previous, suffix)))
         .find(|candidate| fs::symlink_metadata(candidate).is_err())
         .ok_or_else(|| {
             Diagnostic::new(
@@ -670,31 +895,22 @@ pub fn backup_path(target: &Path, previous: &str) -> Result<PathBuf, Diagnostic>
         })
 }
 
-fn copy_new(source: &Path, destination: &Path) -> std::io::Result<()> {
-    let copy = || -> std::io::Result<()> {
-        let mut input = fs::File::open(source)?;
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(destination)?;
-        std::io::copy(&mut input, &mut output)?;
-        output.set_permissions(input.metadata()?.permissions())?;
-        output.sync_all()
-    };
-    copy().inspect_err(|_| {
-        let _ = fs::remove_file(destination);
-    })
+/// Copy the previous executable into an exclusively created backup. A failed
+/// create never removes a file this operation did not create; a partial copy
+/// is retained as recovery evidence.
+fn copy_new(source: &Path, destination: &Path, created: &mut bool) -> std::io::Result<()> {
+    let mut input = fs::File::open(source)?;
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    *created = true;
+    std::io::copy(&mut input, &mut output)?;
+    output.set_permissions(input.metadata()?.permissions())?;
+    output.sync_all()
 }
 
-/// Replace `target` with `bytes`, keeping the previous executable at the
-/// returned backup path. On failure the target is unchanged or restored.
-pub fn install(
-    target: &Path,
-    bytes: &[u8],
-    previous: &str,
-    strategy: Strategy,
-) -> Result<PathBuf, Diagnostic> {
-    let operation = "update_install";
+fn stage(target: &Path, bytes: &[u8]) -> Result<tempfile::NamedTempFile, Diagnostic> {
     let dir = target.parent().ok_or_else(|| not_writable(target))?;
     let mut staged = tempfile::Builder::new()
         .prefix(".specgit-update-")
@@ -704,49 +920,224 @@ pub fn install(
         .write_all(bytes)
         .and_then(|()| staged.as_file().sync_all())
         .and_then(|()| set_executable(staged.path()))
-        .map_err(|_| io_failed(operation, "The new executable could not be staged."))?;
-    let backup = backup_path(target, previous)?;
+        .map_err(|_| io_failed("update_install", "The new executable could not be staged."))?;
+    Ok(staged)
+}
+
+/// Replace the target while `lock` is held. The caller keeps the same lock
+/// through installed readback and failure reporting.
+fn install_locked(
+    target: &Path,
+    bytes: &[u8],
+    previous: &str,
+    strategy: Strategy,
+    lock: &UpdateLock,
+    effects: &mut Effects,
+    cancel: Option<&CancellationToken>,
+) -> Result<PathBuf, Diagnostic> {
+    let operation = "update_install";
+    if cancel.is_some_and(|token| token.is_cancelled()) {
+        return Err(cancelled_update(operation));
+    }
+    let dir = target.parent().ok_or_else(|| not_writable(target))?;
+    let previous_sha256 = fs::read(target)
+        .map(|bytes| sha256_hex(&bytes))
+        .map_err(|_| baseline_unreadable())?;
+    let expected_sha256 = sha256_hex(bytes);
+    let staged = stage(target, bytes)?;
+    #[cfg(not(feature = "test-fixtures"))]
+    let _ = cancel;
     match strategy {
         Strategy::AtomicReplace => {
-            copy_new(target, &backup).map_err(|_| not_writable(dir))?;
+            let backup = backup_path(target, previous)?;
+            let index = effects.begin(
+                "local",
+                "replace_executable",
+                json!({
+                    "executable": target.display().to_string(),
+                    "backup": backup.display().to_string(),
+                    "restore": "Move the backup over the executable path to roll back.",
+                    "lock": lock.path().display().to_string(),
+                    "previous_sha256": &previous_sha256,
+                    "expected_sha256": &expected_sha256,
+                }),
+            );
+            #[cfg(feature = "test-fixtures")]
+            if let Err(diagnostic) = fixture_pause("backup-selected", operation, cancel) {
+                discard_effect(effects, index);
+                return Err(diagnostic);
+            }
+            let mut created = false;
+            match copy_new(target, &backup, &mut created) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    discard_effect(effects, index);
+                    return Err(Diagnostic::new(
+                        Code::ConcurrentEdit,
+                        operation,
+                        "Another updater created the selected backup path. The existing backup was not changed.",
+                        "Wait for the other update to finish, then rerun specgit update. Nothing was replaced by this attempt.",
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    if created {
+                        effects.operations[index].recovery["backup_complete"] = json!(false);
+                    } else {
+                        discard_effect(effects, index);
+                    }
+                    return Err(not_writable(dir));
+                }
+                Err(_) => {
+                    if !created {
+                        discard_effect(effects, index);
+                        return Err(Diagnostic::new(
+                            Code::IoFailed,
+                            operation,
+                            "The previous executable could not be copied to its backup and no backup was created. The executable was not replaced.",
+                            "Check the executable directory and permissions, then rerun specgit update. Nothing was replaced by this attempt.",
+                        ));
+                    }
+                    effects.operations[index].recovery["backup_complete"] = json!(false);
+                    return Err(Diagnostic::new(
+                        Code::IoFailed,
+                        operation,
+                        &format!(
+                            "The previous executable could not be fully copied to its backup. A partial backup remains at {}.",
+                            backup.display()
+                        ),
+                        "Do not use the partial backup for recovery. Check the executable directory, then rerun specgit update. The executable was not replaced.",
+                    ));
+                }
+            }
+            effects.operations[index].recovery["backup_complete"] = json!(true);
             if staged.persist(target).is_err() {
-                let _ = fs::remove_file(&backup);
-                return Err(io_failed(
+                return Err(Diagnostic::new(
+                    Code::IoFailed,
                     operation,
-                    "The new executable could not be moved into place; the executable is unchanged.",
+                    &format!(
+                        "The new executable could not be moved into place; the executable is unchanged and the previous bytes remain at {}.",
+                        backup.display()
+                    ),
+                    &format!(
+                        "Check the executable directory, then rerun specgit update. The backup at {} can be used for manual recovery.",
+                        backup.display()
+                    ),
                 ));
             }
+            effects.applied(index);
+            sync_dir(dir);
+            Ok(backup)
         }
         Strategy::RenameAside => {
-            fs::rename(target, &backup).map_err(|_| not_writable(dir))?;
-            if staged.persist(target).is_err() {
-                if fs::rename(&backup, target).is_err() {
-                    return Err(Diagnostic::new(
+            let transaction = tempfile::Builder::new()
+                .prefix(".specgit-backup-")
+                .tempdir_in(dir)
+                .map_err(|_| not_writable(dir))?;
+            let backup = transaction
+                .path()
+                .join(backup_filename(target, previous, 0));
+            let index = effects.begin(
+                "local",
+                "replace_executable",
+                json!({
+                    "executable": target.display().to_string(),
+                    "backup": backup.display().to_string(),
+                    "restore": "Move the backup over the executable path to roll back.",
+                    "lock": lock.path().display().to_string(),
+                    "previous_sha256": &previous_sha256,
+                    "expected_sha256": &expected_sha256,
+                }),
+            );
+            #[cfg(feature = "test-fixtures")]
+            if let Err(diagnostic) = fixture_pause("backup-selected", operation, cancel) {
+                discard_effect(effects, index);
+                return Err(diagnostic);
+            }
+            if fs::rename(target, &backup).is_err() {
+                discard_effect(effects, index);
+                return Err(not_writable(dir));
+            }
+            // Keep the transaction directory before any further failure so the
+            // only previous bytes are never removed by RAII cleanup.
+            let transaction = transaction.keep();
+            effects.operations[index].recovery["backup_complete"] = json!(true);
+            sync_dir(&transaction);
+            sync_dir(dir);
+            #[cfg(feature = "test-fixtures")]
+            fixture_pause("target-aside", operation, cancel)?;
+            match staged.persist_noclobber(target) {
+                Ok(_) => {
+                    effects.applied(index);
+                    sync_dir(dir);
+                    Ok(backup)
+                }
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    Err(Diagnostic::new(
                         Code::RollbackConflict,
                         operation,
                         &format!(
-                            "The new executable could not be moved into place and the previous executable remains at {}.",
+                            "The target path was recreated by another process, so the new executable was not published. No automatic restore was attempted; the previous executable remains at {}.",
                             backup.display()
                         ),
                         &format!(
-                            "Move {} back to {} before running specgit again.",
-                            backup.display(),
-                            target.display()
+                            "Inspect {} and {}, verify their hashes, then recover manually if appropriate.",
+                            target.display(),
+                            backup.display()
                         ),
-                    ));
+                    ))
                 }
-                return Err(io_failed(
-                    operation,
-                    "The new executable could not be moved into place; the previous executable was restored.",
-                ));
+                Err(_) => {
+                    let target_state = if missing(target) { "absent" } else { "present" };
+                    Err(Diagnostic::new(
+                        Code::RollbackConflict,
+                        operation,
+                        &format!(
+                            "The new executable could not be published; no automatic restore was attempted. The previous executable remains at {} and the target path is {target_state}.",
+                            backup.display()
+                        ),
+                        &format!(
+                            "Inspect {} and {}, verify their hashes, then recover manually if appropriate.",
+                            target.display(),
+                            backup.display()
+                        ),
+                    ))
+                }
             }
         }
     }
-    #[cfg(unix)]
+}
+
+#[cfg(unix)]
+fn sync_dir(dir: &Path) {
     if let Ok(directory) = fs::File::open(dir) {
         let _ = directory.sync_all();
     }
-    Ok(backup)
+}
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) {}
+
+/// Replace `target` with `bytes`, keeping the previous executable at the
+/// returned backup path. The operation takes the persistent installation lock.
+/// Lock, baseline, or installation failure attempts no automatic restore; the
+/// target and any successfully created backup are left in place for manual
+/// verification.
+pub fn install(
+    target: &Path,
+    bytes: &[u8],
+    previous: &str,
+    strategy: Strategy,
+) -> Result<PathBuf, Diagnostic> {
+    let dir = target.parent().ok_or_else(|| not_writable(target))?;
+    let lock = UpdateLock::acquire(dir, None)?;
+    install_locked(
+        target,
+        bytes,
+        previous,
+        strategy,
+        &lock,
+        &mut Effects::default(),
+        None,
+    )
 }
 
 #[derive(Serialize)]
@@ -989,6 +1380,15 @@ async fn update(
     };
     let target = install_target()?;
     evidence.executable = Some(target.display().to_string());
+    let apply = !options.dry_run && !options.check;
+    // Capture the starting bytes before any network read. A concurrent updater
+    // that finishes during release metadata or download changes this baseline;
+    // the lock-time recheck then fails closed instead of replacing its result.
+    let baseline = if apply {
+        Some(Baseline::capture(&target)?)
+    } else {
+        None
+    };
     let gh = resolve_executable("gh").map_err(|_| {
         Diagnostic::new(
             Code::MissingExecutable,
@@ -1042,7 +1442,6 @@ async fn update(
             "downgrade_available"
         });
     }
-    let apply = !options.dry_run;
     let directory = target.parent().ok_or_else(|| not_writable(&target))?;
     if apply {
         // Fail before any download when the executable cannot be replaced.
@@ -1101,56 +1500,105 @@ async fn update(
         return Ok("verified");
     }
 
-    let backup = install(
-        &target,
-        &executable,
-        &current.to_string(),
-        Strategy::native(),
-    )?;
+    // Keep one cooperative lock from the pre-install baseline recheck through
+    // installed readback and failure reporting.
+    #[cfg(feature = "test-fixtures")]
+    blocking(|| fixture_pause("before-lock", "update_install", Some(&process.cancellation)))?;
+    let lock = blocking(|| UpdateLock::acquire(directory, Some(&process.cancellation)))?;
+    if process.cancellation.is_cancelled() {
+        return Err(cancelled_update("update_install"));
+    }
+    baseline
+        .expect("apply captures a baseline")
+        .ensure_unchanged(&target)?;
     let mut journal = Effects::default();
-    let replaced = journal.begin(
-        "local",
-        "replace_executable",
-        json!({"executable":target.display().to_string(),"backup":backup.display().to_string(),"restore":"Move the backup over the executable path to roll back."}),
-    );
-    journal.applied(replaced);
+    let backup = match blocking(|| {
+        install_locked(
+            &target,
+            &executable,
+            &current.to_string(),
+            Strategy::native(),
+            &lock,
+            &mut journal,
+            Some(&process.cancellation),
+        )
+    }) {
+        Ok(backup) => backup,
+        Err(diagnostic) => {
+            // An empty journal is `not_applied`; keep it visible so a failed
+            // install never implies ownership of a backup that does not exist.
+            *effects = Some(journal);
+            return Err(diagnostic);
+        }
+    };
     *effects = Some(journal);
-    // A cancelled or failed readback after replacement restores the backup like a mismatch.
-    let installed_matches = fs::read(&target)
-        .map(|bytes| sha256_hex(&bytes) == executable_sha256)
-        .unwrap_or(false)
-        && matches!(
-            reported_version(process, &target, &cwd, "update_readback").await,
-            Ok(version) if version == Some(release.version)
-        );
-    if !installed_matches {
-        let restored = fs::rename(&backup, &target).is_ok();
+    #[cfg(feature = "test-fixtures")]
+    let readback_paused =
+        blocking(|| fixture_pause("readback", "update_readback", Some(&process.cancellation)));
+    #[cfg(not(feature = "test-fixtures"))]
+    let readback_paused: Result<(), Diagnostic> = Ok(());
+    let readback = match readback_paused {
+        Err(diagnostic) => Err(diagnostic),
+        Ok(()) => {
+            if fs::read(&target)
+                .map(|bytes| sha256_hex(&bytes) == executable_sha256)
+                .unwrap_or(false)
+            {
+                reported_version(process, &target, &cwd, "update_readback").await
+            } else {
+                Ok(None)
+            }
+        }
+    };
+    if !matches!(&readback, Ok(version) if *version == Some(release.version)) {
+        #[cfg(feature = "test-fixtures")]
+        let readback_failed_paused = blocking(|| {
+            fixture_pause(
+                "readback-failed",
+                "update_readback",
+                Some(&process.cancellation),
+            )
+        });
+        #[cfg(not(feature = "test-fixtures"))]
+        let readback_failed_paused: Result<(), Diagnostic> = Ok(());
+        let cancelled = match readback_failed_paused {
+            Ok(()) => matches!(
+                &readback,
+                Err(diagnostic) if diagnostic.code == Code::Cancelled
+            ),
+            Err(diagnostic) => diagnostic.code == Code::Cancelled,
+        };
+        let target_sha256 = fs::read(&target)
+            .map(|bytes| sha256_hex(&bytes))
+            .unwrap_or_else(|_| "unreadable".into());
+        let backup_sha256 = fs::read(&backup)
+            .map(|bytes| sha256_hex(&bytes))
+            .unwrap_or_else(|_| "unreadable".into());
         if let Some(journal) = effects.as_mut()
-            && restored
+            && let Some(replace) = journal.operations.first_mut()
         {
-            let index = journal.begin(
-                "local",
-                "restore_executable",
-                json!({"executable":target.display().to_string()}),
-            );
-            journal.applied(index);
+            replace.recovery["target_sha256"] = json!(&target_sha256);
+            replace.recovery["backup_sha256"] = json!(&backup_sha256);
         }
         return Err(Diagnostic::new(
-            if restored {
-                Code::EvidenceRejected
+            if cancelled {
+                Code::Cancelled
             } else {
                 Code::RollbackConflict
             },
             "update_readback",
-            if restored {
-                "The installed executable failed readback; the previous executable was restored."
+            if cancelled {
+                "The installed executable readback was cancelled. No automatic restore was attempted; the target and backup were preserved."
             } else {
-                "The installed executable failed readback and the backup could not be restored."
+                "The installed executable failed readback. No automatic restore was attempted; the target and backup were preserved."
             },
             &format!(
-                "Move {} over {} if it is still present, then reinstall manually.",
+                "Verify both files before manual recovery. target: {} sha256 {}; expected installed sha256 {}; backup: {} sha256 {}.",
+                target.display(),
+                target_sha256,
+                executable_sha256,
                 backup.display(),
-                target.display()
+                backup_sha256
             ),
         ));
     }
@@ -1320,17 +1768,55 @@ mod tests {
             let target = temp.path().join("specgit.exe");
             fs::write(&target, b"old").unwrap();
             let backup = install(&target, b"new", "1.0.0", strategy).unwrap();
-            assert_eq!(backup, temp.path().join("specgit.backup-1.0.0.exe"));
+            if strategy == Strategy::AtomicReplace {
+                assert_eq!(backup, temp.path().join("specgit.backup-1.0.0.exe"));
+            } else {
+                assert_eq!(
+                    backup.file_name().unwrap(),
+                    "specgit.backup-1.0.0.exe",
+                    "rename-aside backups stay in a unique transaction directory"
+                );
+                assert!(
+                    backup
+                        .parent()
+                        .unwrap()
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with(".specgit-backup-")
+                );
+            }
             assert_eq!(fs::read(&target).unwrap(), b"new");
             assert_eq!(fs::read(&backup).unwrap(), b"old");
+            #[cfg(unix)]
+            let lock_inode = {
+                use std::os::unix::fs::MetadataExt;
+                fs::metadata(temp.path().join(LOCK_FILE)).unwrap().ino()
+            };
             let second = install(&target, b"newer", "1.0.0", strategy).unwrap();
-            assert_eq!(second, temp.path().join("specgit.backup-1.0.0-1.exe"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                assert_eq!(
+                    fs::metadata(temp.path().join(LOCK_FILE)).unwrap().ino(),
+                    lock_inode,
+                    "the persistent lock file is never replaced"
+                );
+            }
+            if strategy == Strategy::AtomicReplace {
+                assert_eq!(second, temp.path().join("specgit.backup-1.0.0-1.exe"));
+            } else {
+                assert_eq!(second.file_name().unwrap(), "specgit.backup-1.0.0.exe");
+                assert_ne!(second, backup);
+            }
             assert_eq!(fs::read(&second).unwrap(), b"new");
+            assert_eq!(fs::read(&target).unwrap(), b"newer");
+            assert!(temp.path().join(LOCK_FILE).is_file());
             let names: Vec<_> = fs::read_dir(temp.path())
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name().into_string().unwrap())
                 .collect();
-            assert_eq!(names.len(), 3, "no staged files remain: {names:?}");
+            assert_eq!(names.len(), 4, "no staged files remain: {names:?}");
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -1342,6 +1828,22 @@ mod tests {
             backup_path(Path::new("/opt/bin/specgit"), "2.5.0").unwrap(),
             Path::new("/opt/bin/specgit.backup-2.5.0")
         );
+    }
+
+    #[test]
+    fn failed_exclusive_backup_create_never_removes_another_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let backup = temp.path().join("backup");
+        fs::write(&source, b"old").unwrap();
+        fs::write(&backup, b"winner").unwrap();
+        let mut created = false;
+        assert_eq!(
+            copy_new(&source, &backup, &mut created).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert!(!created);
+        assert_eq!(fs::read(&backup).unwrap(), b"winner");
     }
 
     #[cfg(unix)]
