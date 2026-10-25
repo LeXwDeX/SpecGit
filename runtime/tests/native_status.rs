@@ -1582,8 +1582,9 @@ fn release_request_read_gate(pause: &Path) {
     fs::write(pause.join("request-read-release"), b"release").unwrap();
 }
 
-/// Source-only barrier used to prove the atomic concurrent-edit branch. The
-/// installed equivalent is covered separately before the record attempt.
+/// Source-only barrier used to prove the atomic concurrent-edit branch. No
+/// target path is set: this `pr --status` flow writes only the selection
+/// checkpoint, and Windows canonicalized roots do not share Git's path spelling.
 fn paused_checkpoint_feature_command(f: &delivery::Fixture, args: &[&str], pause: &Path) -> Child {
     f.feature_command(args)
         .env(
@@ -1591,23 +1592,30 @@ fn paused_checkpoint_feature_command(f: &delivery::Fixture, args: &[&str], pause
             "checkpoint-before-atomic-write",
         )
         .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", pause)
-        .env("SPECGIT_FIXTURE_ASSET_PAUSE_TARGET", checkpoint_path(f))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap()
 }
 
-fn await_checkpoint_pause(pause: &Path, child: &mut Child) {
+fn await_checkpoint_pause(pause: &Path, mut child: Child) -> Child {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !pause.join("ready").exists() {
         if Instant::now() >= deadline {
             let _ = child.kill();
-            let _ = child.wait();
-            panic!("source CLI did not reach the delivered-checkpoint write barrier");
+            let output = child.wait_with_output().unwrap();
+            panic!(
+                "source CLI did not reach the delivered-checkpoint write barrier; \
+                 pause={} status={:?} stdout={:?} stderr={:?}",
+                pause.display(),
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+    child
 }
 
 fn child_report(output: std::process::Output) -> Value {
@@ -1870,8 +1878,8 @@ fn concurrent_selection_change_during_delivery_write_is_rejected_in_source_mode(
     complete_request(&f, "github");
     let writes = f.writes();
     let pause = tempfile::tempdir().unwrap();
-    let mut child = paused_checkpoint_feature_command(&f, &["pr", "--status"], pause.path());
-    await_checkpoint_pause(pause.path(), &mut child);
+    let child = paused_checkpoint_feature_command(&f, &["pr", "--status"], pause.path());
+    let child = await_checkpoint_pause(pause.path(), child);
     let mut concurrent = checkpoint(&f);
     concurrent["request"] = json!(42);
     fs::write(
