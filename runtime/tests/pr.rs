@@ -795,3 +795,29 @@ fn existing_request_references_are_adopted_and_installed_guards_accept_the_check
         installed_guard_accepts_commit_and_push(&f, provider);
     }
 }
+
+#[test]
+fn kind_mode_request_tags_must_match_the_title_type() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        let mismatch = f.run(&[
+            "pr",
+            "--title",
+            "feat: first spec",
+            "--tags",
+            "kind::fix",
+            "--dry-run",
+        ]);
+        assert_eq!(mismatch["exit"], 2, "{mismatch}");
+        assert!(mismatch.to_string().contains("`kind::feat`"), "{mismatch}");
+        let matching = f.run(&[
+            "pr",
+            "--title",
+            "feat: first spec",
+            "--tags",
+            "kind::feat",
+            "--dry-run",
+        ]);
+        assert_eq!(matching["exit"], 0, "{matching}");
+    }
+}

@@ -127,6 +127,14 @@ fn labels_follow_modes_pool_and_axes_without_renaming_native_labels() {
         )
         .is_err()
     );
+    // An explicit kind must match the title type and the error names the expected kind.
+    let mismatch =
+        spec::selected_labels(&d, "fix: bug", Some(&["kind::feat".into()]), &[]).unwrap_err();
+    assert!(mismatch.message.contains("`kind::fix`"), "{mismatch:?}");
+    assert_eq!(
+        spec::selected_labels(&d, "fix: bug", Some(&["kind::fix".into()]), &[]).unwrap(),
+        ["kind::fix"]
+    );
     d.validation.labels = Labels::Project;
     d.tags.push(Tag {
         name: "area::cli".into(),

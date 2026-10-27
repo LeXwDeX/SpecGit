@@ -145,7 +145,13 @@ pub(super) async fn prepare(
             &issue.title,
             &issue.body,
             &issue.labels,
-        )?;
+        )
+        .map_err(|e| {
+            Diagnostic::input(&format!(
+                "Selected Issue #{number} on this branch's checkpoint fails current validation: {} Fix it natively, or start new work with `issue <spec> --branch <name>`.",
+                e.message
+            ))
+        })?;
     }
     reconcile(&mut selection, adopted, prepared)?;
     if selection.issues.len()

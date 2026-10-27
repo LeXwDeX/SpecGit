@@ -7,6 +7,8 @@ and [release procedure](runtime/distribution/README.md).
 # 2.17.1
 
 - Report a checkpoint on another branch whose recorded request merged, with no pending write, as `delivered` instead of `branch_mismatch`. `status` and `doctor` no longer return `checkpoint_branch_mismatch` or advise returning to a deleted branch; the checkpoint summary adds `delivered_request` and the next action is `select_next_issues` (`issue <spec> --branch <name>`). Undelivered or pending checkpoints keep the existing mismatch report. Offline reads still never rewrite or discard the checkpoint. Supersedes 2.17.0, which reported delivered checkpoints as mismatched. (#828)
+- In kind mode, reject an explicit `kind::<type>` that differs from the title type on `issue --tags` and `pr --tags`; the error names the expected kind. Matching kinds and derived kinds are unchanged. A previously selected Issue that no longer validates is now named in the error, with the remedy to fix it natively or start new work with `issue <spec> --branch <name>`. (#794)
+- Update Rust dependencies: libc 0.2.191, tokio 1.54.1, jsonschema 0.60.1, zip 9.0.5. (#821, #822, #823, #824)
 
 # 2.17.0
 
