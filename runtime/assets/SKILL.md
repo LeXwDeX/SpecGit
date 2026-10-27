@@ -20,7 +20,7 @@ description: SpecGit 是装在 PATH 上的用户级 `specgit` CLI（Rust 原生 
 | 创建或认领 Issue，写入 checkpoint | `specgit issue <标题或 ID> [--branch <name>]`，先 `--dry-run` |
 | 创建或更新 PR/MR（草稿） | `specgit pr`，先 `--dry-run` |
 | 标记 ready | `specgit pr --ready` |
-| 平台上的 PR/MR、CI、评审状态 | `specgit pr --status` |
+| 平台上的 PR/MR、CI、评审状态（请求已合并时会把 checkpoint 记为已交付） | `specgit pr --status` |
 | 本地离线身份与 checkpoint | `specgit status` |
 | 有界等待 checks 或生命周期 | `specgit watch` |
 | 拉取或确认待处理事件 | `specgit inbox` |
@@ -32,7 +32,7 @@ description: SpecGit 是装在 PATH 上的用户级 `specgit` CLI（Rust 原生 
 
 1. `git worktree list` 和 `git branch -vv`：列出 worktree、分支和上游差异。
 2. 在每个 worktree 运行 `specgit status --json`：读取所选 Issue 和 checkpoint。
-3. 对有 PR/MR 的分支运行 `specgit pr --status --json`：读取当前 head 的 CI、评审和合并状态。
+3. 对有 PR/MR 的分支用原生只读命令（如 `gh pr view <分支> --json state,headRefOid,statusCheckRollup,reviewDecision`，或 glab）读取当前 head 的 CI、评审和合并状态。复盘中不运行 `specgit pr --status` 或 `watch`：请求已合并时，它们会把当前 checkpoint 记为已交付。
 4. 用 `gh issue list` / `gh pr list`（或 glab）列出未关闭项，对照 checkpoint 找出无人认领、已合并未收尾或已失效的分支。
 5. 分别报告：已交付、进行中、阻塞、可清理。只读复盘不写入、不清理；清理属于后续任务。
 

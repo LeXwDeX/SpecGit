@@ -133,7 +133,7 @@ fn skill_states_specgit_identity_command_map_and_review_path() {
         "`specgit inbox`",
         "## 复盘项目状态（只读，无需 Issue）",
         "`git worktree list`",
-        "`specgit pr --status --json`",
+        "复盘中不运行 `specgit pr --status` 或 `watch`：请求已合并时，它们会把当前 checkpoint 记为已交付",
         "只读复盘不写入、不清理",
     ] {
         assert!(skill.contains(clause), "missing Skill rule: {clause}");
