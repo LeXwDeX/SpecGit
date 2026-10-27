@@ -4,6 +4,11 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.17.0
+
+- Rewrite the distributed `specgit-native` Skill in Chinese. The description now states that SpecGit is the user-level `specgit` CLI and covers branch, worktree, checkpoint and project-review triggers. A new opening defines SpecGit and checkpoints and tells agents to run the CLI instead of exploring it; a command map and a read-only state-review path follow. Environment discovery is marked conditional and the integration section setup/upgrade only. Every previous rule is kept; projects with `language: en` also receive the Chinese Skill after refresh. (#825)
+- Ignore local `.opencode/` and `.serena/` agent state in the repository. (#826)
+
 # 2.16.0
 
 - Record native-validated adoption proof for additional valid `Closes` references in a request body, and reuse checkpoint structure validation before reads and saves. A successful request no longer leaves an incomplete checkpoint that the installed guard rejects. Association limits, native reference rules and pending-write recovery are unchanged. (#797)
