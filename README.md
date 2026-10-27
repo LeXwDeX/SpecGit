@@ -174,7 +174,7 @@ After CLI upgrades, use the [project maintenance guide](docs/agent-project-refre
 to verify the executable selected by PATH and refresh each project integration.
 Omit hook purposes to preserve recorded modes; review all hosts whose assets will
 refresh. Only SessionStart and PreToolUse are supported; `observe` is declined and
-bounded `watch`/`inbox` is the fallback. The current runtime is 2.17.0. After project updates, run status and doctor, read back
+bounded `watch`/`inbox` is the fallback. The current runtime is 2.17.1. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before

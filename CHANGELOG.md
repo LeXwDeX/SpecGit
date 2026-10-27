@@ -4,6 +4,10 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.17.1
+
+- Report a checkpoint on another branch whose recorded request merged, with no pending write, as `delivered` instead of `branch_mismatch`. `status` and `doctor` no longer return `checkpoint_branch_mismatch` or advise returning to a deleted branch; the checkpoint summary adds `delivered_request` and the next action is `select_next_issues` (`issue <spec> --branch <name>`). Undelivered or pending checkpoints keep the existing mismatch report. Offline reads still never rewrite or discard the checkpoint. Supersedes 2.17.0, which reported delivered checkpoints as mismatched. (#828)
+
 # 2.17.0
 
 - Rewrite the distributed `specgit-native` Skill in Chinese. The description now states that SpecGit is the user-level `specgit` CLI and covers branch, worktree, checkpoint and project-review triggers. A new opening defines SpecGit and checkpoints and tells agents to run the CLI instead of exploring it; a command map and a read-only state-review path follow. Environment discovery is marked conditional and the integration section setup/upgrade only. Every previous rule is kept; projects with `language: en` also receive the Chinese Skill after refresh. (#825)
