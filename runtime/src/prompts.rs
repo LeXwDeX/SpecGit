@@ -55,10 +55,10 @@ mod tests {
         assert!(skill.contains("Contract version: {{version}}."));
         let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
         for rule in [
-            "Labels follow `validation.labels`:",
-            "`kind` derives one `kind::<type>`",
-            "`project` requires declared `tags`",
-            "`off` passes `--tags` only when asked",
+            "标签遵循 `validation.labels`：",
+            "`kind` 从标题推导一个 `kind::<type>`",
+            "`project` 要求声明的 `tags`",
+            "`off` 仅在被要求时传 `--tags`",
         ] {
             assert!(flat.contains(rule), "{rule}");
         }
