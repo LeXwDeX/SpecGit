@@ -575,6 +575,41 @@ fn assert_foreign_checkpoint(report: &serde_json::Value, recorded: &str, current
 }
 
 #[test]
+fn kind_mode_rejects_mismatched_title_kind_and_names_stale_selected_issues() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let mismatch = f.run(&[
+            "issue",
+            "fix: wrong kind",
+            "--tags",
+            "kind::feat",
+            "--dry-run",
+        ]);
+        assert_eq!(mismatch["exit"], 2, "{mismatch}");
+        assert!(mismatch.to_string().contains("`kind::fix`"), "{mismatch}");
+        let matching = f.run(&[
+            "issue",
+            "fix: right kind",
+            "--tags",
+            "kind::fix",
+            "--create-labels",
+            "--dry-run",
+        ]);
+        assert_eq!(matching["exit"], 0, "{matching}");
+
+        let selected = f.run(&["issue", "--create-labels", "feat: selected work"]);
+        assert_eq!(selected["exit"], 0, "{selected}");
+        // The native Issue later loses its kind label, so it no longer validates.
+        f.edit(|s| s["issues"][0]["labels"] = json!([]));
+        let stale = f.run(&["issue", "fix: follow-up work", "--dry-run"]);
+        assert_eq!(stale["exit"], 2, "{stale}");
+        let text = stale.to_string();
+        assert!(text.contains("Selected Issue #1"), "{stale}");
+        assert!(text.contains("--branch <name>"), "{stale}");
+    }
+}
+
+#[test]
 fn delivered_foreign_checkpoint_reports_delivered_instead_of_branch_mismatch() {
     let schema: serde_json::Value =
         serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();

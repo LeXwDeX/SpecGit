@@ -166,6 +166,15 @@ pub fn selected_labels_for(
     if let Some(error) = check_labels(d, &labels) {
         return Err(Diagnostic::input(&error.message));
     }
+    if d.validation.labels == Labels::Kind {
+        // An explicit kind must agree with the title type it would otherwise derive.
+        let expected = format!("kind::{}", kind(title)?);
+        if !labels.contains(&expected) {
+            return Err(Diagnostic::input(&format!(
+                "Kind mode requires the label `{expected}` to match the title type; omit --tags to derive it or select `{expected}`."
+            )));
+        }
+    }
     Ok(labels)
 }
 pub fn check_labels(d: &Declaration, names: &[String]) -> Option<Violation> {
