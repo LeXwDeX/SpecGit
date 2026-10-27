@@ -115,6 +115,19 @@ Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本�
 在原生平台核对并发变化后编辑，再刷新 `pr --status`。
 恢复步骤见[原生参考](runtime/REFERENCE.md)和 specgit-native Skill。
 
+### Issue/PR 书写约定
+
+本仓库 `.specgit.yaml` 使用 `language: en`、`validation.titles: true`、`validation.bodies: true`、`validation.labels: kind`。
+
+- Issue/PR 的标题和正文使用英文。
+- 标题使用目录中的 Conventional Commit 类型，如 `fix:`、`feat:`、`docs:`、`chore:`。
+- Issue 正文填写 Why / Scope / Approach / Acceptance；PR 正文按 PR 模板填写。
+- 标签只用一个与标题类型一致的 `kind::<type>`。省略 `--tags` 时自动推导；显式指定不一致的 kind 会被拒绝。
+- 不使用旧标签（`bug`、`chore`、`feature`、`docs`、`enhancement` 等）。
+
+`.specgit.yaml` 是本地文件，已被 Git 排除，不随仓库同步。新 clone 或新 worktree 先复用已有声明：
+`specgit init --config-file <已有 .specgit.yaml>`，或直接复制该文件后再运行 `specgit issue`。
+
 ## 自举与项目集成
 
 所有仓库和 worktree 的操作共用一个用户级 SpecGit CLI。
