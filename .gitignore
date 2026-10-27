@@ -152,11 +152,11 @@ CLAUDE.md
 result
 
 # OpenCode
-.opencode/*
-!.opencode/hooks.json
-!.opencode/hooks/
-!.opencode/command/
+.opencode/
 opencode.json
+
+# Serena
+.serena/
 
 # Codex
 .codex/

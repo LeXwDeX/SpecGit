@@ -234,7 +234,7 @@ fn project_scope_is_the_permanent_default_for_setup() {
             .replace("\r\n", "\n")
             .replace("{{version}}", env!("CARGO_PKG_VERSION"))
     );
-    assert!(skill.contains("A Milestone is an optional goal or plan container"));
+    assert!(skill.contains("Milestone 是可选的目标或计划容器"));
     // Default OpenCode selection registers no hooks.
     assert!(!f.root.join(".opencode").exists());
     let f = fixture();
