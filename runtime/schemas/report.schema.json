@@ -606,6 +606,56 @@
               "const": false
             }
           }
+        },
+        {
+          "description": "A checkpoint on another branch whose recorded request merged with no pending write; nothing remains to resume.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "path",
+            "recorded_branch",
+            "recorded_target",
+            "recorded_project_id",
+            "current_branch",
+            "pending_write",
+            "write_eligible",
+            "delivered_request"
+          ],
+          "properties": {
+            "status": {
+              "const": "delivered"
+            },
+            "path": {
+              "type": "string"
+            },
+            "recorded_branch": {
+              "type": "string"
+            },
+            "recorded_target": {
+              "type": "string"
+            },
+            "recorded_project_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "current_branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pending_write": {
+              "const": false
+            },
+            "write_eligible": {
+              "const": false
+            },
+            "delivered_request": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
         }
       ]
     },

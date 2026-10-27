@@ -575,6 +575,59 @@ fn assert_foreign_checkpoint(report: &serde_json::Value, recorded: &str, current
 }
 
 #[test]
+fn delivered_foreign_checkpoint_reports_delivered_instead_of_branch_mismatch() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let selected = f.run(&["issue", "--create-labels", "feat: delivered work"]);
+        assert_eq!(selected["exit"], 0, "{selected}");
+        let guarded = f.command(&["guard", "--install"]).output().unwrap();
+        assert!(guarded.status.success(), "{guarded:?}");
+        let checkpoint = checkpoint_path(&f);
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+        saved["request"] = json!(5);
+        saved["delivered_request"] = json!(5);
+        fs::write(&checkpoint, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let before = fs::read(&checkpoint).unwrap();
+        git(&f.root, &["switch", "-c", "next-work"]);
+
+        let status = f.run(&["status"]);
+        assert_eq!(status["exit"], 0, "{status}");
+        assert_eq!(status["status"], "initialized", "{status}");
+        let summary = &status["evidence"]["checkpoint"];
+        assert_eq!(summary["status"], "delivered", "{status}");
+        assert_eq!(summary["delivered_request"], 5, "{status}");
+        assert_eq!(summary["recorded_branch"], "feature", "{status}");
+        assert_eq!(status["evidence"]["write_eligible"], false, "{status}");
+        let kinds: Vec<_> = status["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|action| action["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["select_next_issues"], "{status}");
+
+        let doctor = f.run(&["doctor", "--provider", provider]);
+        assert_eq!(doctor["exit"], 0, "{doctor}");
+        jsonschema::draft202012::validate(&schema, &doctor).unwrap();
+        assert_ne!(doctor["status"], "checkpoint_branch_mismatch", "{doctor}");
+        let local = &doctor["evidence"]["local"];
+        assert_eq!(local["status"], "initialized", "{doctor}");
+        assert_eq!(local["checkpoint"]["status"], "delivered", "{doctor}");
+        assert_eq!(local["checkpoint"]["delivered_request"], 5, "{doctor}");
+        assert!(
+            !doctor.to_string().contains("return_to_checkpoint_branch"),
+            "{doctor}"
+        );
+
+        // Offline reads never retire, rewrite or discard the delivered checkpoint.
+        assert_eq!(fs::read(&checkpoint).unwrap(), before);
+    }
+}
+
+#[test]
 fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint() {
     for provider in ["github", "gitlab"] {
         let fixture = Fixture::new(provider);
