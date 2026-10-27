@@ -153,7 +153,7 @@ commands use the global input/output contract above.
 
 The installed executable's `--help` and `--schema` remain its active contract. Editing or building this source does not replace the shared CLI on `PATH`; a separately authorized release and explicit installation/update are required to change that executable.
 
-`doctor` also reports `evidence.local`, a read-only summary of local context, the declaration target and checkpoint state. Its `status` is `initialized`, `uninitialized`, `checkpoint_branch_mismatch` or `not_checked`; checkpoint status is `absent`, `current`, `branch_mismatch` or `not_checked`. A current checkpoint summary contains only `recorded_branch`, `recorded_target`, `issues` and `request`. These are local records, not platform verification or write eligibility. Dirty files and an absent checkpoint are facts, not failures. A missing declaration without recorded private state is reported as `needs_initialization`; a missing declaration with initialized/private integration state fails closed and requires restoring the original declaration. With a branch mismatch and successful API probes, the top-level status is `checkpoint_branch_mismatch` and exit is 0; API probe failures still produce `unknown` and exit 3. Invalid declarations or checkpoints retain their diagnostics and failure exits.
+`doctor` also reports `evidence.local`, a read-only summary of local context, the declaration target and checkpoint state. Its `status` is `initialized`, `uninitialized`, `checkpoint_branch_mismatch` or `not_checked`; checkpoint status is `absent`, `current`, `branch_mismatch`, `delivered` or `not_checked`. A `delivered` checkpoint belongs to another branch, its recorded request merged and no write is pending; it adds `delivered_request`, does not set the `checkpoint_branch_mismatch` status and suggests selecting the next Issues with `issue <spec> --branch <name>` instead of resuming. A current checkpoint summary contains only `recorded_branch`, `recorded_target`, `issues` and `request`. These are local records, not platform verification or write eligibility. Dirty files and an absent checkpoint are facts, not failures. A missing declaration without recorded private state is reported as `needs_initialization`; a missing declaration with initialized/private integration state fails closed and requires restoring the original declaration. With a branch mismatch and successful API probes, the top-level status is `checkpoint_branch_mismatch` and exit is 0; API probe failures still produce `unknown` and exit 3. Invalid declarations or checkpoints retain their diagnostics and failure exits.
 
 Doctor also reports `evidence.runtime_update` with `status` (`not_checked`,
 `up_to_date`, `update_available`, `current_newer` or `unknown`),
@@ -474,6 +474,10 @@ and a `checkpoint` summary containing its path, recorded/current branches,
 recorded target/project ID and pending-write flag. Offline status keeps
 `remote_state: not_checked`; native operations separately verify project identity. A detached checkout reports a null current branch. This
 successful read is not permission to write: `write_eligible` is false.
+When the recorded request has merged and no write is pending, the checkpoint
+summary status is `delivered` with `delivered_request`, and `status` reports the
+ordinary initialized state instead of `checkpoint_branch_mismatch`; select the
+next Issues with `issue <spec> --branch <name>`.
 
 On another branch, `issue --inspect` and `issue --dry-run` prepare only the current
 invocation's specifications and read duplicate candidates. They return

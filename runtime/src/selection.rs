@@ -51,6 +51,9 @@ pub struct RequestIntent {
     pub labels: Vec<String>,
 }
 /// Public, redacted metadata for a valid checkpoint owned by another branch.
+///
+/// `status` is `delivered` when the recorded request merged and no write is pending;
+/// such a checkpoint has nothing to resume and only gives way to new work.
 #[derive(Debug, Clone, Serialize)]
 pub struct BranchMismatch {
     pub status: &'static str,
@@ -61,6 +64,13 @@ pub struct BranchMismatch {
     pub current_branch: Option<String>,
     pub pending_write: bool,
     pub write_eligible: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivered_request: Option<u64>,
+}
+impl BranchMismatch {
+    pub fn delivered(&self) -> bool {
+        self.delivered_request.is_some()
+    }
 }
 /// Ownership classification for callers that explicitly support read-only foreign checkpoints.
 #[derive(Debug, Clone)]
@@ -170,8 +180,17 @@ pub fn classify(context: &Context) -> Result<ReadOutcome, Diagnostic> {
     if Some(&selection.branch) == context.branch.as_ref() {
         return Ok(ReadOutcome::Current(selection));
     }
+    let delivered_request = selection
+        .replaceable()
+        .then_some(selection.delivered_request)
+        .flatten();
     let checkpoint = BranchMismatch {
-        status: "branch_mismatch",
+        status: if delivered_request.is_some() {
+            "delivered"
+        } else {
+            "branch_mismatch"
+        },
+        delivered_request,
         path: checkpoint_path,
         recorded_branch: selection.branch.clone(),
         recorded_target: selection.target.clone(),

@@ -361,7 +361,7 @@ pub(super) async fn status(
     let mut report = match &local.selection {
         specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } => Report::success(
             "status",
-            "checkpoint_branch_mismatch",
+            local.status(),
             serde_json::json!({"context":local.context,"declaration":local.declaration,"selection":null,"checkpoint":checkpoint,"write_eligible":false,"remote_state":"not_checked"}),
         ),
         selection => {
@@ -414,10 +414,11 @@ impl LocalInspection {
         })
     }
 
+    /// A delivered foreign checkpoint has nothing to resume, so it is not a mismatch.
     fn branch_mismatch(&self) -> bool {
         matches!(
-            self.selection,
-            specgit::selection::ReadOutcome::BranchMismatch { .. }
+            &self.selection,
+            specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } if !checkpoint.delivered()
         )
     }
 
@@ -451,6 +452,11 @@ impl LocalInspection {
 
     fn add_next_actions(&self, report: &mut Report) {
         if let specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } = &self.selection
+            && let Some(request) = checkpoint.delivered_request
+        {
+            report.next_actions.push(serde_json::json!({"kind":"select_next_issues","branch":checkpoint.recorded_branch,"request":request,"remedy":"This checkpoint was delivered by its merged request; nothing remains to resume. Select the next Issues with `issue <spec> --branch <name>`."}));
+        } else if let specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } =
+            &self.selection
         {
             report.next_actions.push(serde_json::json!({"kind":"return_to_checkpoint_branch","branch":checkpoint.recorded_branch,"remedy":"Return to the recorded branch to resume this checkpoint."}));
             report.next_actions.push(serde_json::json!({"kind":"use_independent_worktree","remedy":"Use a separate worktree for an independent delivery; do not move or discard this checkpoint."}));
