@@ -36,8 +36,9 @@ Booleans default to false; labels default to `off`. Project labels require a
 `tags` catalog of name, six-digit color and optional description. Comma-separated
 `--tags` on `issue` and a new `pr` follows this mode; when omitted, selected
 repository template labels apply first. `kind` otherwise derives one `kind::<type>`
-from the Conventional Commit title, and explicit tags need exactly one kind plus
-declared `tags`; `project` requires declared `tags`; `off` adds no mode rule, but
+from the Conventional Commit title, and explicit tags need exactly one kind that
+matches the title type plus declared `tags`; a mismatch names the expected kind.
+A selected Issue that no longer validates is named with a recovery step; `project` requires declared `tags`; `off` adds no mode rule, but
 tags must still be catalog, declared or existing labels with one per scoped axis,
 and Agents pass them only when the user or project asks. Generated Skill and
 SessionStart context state these rules. The `templates`
