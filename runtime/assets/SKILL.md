@@ -11,6 +11,7 @@ description: SpecGit 是装在 PATH 上的用户级 `specgit` CLI（Rust 原生 
 - checkpoint 是当前分支/worktree 所选 Issue 的本地记录，存放在 Git 私有目录。原生 Git guard 在 commit/push 时检查它和 `Issue: #N` trailer。
 - 先读项目 AGENTS.md、用户目标和本地 `.specgit.yaml`。规格和进度写在 Issue；验证和评审链接放在 PR/MR 讨论里。不在步骤 Issue 或其他任务系统里重复证据。
 - GitHub/GitLab 负责 CI、平台评审、分支保护、实际合并和常规 Issue 关闭。
+- SpecGit 生成的本地资产（`.specgit.yaml` 和生成的 `specgit-native` Skill）必须保持 untracked：不要 `git add -f`，不要提交其新增或修改；原生 Git guard 会拒绝这类暂存。历史遗留的已跟踪副本用授权的 `git rm --cached <path>` 清理，工作区文件保留。
 
 ## 命令速查
 

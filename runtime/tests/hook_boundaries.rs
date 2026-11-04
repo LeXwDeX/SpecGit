@@ -369,21 +369,11 @@ fn setup_rollback_keeps_native_guard_owned_for_a_linked_worktree() {
         );
     }
     let mut command = f.command(&["guard", "--stage", "pre-commit"]);
-    let staged = std::process::Command::new("git")
-        .current_dir(&sibling)
-        .args(["add", "-N", ".specgit.yaml"])
-        .output()
-        .unwrap();
-    assert!(staged.status.success());
-    fs::write(
-        sibling.join(".specgit.yaml"),
-        "version: 2\nprovider: github\nremote: origin\n",
-    )
-    .unwrap();
+    fs::write(sibling.join("source.rs"), "change").unwrap();
     assert!(
         std::process::Command::new("git")
             .current_dir(&sibling)
-            .args(["add", ".specgit.yaml"])
+            .args(["add", "source.rs"])
             .output()
             .unwrap()
             .status

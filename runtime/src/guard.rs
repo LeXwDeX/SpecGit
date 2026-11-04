@@ -1273,14 +1273,26 @@ pub async fn check(
     if matches!(stage, Stage::PrePush) && pushed.is_empty() {
         return Ok(());
     }
-    if matches!(stage, Stage::PreCommit)
-        && project::git(process, &root, &["diff", "--cached", "--name-only", "-z"])
-            .await?
-            .is_empty()
-    {
+    let staged = if matches!(stage, Stage::PreCommit) {
+        staged_entries(process, &root).await?
+    } else {
+        vec![]
+    };
+    if matches!(stage, Stage::PreCommit) && staged.is_empty() {
         return Ok(());
     }
     let declaration = declaration?;
+    if matches!(stage, Stage::PreCommit) {
+        let managed = crate::local_exclude::managed_paths(process, &root).await?;
+        if let Some(entry) = staged.iter().find(|entry| {
+            generated_status(entry.status)
+                && managed
+                    .iter()
+                    .any(|name| name.as_bytes() == entry.path.as_slice())
+        }) {
+            return Err(generated_tracked(&entry.path));
+        }
+    }
     let context = config::resolve(
         process,
         &root,
@@ -1304,6 +1316,59 @@ pub async fn check(
         }
     }
     Ok(())
+}
+
+struct StagedEntry {
+    status: char,
+    path: Vec<u8>,
+}
+
+/// Parse `git diff --cached --name-status -z`. Rename and copy entries keep the
+/// destination path because that is the path the commit records. Paths stay as
+/// bytes so a legal non-UTF-8 ordinary filename never fails the check.
+async fn staged_entries(process: &Process, root: &Path) -> Result<Vec<StagedEntry>, Diagnostic> {
+    let output = project::git(process, root, &["diff", "--cached", "--name-status", "-z"]).await?;
+    let mut fields = output
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    let mut entries = Vec::new();
+    while let Some(status) = fields.next() {
+        let status = std::str::from_utf8(status)
+            .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 staged status."))?
+            .chars()
+            .next()
+            .ok_or_else(|| Diagnostic::input("Git returned an empty staged status."))?;
+        let mut path = fields
+            .next()
+            .ok_or_else(|| Diagnostic::input("Git returned a staged entry without a path."))?;
+        if matches!(status, 'R' | 'C') {
+            path = fields
+                .next()
+                .ok_or_else(|| Diagnostic::input("Git returned a rename without a destination."))?;
+        }
+        entries.push(StagedEntry {
+            status,
+            path: path.to_vec(),
+        });
+    }
+    Ok(entries)
+}
+
+/// A staged generated asset is rejected unless the commit removes it.
+fn generated_status(status: char) -> bool {
+    matches!(status, 'A' | 'M' | 'T' | 'R' | 'C')
+}
+
+fn generated_tracked(path: &[u8]) -> Diagnostic {
+    let path = String::from_utf8_lossy(path);
+    Diagnostic::new(
+        Code::EvidenceRejected,
+        "git_guard",
+        &format!("{path} is a SpecGit-generated local asset and must stay untracked."),
+        &format!(
+            "Unstage it with `git restore --staged -- {path}`. If a legacy commit tracks a copy, clean that copy with an authorized `git rm --cached -- {path}`; the generated file stays in the worktree. Do not use `git add -f`."
+        ),
+    )
 }
 
 /// The most new commits one push may carry before the binding check fails closed.

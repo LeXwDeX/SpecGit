@@ -54,7 +54,7 @@ only on a lower layer. Layer 0 contains pure rules and models.
 | `forge` | 5 | `declaration`, `delivery_model`, `diagnostic`, `forge_read`, `forge_routes`, `identity`, `input`, `native_checks`, `process`, `project`, `spec` |
 | `forge_read` | 3 | `delivery_model`, `diagnostic`, `forge_routes`, `identity`, `input`, `process` |
 | `forge_routes` | 0 | `identity` |
-| `guard` | 8 | `assets`, `config`, `diagnostic`, `input`, `process`, `project`, `selection` |
+| `guard` | 8 | `assets`, `config`, `diagnostic`, `input`, `local_exclude`, `process`, `project`, `selection` |
 | `guidance` | 2 | `assets`, `declaration`, `diagnostic`, `input`, `prompts` |
 | `hook` | 9 | `assets`, `config`, `declaration`, `diagnostic`, `input`, `process`, `project`, `selection`, `watch`, `watch_store` |
 | `i18n` | 0 | `declaration`, `diagnostic`, `report` |
@@ -151,6 +151,7 @@ flowchart TD
   guard --> project
   guard --> selection
   guard --> assets
+  guard --> local_exclude
   hook --> config
   hook --> project
   hook --> selection

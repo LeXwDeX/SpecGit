@@ -383,6 +383,118 @@ fn pre_commit_requires_a_checkpoint_only_when_tracked_changes_are_staged() {
     assert!(guard(temp.path(), "pre-commit", "").status.success());
 }
 
+#[test]
+fn pre_commit_rejects_generated_assets_and_allows_untracking() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+
+    // The declaration stays protected even without a managed exclude block.
+    git(temp.path(), &["add", "-f", ".specgit.yaml"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+    git(temp.path(), &["reset", "-q"]);
+
+    // An existing generated Skill stays protected without any block either.
+    fs::create_dir_all(temp.path().join(".agents/skills/specgit-native")).unwrap();
+    fs::write(
+        temp.path().join(".agents/skills/specgit-native/SKILL.md"),
+        "generated",
+    )
+    .unwrap();
+    git(
+        temp.path(),
+        &["add", "-f", ".agents/skills/specgit-native/SKILL.md"],
+    );
+    assert_eq!(guard(temp.path(), "pre-commit", "").status.code(), Some(1));
+    git(temp.path(), &["reset", "-q"]);
+
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    // A block that omits the declaration must not weaken its protection.
+    fs::write(
+        &exclude,
+        "# specgit:local:v2:start\n/.agents/skills/specgit-native/SKILL.md\n# specgit:local:v2:end\n",
+    )
+    .unwrap();
+
+    // Force-add is rejected even though the exclude rule hides the file.
+    git(temp.path(), &["add", "-f", ".specgit.yaml"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&denied.stderr);
+    assert!(stderr.contains("must stay untracked"), "{stderr}");
+    assert!(stderr.contains("git rm --cached"), "{stderr}");
+    git(temp.path(), &["reset", "-q"]);
+
+    // A generated Skill stays protected even when its file is force-added.
+    git(
+        temp.path(),
+        &["add", "-f", ".agents/skills/specgit-native/SKILL.md"],
+    );
+    assert_eq!(guard(temp.path(), "pre-commit", "").status.code(), Some(1));
+    git(temp.path(), &["reset", "-q"]);
+
+    // A legacy tracked copy cannot be modified either.
+    git(temp.path(), &["add", "-f", ".specgit.yaml"]);
+    git(temp.path(), &["commit", "--no-verify", "-m", "legacy"]);
+    fs::write(
+        temp.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\ntarget: main\nlanguage: en\n",
+    )
+    .unwrap();
+    git(temp.path(), &["add", ".specgit.yaml"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+
+    // Untracking the generated file is the recovery path.
+    git(temp.path(), &["rm", "--cached", "-q", ".specgit.yaml"]);
+    assert!(
+        guard(temp.path(), "pre-commit", "").status.success(),
+        "{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+
+    // Ordinary files still commit.
+    git(temp.path(), &["reset", "-q"]);
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn legacy_whole_file_exclusions_do_not_protect_guidance() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(
+        &exclude,
+        "# specgit:local:v2:start\n/AGENTS.md\n/CLAUDE.md\n/.specgit.yaml\n# specgit:local:v2:end\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("AGENTS.md"), "manual guidance").unwrap();
+    git(temp.path(), &["add", "-f", "AGENTS.md"]);
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_ordinary_paths_do_not_fail_the_generated_asset_check() {
+    use std::os::unix::ffi::OsStrExt;
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let name = std::ffi::OsStr::from_bytes(b"ordinary-\xff.txt");
+    fs::write(temp.path().join(name), "change").unwrap();
+    let staged = Command::new("git")
+        .current_dir(temp.path())
+        .arg("add")
+        .arg(name)
+        .output()
+        .unwrap();
+    assert!(staged.status.success());
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
 fn head(root: &Path) -> String {
     let output = Command::new("git")
         .current_dir(root)
