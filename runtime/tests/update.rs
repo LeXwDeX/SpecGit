@@ -711,6 +711,8 @@ fn successful_replacement_reminds_each_project_in_json_and_human_output() {
             };
             assert!(notice.contains("specgit setup"), "{notice}");
             assert!(notice.contains("may need"), "not confirmed stale: {notice}");
+            assert!(notice.contains("already_tracked"), "{notice}");
+            assert!(notice.contains("git rm --cached"), "{notice}");
             for (path, content) in files {
                 assert_eq!(fs::read_to_string(project.join(path)).unwrap(), content);
             }

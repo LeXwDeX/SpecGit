@@ -315,6 +315,63 @@ fn fixture() -> tempfile::TempDir {
     temp
 }
 
+fn repository_root(root: &Path) -> String {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn ownership_receipt(root: &Path, claude: bool) -> serde_json::Value {
+    let root = repository_root(root);
+    let block =
+        "<!-- specgit:project:v2:start -->\n## SpecGit 2\n\n<!-- specgit:project:v2:end -->";
+    let mut skills = serde_json::Map::new();
+    skills.insert(
+        ".agents/skills/specgit-native/SKILL.md".into(),
+        json!("hash"),
+    );
+    let mut instructions = serde_json::Map::new();
+    instructions.insert(
+        "generic".into(),
+        json!({
+            "root": &root,
+            "skill_hash": "hash",
+            "instructions": "AGENTS.md",
+            "block": block,
+            "created_instructions": false
+        }),
+    );
+    if claude {
+        skills.insert(
+            ".claude/skills/specgit-native/SKILL.md".into(),
+            json!("hash"),
+        );
+        instructions.insert(
+            "claude".into(),
+            json!({
+                "root": &root,
+                "skill_hash": "hash",
+                "instructions": "CLAUDE.md",
+                "block": block,
+                "created_instructions": false
+            }),
+        );
+    }
+    json!({
+        "version": 1,
+        "owner": "specgit",
+        "root": &root,
+        "shared_root": &root,
+        "agents": if claude { json!(["generic", "claude"]) } else { json!(["generic"]) },
+        "skills": skills,
+        "instructions": instructions,
+        "hooks": {}
+    })
+}
+
 fn checkpoint(root: &Path, branch: &str) {
     let output = Command::new("git")
         .current_dir(root)
@@ -380,6 +437,287 @@ fn pre_commit_requires_a_checkpoint_only_when_tracked_changes_are_staged() {
     assert_eq!(denied.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&denied.stderr).contains("No Issue checkpoint"));
     checkpoint(temp.path(), "feature");
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn pre_commit_rejects_generated_assets_and_allows_untracking() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+
+    // The declaration stays protected even without a managed exclude block.
+    git(temp.path(), &["add", "-f", ".specgit.yaml"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains(".specgit.yaml"),
+        "{denied:?}"
+    );
+    git(temp.path(), &["reset", "-q"]);
+
+    // A recorded generated Skill stays protected without any block, and a
+    // missing worktree copy does not remove that protection from the index.
+    fs::create_dir_all(temp.path().join(".git/specgit-v2/agent-assets")).unwrap();
+    fs::write(
+        temp.path()
+            .join(".git/specgit-v2/agent-assets/ownership.json"),
+        serde_json::to_vec(&ownership_receipt(temp.path(), false)).unwrap(),
+    )
+    .unwrap();
+    fs::create_dir_all(temp.path().join(".agents/skills/specgit-native")).unwrap();
+    fs::write(
+        temp.path().join(".agents/skills/specgit-native/SKILL.md"),
+        "generated",
+    )
+    .unwrap();
+    git(
+        temp.path(),
+        &["add", "-f", ".agents/skills/specgit-native/SKILL.md"],
+    );
+    fs::remove_file(temp.path().join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("SKILL.md"),
+        "{denied:?}"
+    );
+    git(temp.path(), &["reset", "-q"]);
+    fs::write(
+        temp.path().join(".agents/skills/specgit-native/SKILL.md"),
+        "generated",
+    )
+    .unwrap();
+
+    // The block alone is evidence; remove the receipt so the block is the source.
+    fs::remove_file(
+        temp.path()
+            .join(".git/specgit-v2/agent-assets/ownership.json"),
+    )
+    .unwrap();
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    // A block that omits the declaration must not weaken its protection.
+    fs::write(
+        &exclude,
+        "# specgit:local:v2:start\n/.agents/skills/specgit-native/SKILL.md\n# specgit:local:v2:end\n",
+    )
+    .unwrap();
+
+    // Force-add is rejected even though the exclude rule hides the file.
+    git(temp.path(), &["add", "-f", ".specgit.yaml"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&denied.stderr);
+    assert!(stderr.contains("must stay untracked"), "{stderr}");
+    assert!(stderr.contains("git rm --cached"), "{stderr}");
+    git(temp.path(), &["reset", "-q"]);
+
+    // A generated Skill stays protected even when its file is force-added.
+    git(
+        temp.path(),
+        &["add", "-f", ".agents/skills/specgit-native/SKILL.md"],
+    );
+    assert_eq!(guard(temp.path(), "pre-commit", "").status.code(), Some(1));
+    git(temp.path(), &["reset", "-q"]);
+
+    // A legacy tracked copy cannot be modified either.
+    git(temp.path(), &["add", "-f", ".specgit.yaml"]);
+    git(temp.path(), &["commit", "--no-verify", "-m", "legacy"]);
+    fs::write(
+        temp.path().join(".specgit.yaml"),
+        "version: 2\nremote: origin\ntarget: main\nlanguage: en\n",
+    )
+    .unwrap();
+    git(temp.path(), &["add", ".specgit.yaml"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+
+    // Untracking the generated file is the recovery path.
+    git(temp.path(), &["rm", "--cached", "-q", ".specgit.yaml"]);
+    assert!(
+        guard(temp.path(), "pre-commit", "").status.success(),
+        "{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+
+    // Ordinary files still commit.
+    git(temp.path(), &["reset", "-q"]);
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn legacy_whole_file_exclusions_do_not_protect_guidance() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(
+        &exclude,
+        "# specgit:local:v2:start\n/AGENTS.md\n/CLAUDE.md\n/.specgit.yaml\n# specgit:local:v2:end\n",
+    )
+    .unwrap();
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        fs::write(temp.path().join(name), "manual guidance").unwrap();
+        git(temp.path(), &["add", "-f", name]);
+    }
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn manual_skill_at_a_generated_path_is_not_protected() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    fs::create_dir_all(temp.path().join(".claude/skills/specgit-native")).unwrap();
+    fs::write(
+        temp.path().join(".claude/skills/specgit-native/SKILL.md"),
+        "manual",
+    )
+    .unwrap();
+    git(
+        temp.path(),
+        &["add", ".claude/skills/specgit-native/SKILL.md"],
+    );
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn damaged_ownership_receipt_fails_closed() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    fs::create_dir_all(temp.path().join(".git/specgit-v2/agent-assets")).unwrap();
+    let receipt = temp
+        .path()
+        .join(".git/specgit-v2/agent-assets/ownership.json");
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+
+    let valid = ownership_receipt(temp.path(), false);
+    fs::write(&receipt, serde_json::to_vec(&valid).unwrap()).unwrap();
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+
+    let claude = ownership_receipt(temp.path(), true);
+    fs::write(&receipt, serde_json::to_vec(&claude).unwrap()).unwrap();
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+
+    let mut empty = valid.clone();
+    empty["skills"] = json!({});
+    let mut unknown = valid.clone();
+    unknown["skills"][".agents/skills/unknown/SKILL.md"] = json!("hash");
+    let mut missing_claude = claude;
+    missing_claude["skills"]
+        .as_object_mut()
+        .unwrap()
+        .remove(".claude/skills/specgit-native/SKILL.md");
+    for damaged in [empty, unknown, missing_claude] {
+        fs::write(&receipt, serde_json::to_vec(&damaged).unwrap()).unwrap();
+        let denied = guard(temp.path(), "pre-commit", "");
+        assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+        assert!(
+            String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
+            "{denied:?}"
+        );
+    }
+
+    // Top-level duplicate keys are rejected by the bounded decoder.
+    let mut duplicate = serde_json::to_string(&valid).unwrap();
+    duplicate.pop();
+    duplicate.push_str(r#","skills":{".agents/skills/specgit-native/SKILL.md":"hash"}}"#);
+    fs::write(&receipt, duplicate).unwrap();
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
+        "{denied:?}"
+    );
+
+    fs::remove_file(&receipt).unwrap();
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn broken_ownership_receipt_link_fails_closed() {
+    use std::os::unix::fs::symlink;
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    fs::create_dir_all(temp.path().join(".git/specgit-v2/agent-assets")).unwrap();
+    let receipt = temp
+        .path()
+        .join(".git/specgit-v2/agent-assets/ownership.json");
+    symlink("missing", &receipt).unwrap();
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
+        "{denied:?}"
+    );
+}
+
+#[test]
+fn damaged_exclusion_block_fails_closed() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    for damaged in [
+        &b"# specgit:local:v2:start\n/.specgit.yaml\n"[..],
+        &b"# specgit:local:v2:start\r/.specgit.yaml\n# specgit:local:v2:end\n"[..],
+        &b"# specgit:local:v2:start\n/.agents/skills/specgit-native/SKILL.md\xff\n# specgit:local:v2:end\n"[..],
+        &b"# specgit:local:v2:start\n/unexpected\n# specgit:local:v2:end\n"[..],
+    ] {
+        fs::write(&exclude, damaged).unwrap();
+        let denied = guard(temp.path(), "pre-commit", "");
+        assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+        assert!(
+            String::from_utf8_lossy(&denied.stderr).contains("local exclusion block"),
+            "{denied:?}"
+        );
+    }
+    fs::write(
+        &exclude,
+        b"# specgit:local:v2:start\r\n/.specgit.yaml\r\n# specgit:local:v2:end\r\n",
+    )
+    .unwrap();
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn non_utf8_exclude_user_rules_do_not_block_ordinary_commits() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(
+        &exclude,
+        b"/cache-\xff\n# specgit:local:v2:start\n/.specgit.yaml\n# specgit:local:v2:end\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_ordinary_paths_do_not_fail_the_generated_asset_check() {
+    use std::os::unix::ffi::OsStrExt;
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let name = std::ffi::OsStr::from_bytes(b"ordinary-\xff.txt");
+    fs::write(temp.path().join(name), "change").unwrap();
+    let staged = Command::new("git")
+        .current_dir(temp.path())
+        .arg("add")
+        .arg(name)
+        .output()
+        .unwrap();
+    assert!(staged.status.success());
     assert!(guard(temp.path(), "pre-commit", "").status.success());
 }
 
