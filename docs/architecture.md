@@ -63,7 +63,7 @@ only on a lower layer. Layer 0 contains pure rules and models.
 | `input` | 0 | `diagnostic` |
 | `issue` | 8 | `assets`, `config`, `delivery_context`, `delivery_model`, `diagnostic`, `identity`, `native_delivery`, `process`, `project`, `report`, `selection`, `spec`, `templates` |
 | `label_rules` | 0 | — |
-| `local_exclude` | 2 | `assets`, `diagnostic`, `process`, `project` |
+| `local_exclude` | 2 | `assets`, `diagnostic`, `input`, `process`, `project` |
 | `migrate` | 8 | `assets`, `config`, `diagnostic`, `guidance`, `local_exclude`, `migration_assets`, `migration_remote`, `probe`, `process`, `project`, `report`, `templates` |
 | `migration_assets` | 2 | `assets`, `config`, `diagnostic`, `input` |
 | `migration_remote` | 6 | `config`, `diagnostic`, `native_delivery`, `native_file`, `probe`, `project` |
@@ -152,6 +152,7 @@ flowchart TD
   guard --> selection
   guard --> assets
   guard --> local_exclude
+  local_exclude --> input
   hook --> config
   hook --> project
   hook --> selection

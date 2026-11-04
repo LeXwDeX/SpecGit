@@ -158,11 +158,18 @@ async fn recorded_skills(process: &Process, root: &Path) -> Result<Vec<String>, 
             ));
         }
     };
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| receipt_conflict())?;
+    let value = crate::input::json(&bytes, 1_048_576, 20).map_err(|_| receipt_conflict())?;
     let skills = value
         .get("skills")
         .and_then(Value::as_object)
         .ok_or_else(receipt_conflict)?;
+    if !skills.contains_key(".agents/skills/specgit-native/SKILL.md")
+        || skills
+            .keys()
+            .any(|path| !SKILL_PATHS.contains(&path.as_str()))
+    {
+        return Err(receipt_conflict());
+    }
     Ok(skills.keys().cloned().collect())
 }
 
