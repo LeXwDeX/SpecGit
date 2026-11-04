@@ -431,6 +431,12 @@ fn pre_commit_rejects_generated_assets_and_allows_untracking() {
     )
     .unwrap();
 
+    // The block alone is evidence; remove the receipt so the block is the source.
+    fs::remove_file(
+        temp.path()
+            .join(".git/specgit-v2/agent-assets/ownership.json"),
+    )
+    .unwrap();
     let exclude = temp.path().join(".git/info/exclude");
     fs::create_dir_all(exclude.parent().unwrap()).unwrap();
     // A block that omits the declaration must not weaken its protection.
@@ -516,6 +522,56 @@ fn manual_skill_at_a_generated_path_is_not_protected() {
         temp.path(),
         &["add", ".claude/skills/specgit-native/SKILL.md"],
     );
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn damaged_ownership_receipt_fails_closed() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    fs::create_dir_all(temp.path().join(".git/specgit-v2/agent-assets")).unwrap();
+    fs::write(
+        temp.path()
+            .join(".git/specgit-v2/agent-assets/ownership.json"),
+        b"{",
+    )
+    .unwrap();
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
+        "{denied:?}"
+    );
+    fs::remove_file(
+        temp.path()
+            .join(".git/specgit-v2/agent-assets/ownership.json"),
+    )
+    .unwrap();
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn damaged_exclusion_block_fails_closed() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(&exclude, b"# specgit:local:v2:start\n/.specgit.yaml\n").unwrap();
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("local exclusion block"),
+        "{denied:?}"
+    );
+    fs::write(
+        &exclude,
+        b"# specgit:local:v2:start\n/.specgit.yaml\n# specgit:local:v2:end\n",
+    )
+    .unwrap();
     assert!(guard(temp.path(), "pre-commit", "").status.success());
 }
 

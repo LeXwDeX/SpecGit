@@ -499,9 +499,11 @@ Every commit binds an Issue. The installed pre-commit guard requires a current,
 complete checkpoint and rejects staged additions or modifications of
 `.specgit.yaml` and generated Skills. A generated Skill is identified by the
 managed `info/exclude` block or the init/setup ownership receipt; a same-named
-manual file is not protected, and a missing worktree copy does not remove
-protection. A staged deletion is allowed so an authorized `git rm --cached` can
-clean a legacy tracked copy. The pre-push guard also requires each new non-merge commit to
+manual file is not protected when neither source records it, and a missing
+worktree copy does not remove protection. Damaged ownership or exclusion
+evidence makes pre-commit fail closed until the project integration is repaired.
+A staged deletion is allowed so an authorized `git rm --cached` can clean a
+legacy tracked copy. The pre-push guard also requires each new non-merge commit to
 carry an `Issue: #N` trailer for a selected Issue, for example
 `git commit --trailer "Issue: #12"`. New commits are those not reachable from any
 remote-tracking ref or the local target branch. Merge commits, deletions and
