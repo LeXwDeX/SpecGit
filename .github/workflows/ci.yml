@@ -72,7 +72,8 @@ jobs:
     name: Rust (${{ matrix.label }})
     needs: changes
     if: needs.changes.outputs.build == 'true'
-    runs-on: ${{ matrix.os }}
+    # 可信事件用 Azure；fork PR 用 GitHub 托管 runner，不能让 fork 的代码上自托管机器。
+    runs-on: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runs_on) || fromJSON(matrix.hosted_runs_on) }}
     # Allow the Windows VM to finish both source and installed regressions.
     timeout-minutes: ${{ matrix.label == 'windows' && 60 || 45 }}
     strategy:
@@ -82,12 +83,18 @@ jobs:
           - os: ubuntu-24.04
             label: linux
             target: x86_64-unknown-linux-gnu
+            runs_on: '["self-hosted","Linux","X64","azure-f16"]'
+            hosted_runs_on: '["ubuntu-24.04"]'
           - os: macos-15
             label: macos
             target: aarch64-apple-darwin
+            runs_on: '["macos-15"]'
+            hosted_runs_on: '["macos-15"]'
           - os: windows-2025
             label: windows
             target: x86_64-pc-windows-msvc
+            runs_on: '["self-hosted","Windows","X64","azure-win"]'
+            hosted_runs_on: '["windows-2025"]'
     defaults:
       run:
         shell: bash
