@@ -315,6 +315,48 @@ fn fixture() -> tempfile::TempDir {
     temp
 }
 
+fn repository_root(root: &Path) -> String {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn ownership_receipt(root: &Path, claude: bool) -> serde_json::Value {
+    let root = repository_root(root);
+    let mut skills = serde_json::Map::new();
+    skills.insert(
+        ".agents/skills/specgit-native/SKILL.md".into(),
+        json!("hash"),
+    );
+    if claude {
+        skills.insert(
+            ".claude/skills/specgit-native/SKILL.md".into(),
+            json!("hash"),
+        );
+    }
+    json!({
+        "version": 1,
+        "owner": "specgit",
+        "root": &root,
+        "shared_root": &root,
+        "agents": if claude { json!(["generic", "claude"]) } else { json!(["generic"]) },
+        "skills": skills,
+        "instructions": {
+            "generic": {
+                "root": &root,
+                "skill_hash": "hash",
+                "instructions": "AGENTS.md",
+                "block": "<!-- specgit:project:v2:start -->\n## SpecGit 2\n\n<!-- specgit:project:v2:end -->",
+                "created_instructions": false
+            }
+        },
+        "hooks": {}
+    })
+}
+
 fn checkpoint(root: &Path, branch: &str) {
     let output = Command::new("git")
         .current_dir(root)
@@ -404,7 +446,7 @@ fn pre_commit_rejects_generated_assets_and_allows_untracking() {
     fs::write(
         temp.path()
             .join(".git/specgit-v2/agent-assets/ownership.json"),
-        r#"{"skills":{".agents/skills/specgit-native/SKILL.md":"hash"}}"#,
+        serde_json::to_vec(&ownership_receipt(temp.path(), false)).unwrap(),
     )
     .unwrap();
     fs::create_dir_all(temp.path().join(".agents/skills/specgit-native")).unwrap();
@@ -535,16 +577,22 @@ fn damaged_ownership_receipt_fails_closed() {
         .join(".git/specgit-v2/agent-assets/ownership.json");
     fs::write(temp.path().join("source.rs"), "change").unwrap();
     git(temp.path(), &["add", "source.rs"]);
-    for damaged in [
-        &b"{"[..],
-        &b"{}"[..],
-        &b"null"[..],
-        &b"[]"[..],
-        &br#"{"skills":{}}"#[..],
-        &br#"{"skills":{".agents/skills/specgit-native/SKILL.md":"h","skills":{}}}"#[..],
-        &br#"{"skills":{".agents/skills/unknown/SKILL.md":"h"}}"#[..],
-    ] {
-        fs::write(&receipt, damaged).unwrap();
+
+    let valid = ownership_receipt(temp.path(), false);
+    fs::write(&receipt, serde_json::to_vec(&valid).unwrap()).unwrap();
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+
+    let mut empty = valid.clone();
+    empty["skills"] = json!({});
+    let mut unknown = valid;
+    unknown["skills"][".agents/skills/unknown/SKILL.md"] = json!("hash");
+    let mut missing_claude = ownership_receipt(temp.path(), true);
+    missing_claude["skills"]
+        .as_object_mut()
+        .unwrap()
+        .remove(".claude/skills/specgit-native/SKILL.md");
+    for damaged in [empty, unknown, missing_claude] {
+        fs::write(&receipt, serde_json::to_vec(&damaged).unwrap()).unwrap();
         let denied = guard(temp.path(), "pre-commit", "");
         assert_eq!(denied.status.code(), Some(3), "{denied:?}");
         assert!(
@@ -552,8 +600,43 @@ fn damaged_ownership_receipt_fails_closed() {
             "{denied:?}"
         );
     }
+
+    // Top-level duplicate keys are rejected by the bounded decoder.
+    fs::write(
+        &receipt,
+        br#"{"skills":{".agents/skills/specgit-native/SKILL.md":"hash"},"skills":{".agents/skills/specgit-native/SKILL.md":"hash"}}"#,
+    )
+    .unwrap();
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
+        "{denied:?}"
+    );
+
     fs::remove_file(&receipt).unwrap();
     assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn broken_ownership_receipt_link_fails_closed() {
+    use std::os::unix::fs::symlink;
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    fs::create_dir_all(temp.path().join(".git/specgit-v2/agent-assets")).unwrap();
+    let receipt = temp
+        .path()
+        .join(".git/specgit-v2/agent-assets/ownership.json");
+    symlink("missing", &receipt).unwrap();
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
+        "{denied:?}"
+    );
 }
 
 #[test]
