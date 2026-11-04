@@ -4,6 +4,10 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.18.0
+
+- The native pre-commit guard now rejects staged additions and modifications of `.specgit.yaml` and generated `specgit-native` Skill files. A generated Skill is identified by the managed `info/exclude` block or the init/setup ownership receipt; damaged evidence fails closed, staged deletions stay allowed for `git rm --cached`, and a same-named manual file does not gain protection. The project Skill, init/setup human output and `specgit update` now tell agents to keep these files untracked. (#837)
+
 # 2.17.1
 
 - Report a checkpoint on another branch whose recorded request merged, with no pending write, as `delivered` instead of `branch_mismatch`. `status` and `doctor` no longer return `checkpoint_branch_mismatch` or advise returning to a deleted branch; the checkpoint summary adds `delivered_request` and the next action is `select_next_issues` (`issue <spec> --branch <name>`). Undelivered or pending checkpoints keep the existing mismatch report. Offline reads still never rewrite or discard the checkpoint. Supersedes 2.17.0, which reported delivered checkpoints as mismatched. (#828)
