@@ -530,25 +530,21 @@ fn damaged_ownership_receipt_fails_closed() {
     let temp = fixture();
     checkpoint(temp.path(), "feature");
     fs::create_dir_all(temp.path().join(".git/specgit-v2/agent-assets")).unwrap();
-    fs::write(
-        temp.path()
-            .join(".git/specgit-v2/agent-assets/ownership.json"),
-        b"{",
-    )
-    .unwrap();
+    let receipt = temp
+        .path()
+        .join(".git/specgit-v2/agent-assets/ownership.json");
     fs::write(temp.path().join("source.rs"), "change").unwrap();
     git(temp.path(), &["add", "source.rs"]);
-    let denied = guard(temp.path(), "pre-commit", "");
-    assert_eq!(denied.status.code(), Some(3));
-    assert!(
-        String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
-        "{denied:?}"
-    );
-    fs::remove_file(
-        temp.path()
-            .join(".git/specgit-v2/agent-assets/ownership.json"),
-    )
-    .unwrap();
+    for damaged in [&b"{"[..], &b"{}"[..], &b"null"[..], &b"[]"[..]] {
+        fs::write(&receipt, damaged).unwrap();
+        let denied = guard(temp.path(), "pre-commit", "");
+        assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+        assert!(
+            String::from_utf8_lossy(&denied.stderr).contains("ownership receipt"),
+            "{denied:?}"
+        );
+    }
+    fs::remove_file(&receipt).unwrap();
     assert!(guard(temp.path(), "pre-commit", "").status.success());
 }
 
@@ -558,18 +554,24 @@ fn damaged_exclusion_block_fails_closed() {
     checkpoint(temp.path(), "feature");
     let exclude = temp.path().join(".git/info/exclude");
     fs::create_dir_all(exclude.parent().unwrap()).unwrap();
-    fs::write(&exclude, b"# specgit:local:v2:start\n/.specgit.yaml\n").unwrap();
     fs::write(temp.path().join("source.rs"), "change").unwrap();
     git(temp.path(), &["add", "source.rs"]);
-    let denied = guard(temp.path(), "pre-commit", "");
-    assert_eq!(denied.status.code(), Some(3));
-    assert!(
-        String::from_utf8_lossy(&denied.stderr).contains("local exclusion block"),
-        "{denied:?}"
-    );
+    for damaged in [
+        &b"# specgit:local:v2:start\n/.specgit.yaml\n"[..],
+        &b"# specgit:local:v2:start\r/.specgit.yaml\n# specgit:local:v2:end\n"[..],
+        &b"# specgit:local:v2:start\n/.agents/skills/specgit-native/SKILL.md\xff\n# specgit:local:v2:end\n"[..],
+    ] {
+        fs::write(&exclude, damaged).unwrap();
+        let denied = guard(temp.path(), "pre-commit", "");
+        assert_eq!(denied.status.code(), Some(3), "{denied:?}");
+        assert!(
+            String::from_utf8_lossy(&denied.stderr).contains("local exclusion block"),
+            "{denied:?}"
+        );
+    }
     fs::write(
         &exclude,
-        b"# specgit:local:v2:start\n/.specgit.yaml\n# specgit:local:v2:end\n",
+        b"# specgit:local:v2:start\r\n/.specgit.yaml\r\n# specgit:local:v2:end\r\n",
     )
     .unwrap();
     assert!(guard(temp.path(), "pre-commit", "").status.success());
