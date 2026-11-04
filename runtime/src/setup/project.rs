@@ -48,30 +48,13 @@ fn installation_generation() -> Result<String, Diagnostic> {
     Ok(nonce.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn same_project_root(recorded: &Path, current: &Path) -> Result<bool, Diagnostic> {
-    #[cfg(windows)]
-    {
-        assets::safe_path(recorded)?;
-        assets::safe_path(current)?;
-        let recorded = recorded
-            .canonicalize()
-            .map_err(|_| conflict("The recorded project root cannot be resolved safely."))?;
-        let current = current
-            .canonicalize()
-            .map_err(|_| conflict("The current project root cannot be resolved safely."))?;
-        Ok(recorded == current)
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(recorded == current)
-    }
-}
-
 fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagnostic> {
     let snapshot = Snapshot::read(&private.join("ownership.json"))?;
     let receipt = if let Some(bytes) = &snapshot.bytes {
         let mut r = crate::project_receipt::decode(bytes)?;
-        if !same_project_root(&r.root, root)? {
+        assets::safe_path(&r.root)?;
+        assets::safe_path(root)?;
+        if !crate::project::same_root(&r.root, root)? {
             return Err(conflict(
                 "The project integration receipt belongs to another root.",
             ));

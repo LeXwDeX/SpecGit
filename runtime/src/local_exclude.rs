@@ -165,7 +165,7 @@ async fn recorded_skills(process: &Process, root: &Path) -> Result<Vec<String>, 
     }
     let bytes = std::fs::read(&receipt).map_err(|error| receipt_read_conflict(&error))?;
     let parsed = crate::project_receipt::decode(&bytes).map_err(|_| receipt_conflict())?;
-    if parsed.root.as_path() != root {
+    if !crate::project::same_root(&parsed.root, root).map_err(|_| receipt_conflict())? {
         return Err(receipt_conflict());
     }
     Ok(parsed.skills.into_keys().collect())

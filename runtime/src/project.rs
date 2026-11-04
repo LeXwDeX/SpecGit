@@ -52,6 +52,30 @@ pub fn require_local_repository_environment() -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Compare recorded and current project roots after resolving platform path spellings.
+pub(crate) fn same_root(recorded: &Path, current: &Path) -> Result<bool, Diagnostic> {
+    #[cfg(windows)]
+    {
+        let recorded = recorded.canonicalize().map_err(|_| root_conflict())?;
+        let current = current.canonicalize().map_err(|_| root_conflict())?;
+        Ok(recorded == current)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(recorded == current)
+    }
+}
+
+#[cfg(windows)]
+fn root_conflict() -> Diagnostic {
+    Diagnostic::new(
+        Code::OwnershipConflict,
+        "project_root",
+        "A recorded project root cannot be resolved safely.",
+        "Inspect the recorded integration root and refresh it in the current checkout.",
+    )
+}
+
 pub async fn git(process: &Process, cwd: &Path, args: &[&str]) -> Result<Vec<u8>, Diagnostic> {
     let mut request =
         Request::new(resolve_executable("git")?, cwd, "git").args(args.iter().copied());
