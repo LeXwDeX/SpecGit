@@ -77,6 +77,40 @@ pub(crate) fn project_change_with_shared(
     change_from(current, &names)
 }
 
+/// Generated paths only. Legacy whole-file rules for `AGENTS.md` or `CLAUDE.md`
+/// never turn those files into guard-protected assets.
+fn generated_asset(name: &str) -> bool {
+    name == ".specgit.yaml" || SKILL_PATHS.contains(&name)
+}
+
+/// Repository-relative generated paths. The declaration is always protected;
+/// generated Skills are protected while their files exist, even if the local
+/// exclusion block is missing or damaged.
+pub async fn managed_paths(process: &Process, root: &Path) -> Result<Vec<String>, Diagnostic> {
+    let exclude = path(process, root).await?;
+    let change = Change::new(exclude, None)?;
+    let text = std::str::from_utf8(change.before.bytes.as_deref().unwrap_or_default())
+        .map_err(|_| conflict())?;
+    let mut names = vec![".specgit.yaml".to_owned()];
+    names.extend(
+        owned_body(text)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.strip_prefix('/'))
+            .filter(|name| generated_asset(name))
+            .map(str::to_owned),
+    );
+    names.extend(
+        SKILL_PATHS
+            .into_iter()
+            .filter(|name| root.join(name).is_file())
+            .map(str::to_owned),
+    );
+    names.sort_unstable();
+    names.dedup();
+    Ok(names)
+}
+
 pub async fn path(process: &Process, root: &Path) -> Result<PathBuf, Diagnostic> {
     let bytes = project::git(
         process,
