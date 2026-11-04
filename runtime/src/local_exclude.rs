@@ -92,8 +92,11 @@ fn positions(text: &[u8], needle: &[u8]) -> Vec<usize> {
 
 fn marker_line(text: &[u8], index: usize, marker: &[u8]) -> bool {
     let before = index == 0 || text[index - 1] == b'\n';
-    let after =
-        index + marker.len() == text.len() || matches!(text[index + marker.len()], b'\r' | b'\n');
+    let after = match text.get(index + marker.len()) {
+        None | Some(&b'\n') => true,
+        Some(&b'\r') => text.get(index + marker.len() + 1) == Some(&b'\n'),
+        _ => false,
+    };
     before && after
 }
 
@@ -109,7 +112,15 @@ fn managed_body(text: &[u8]) -> Result<Option<&[u8]>, Diagnostic> {
                 && marker_line(text, *start, START.as_bytes())
                 && marker_line(text, *end, END.as_bytes()) =>
         {
-            Ok(Some(&text[start + START.len()..*end]))
+            let body = &text[start + START.len()..*end];
+            let rules = std::str::from_utf8(body).map_err(|_| conflict())?;
+            if rules
+                .lines()
+                .any(|line| !line.is_empty() && !(line.starts_with('/') && allowed(&line[1..])))
+            {
+                return Err(conflict());
+            }
+            Ok(Some(body))
         }
         _ => Err(conflict()),
     }
@@ -135,13 +146,23 @@ async fn recorded_skills(process: &Process, root: &Path) -> Result<Vec<String>, 
     let bytes = match std::fs::read(&receipt) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-        Err(_) => return Err(receipt_conflict()),
+        Err(error) => {
+            return Err(Diagnostic::new(
+                Code::OwnershipConflict,
+                "local_exclude",
+                &format!(
+                    "The project ownership receipt could not be read ({:?}).",
+                    error.kind()
+                ),
+                "Check file permissions or locks, then run `specgit doctor`.",
+            ));
+        }
     };
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| receipt_conflict())?;
-    let Some(skills) = value.get("skills") else {
-        return Ok(vec![]);
-    };
-    let skills = skills.as_object().ok_or_else(receipt_conflict)?;
+    let skills = value
+        .get("skills")
+        .and_then(Value::as_object)
+        .ok_or_else(receipt_conflict)?;
     Ok(skills.keys().cloned().collect())
 }
 
