@@ -163,7 +163,11 @@ Preview and rollback include this file; damaged markers require reconciliation.
 `migrate --rollback` keep the shared file, and report it under `retained`, while
 another linked worktree still has a declaration or SpecGit private state.
 
-The JSON `local_exclusion` result reports exclusions and already tracked files.
+The JSON `local_exclusion` result reports exclusions and already tracked files;
+human output repeats the tracked paths with the `git rm --cached` remedy. The
+installed native pre-commit guard rejects staged additions or modifications of
+these generated files and allows a staged deletion, so `git add -f` cannot
+commit them.
 Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part

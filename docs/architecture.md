@@ -54,7 +54,7 @@ only on a lower layer. Layer 0 contains pure rules and models.
 | `forge` | 5 | `declaration`, `delivery_model`, `diagnostic`, `forge_read`, `forge_routes`, `identity`, `input`, `native_checks`, `process`, `project`, `spec` |
 | `forge_read` | 3 | `delivery_model`, `diagnostic`, `forge_routes`, `identity`, `input`, `process` |
 | `forge_routes` | 0 | `identity` |
-| `guard` | 8 | `assets`, `config`, `diagnostic`, `input`, `process`, `project`, `selection` |
+| `guard` | 8 | `assets`, `config`, `diagnostic`, `input`, `local_exclude`, `process`, `project`, `selection` |
 | `guidance` | 2 | `assets`, `declaration`, `diagnostic`, `input`, `prompts` |
 | `hook` | 9 | `assets`, `config`, `declaration`, `diagnostic`, `input`, `process`, `project`, `selection`, `watch`, `watch_store` |
 | `i18n` | 0 | `declaration`, `diagnostic`, `report` |
@@ -63,7 +63,7 @@ only on a lower layer. Layer 0 contains pure rules and models.
 | `input` | 0 | `diagnostic` |
 | `issue` | 8 | `assets`, `config`, `delivery_context`, `delivery_model`, `diagnostic`, `identity`, `native_delivery`, `process`, `project`, `report`, `selection`, `spec`, `templates` |
 | `label_rules` | 0 | — |
-| `local_exclude` | 2 | `assets`, `diagnostic`, `process`, `project` |
+| `local_exclude` | 2 | `assets`, `diagnostic`, `process`, `project`, `project_receipt` |
 | `migrate` | 8 | `assets`, `config`, `diagnostic`, `guidance`, `local_exclude`, `migration_assets`, `migration_remote`, `probe`, `process`, `project`, `report`, `templates` |
 | `migration_assets` | 2 | `assets`, `config`, `diagnostic`, `input` |
 | `migration_remote` | 6 | `config`, `diagnostic`, `native_delivery`, `native_file`, `probe`, `project` |
@@ -151,6 +151,8 @@ flowchart TD
   guard --> project
   guard --> selection
   guard --> assets
+  guard --> local_exclude
+  local_exclude --> project_receipt
   hook --> config
   hook --> project
   hook --> selection
