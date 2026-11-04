@@ -326,15 +326,38 @@ fn repository_root(root: &Path) -> String {
 
 fn ownership_receipt(root: &Path, claude: bool) -> serde_json::Value {
     let root = repository_root(root);
+    let block =
+        "<!-- specgit:project:v2:start -->\n## SpecGit 2\n\n<!-- specgit:project:v2:end -->";
     let mut skills = serde_json::Map::new();
     skills.insert(
         ".agents/skills/specgit-native/SKILL.md".into(),
         json!("hash"),
     );
+    let mut instructions = serde_json::Map::new();
+    instructions.insert(
+        "generic".into(),
+        json!({
+            "root": &root,
+            "skill_hash": "hash",
+            "instructions": "AGENTS.md",
+            "block": block,
+            "created_instructions": false
+        }),
+    );
     if claude {
         skills.insert(
             ".claude/skills/specgit-native/SKILL.md".into(),
             json!("hash"),
+        );
+        instructions.insert(
+            "claude".into(),
+            json!({
+                "root": &root,
+                "skill_hash": "hash",
+                "instructions": "CLAUDE.md",
+                "block": block,
+                "created_instructions": false
+            }),
         );
     }
     json!({
@@ -344,15 +367,7 @@ fn ownership_receipt(root: &Path, claude: bool) -> serde_json::Value {
         "shared_root": &root,
         "agents": if claude { json!(["generic", "claude"]) } else { json!(["generic"]) },
         "skills": skills,
-        "instructions": {
-            "generic": {
-                "root": &root,
-                "skill_hash": "hash",
-                "instructions": "AGENTS.md",
-                "block": "<!-- specgit:project:v2:start -->\n## SpecGit 2\n\n<!-- specgit:project:v2:end -->",
-                "created_instructions": false
-            }
-        },
+        "instructions": instructions,
         "hooks": {}
     })
 }
@@ -582,11 +597,15 @@ fn damaged_ownership_receipt_fails_closed() {
     fs::write(&receipt, serde_json::to_vec(&valid).unwrap()).unwrap();
     assert!(guard(temp.path(), "pre-commit", "").status.success());
 
+    let claude = ownership_receipt(temp.path(), true);
+    fs::write(&receipt, serde_json::to_vec(&claude).unwrap()).unwrap();
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+
     let mut empty = valid.clone();
     empty["skills"] = json!({});
-    let mut unknown = valid;
+    let mut unknown = valid.clone();
     unknown["skills"][".agents/skills/unknown/SKILL.md"] = json!("hash");
-    let mut missing_claude = ownership_receipt(temp.path(), true);
+    let mut missing_claude = claude;
     missing_claude["skills"]
         .as_object_mut()
         .unwrap()
@@ -602,11 +621,10 @@ fn damaged_ownership_receipt_fails_closed() {
     }
 
     // Top-level duplicate keys are rejected by the bounded decoder.
-    fs::write(
-        &receipt,
-        br#"{"skills":{".agents/skills/specgit-native/SKILL.md":"hash"},"skills":{".agents/skills/specgit-native/SKILL.md":"hash"}}"#,
-    )
-    .unwrap();
+    let mut duplicate = serde_json::to_string(&valid).unwrap();
+    duplicate.pop();
+    duplicate.push_str(r#","skills":{".agents/skills/specgit-native/SKILL.md":"hash"}}"#);
+    fs::write(&receipt, duplicate).unwrap();
     let denied = guard(temp.path(), "pre-commit", "");
     assert_eq!(denied.status.code(), Some(3), "{denied:?}");
     assert!(
