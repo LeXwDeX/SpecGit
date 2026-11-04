@@ -392,9 +392,21 @@ fn pre_commit_rejects_generated_assets_and_allows_untracking() {
     git(temp.path(), &["add", "-f", ".specgit.yaml"]);
     let denied = guard(temp.path(), "pre-commit", "");
     assert_eq!(denied.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains(".specgit.yaml"),
+        "{denied:?}"
+    );
     git(temp.path(), &["reset", "-q"]);
 
-    // An existing generated Skill stays protected without any block either.
+    // A recorded generated Skill stays protected without any block, and a
+    // missing worktree copy does not remove that protection from the index.
+    fs::create_dir_all(temp.path().join(".git/specgit-v2/agent-assets")).unwrap();
+    fs::write(
+        temp.path()
+            .join(".git/specgit-v2/agent-assets/ownership.json"),
+        r#"{"skills":{".agents/skills/specgit-native/SKILL.md":"hash"}}"#,
+    )
+    .unwrap();
     fs::create_dir_all(temp.path().join(".agents/skills/specgit-native")).unwrap();
     fs::write(
         temp.path().join(".agents/skills/specgit-native/SKILL.md"),
@@ -405,8 +417,19 @@ fn pre_commit_rejects_generated_assets_and_allows_untracking() {
         temp.path(),
         &["add", "-f", ".agents/skills/specgit-native/SKILL.md"],
     );
-    assert_eq!(guard(temp.path(), "pre-commit", "").status.code(), Some(1));
+    fs::remove_file(temp.path().join(".agents/skills/specgit-native/SKILL.md")).unwrap();
+    let denied = guard(temp.path(), "pre-commit", "");
+    assert_eq!(denied.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("SKILL.md"),
+        "{denied:?}"
+    );
     git(temp.path(), &["reset", "-q"]);
+    fs::write(
+        temp.path().join(".agents/skills/specgit-native/SKILL.md"),
+        "generated",
+    )
+    .unwrap();
 
     let exclude = temp.path().join(".git/info/exclude");
     fs::create_dir_all(exclude.parent().unwrap()).unwrap();
@@ -472,8 +495,43 @@ fn legacy_whole_file_exclusions_do_not_protect_guidance() {
         "# specgit:local:v2:start\n/AGENTS.md\n/CLAUDE.md\n/.specgit.yaml\n# specgit:local:v2:end\n",
     )
     .unwrap();
-    fs::write(temp.path().join("AGENTS.md"), "manual guidance").unwrap();
-    git(temp.path(), &["add", "-f", "AGENTS.md"]);
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        fs::write(temp.path().join(name), "manual guidance").unwrap();
+        git(temp.path(), &["add", "-f", name]);
+    }
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn manual_skill_at_a_generated_path_is_not_protected() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    fs::create_dir_all(temp.path().join(".claude/skills/specgit-native")).unwrap();
+    fs::write(
+        temp.path().join(".claude/skills/specgit-native/SKILL.md"),
+        "manual",
+    )
+    .unwrap();
+    git(
+        temp.path(),
+        &["add", ".claude/skills/specgit-native/SKILL.md"],
+    );
+    assert!(guard(temp.path(), "pre-commit", "").status.success());
+}
+
+#[test]
+fn non_utf8_exclude_user_rules_do_not_block_ordinary_commits() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let exclude = temp.path().join(".git/info/exclude");
+    fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    fs::write(
+        &exclude,
+        b"/cache-\xff\n# specgit:local:v2:start\n/.specgit.yaml\n# specgit:local:v2:end\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("source.rs"), "change").unwrap();
+    git(temp.path(), &["add", "source.rs"]);
     assert!(guard(temp.path(), "pre-commit", "").status.success());
 }
 
