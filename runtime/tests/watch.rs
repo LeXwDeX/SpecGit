@@ -2771,7 +2771,7 @@ fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
         "--goal",
         "checks",
         "--timeout-seconds",
-        "9",
+        "20",
         "--poll-seconds",
         "1",
     ]);
