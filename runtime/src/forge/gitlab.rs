@@ -302,6 +302,32 @@ pub(crate) fn request_value(v: &Value, number: u64) -> Result<PullRequest, Diagn
     }
     Ok(result)
 }
+pub(crate) async fn has_open_issue_search_rows(
+    reader: &ForgeRead,
+    repo: &Repository,
+    query: &str,
+) -> Result<bool, Diagnostic> {
+    let route = format!(
+        "{}/issues?state=opened&search={}&in=title",
+        prefix(repo),
+        encode(query)
+    );
+    Ok(!reader.list(&route, None, 10).await?.is_empty())
+}
+
+pub(crate) async fn has_request_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    source: &str,
+) -> Result<bool, Diagnostic> {
+    let route = format!(
+        "{}/merge_requests?scope=all&source_branch={}",
+        prefix(repo),
+        encode(source)
+    );
+    Ok(!reader.list(&route, None, 10).await?.is_empty())
+}
+
 pub(crate) async fn request_candidates(
     reader: &ForgeRead,
     repo: &Repository,

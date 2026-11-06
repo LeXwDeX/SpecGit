@@ -2,6 +2,91 @@
 use super::preparation::Prepared;
 use super::*;
 
+pub(super) async fn discard_uncertain(
+    options: &Options,
+    process: Process,
+    cwd: &Path,
+    effects: &mut Effects,
+) -> Result<Report, Diagnostic> {
+    let w = Workspace::load_issue(process, cwd).await?;
+    let mut lock = Locked::acquire(&w.context)?;
+    let mut selected = selection::read(&w.context)?
+        .ok_or_else(|| Diagnostic::input("No checkpoint has an uncertain issue creation."))?;
+    if selected.project_id != w.facts.id || selected.target != w.target {
+        return Err(Diagnostic::input(
+            "The selected delivery project or target changed.",
+        ));
+    }
+    let pending: Vec<_> = selected
+        .intents
+        .iter()
+        .enumerate()
+        .filter(|(_, intent)| intent.write_started && intent.issue.is_none())
+        .map(|(index, _)| index)
+        .collect();
+    if pending.is_empty() {
+        return Err(Diagnostic::input(
+            "No checkpoint has an uncertain issue creation.",
+        ));
+    }
+    let mut evidence = Vec::new();
+    for &index in &pending {
+        let intent = &selected.intents[index];
+        let candidates = native_delivery::candidate_search(
+            &w.reader,
+            &w.context.repository,
+            w.facts.id,
+            &intent.title,
+        )
+        .await?;
+        if let Some(error) = candidates.history_diagnostics.into_iter().next() {
+            return Err(error);
+        }
+        if !candidates.read.pagination.complete {
+            return Err(Diagnostic::input("Issue candidate read is incomplete."));
+        }
+        let raw_open = crate::native_delivery::recovery_issue_candidates(
+            &w.reader,
+            &w.context.repository,
+            &intent.title,
+        )
+        .await?;
+        if raw_open || !candidates.read.issues.is_empty() || !candidates.history.is_empty() {
+            return Err(Diagnostic::new(
+                Code::AmbiguousRequest,
+                "issue",
+                "Native issue candidates exist for an uncertain creation.",
+                "Inspect the candidates and adopt the exact issue ID; the checkpoint was preserved.",
+            ));
+        }
+        evidence.push(intent.title.clone());
+    }
+    w.process.ensure_inspection_budget("issue_recovery")?;
+    w.unchanged_issue().await?;
+    w.process.ensure_inspection_budget("issue_recovery")?;
+    if !options.dry_run {
+        for index in pending {
+            selected.intents[index].write_started = false;
+        }
+        let effect = effects.begin(
+            "local",
+            "discard_uncertain_issue",
+            serde_json::json!({"branch":selected.branch,"titles":evidence}),
+        );
+        lock.save(&selected)?;
+        effects.applied(effect);
+    }
+    Ok(Report::success(
+        "issue",
+        if options.dry_run {
+            "discard_prepared"
+        } else {
+            "uncertain_discarded"
+        },
+        serde_json::json!({"titles":evidence,"writes":!options.dry_run}),
+    ))
+}
+
 pub(super) async fn apply(
     options: &Options,
     p: &mut Prepared,
@@ -168,9 +253,30 @@ async fn create_issue(
     lock.save(selection)?;
     effects.applied(local_effect);
     let issue_effect = effects.begin("native", "create_issue", serde_json::json!({"title":intent.title,"repository":w.context.repository,"branch":selection.branch,"next_action":"inspect_candidates_then_adopt_exact_id"}));
-    let number = writer
+    let result = writer
         .create_issue(&intent.title, &intent.body, &intent.labels)
-        .await?;
+        .await;
+    let number = match result {
+        Ok(number) => number,
+        Err(error) => {
+            if matches!(error.http_status, Some(400 | 401 | 403 | 422))
+                && matches!(
+                    error.code,
+                    Code::ProcessFailed | Code::AuthenticationFailed | Code::PermissionDenied
+                )
+            {
+                selection.intents[index].write_started = false;
+                let local_effect = effects.begin(
+                    "local",
+                    "save_selection",
+                    serde_json::json!({"branch":selection.branch,"repository":selection.repository}),
+                );
+                lock.save(selection)?;
+                effects.applied(local_effect);
+            }
+            return Err(error);
+        }
+    };
     effects.locator(issue_effect, "issue", number);
     // Save the returned locator before any fallible readback.
     selection.intents[index].issue = Some(number);
