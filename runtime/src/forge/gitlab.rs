@@ -156,6 +156,33 @@ fn milestone_context(
         .map(|milestone| MilestoneContext::Linked { milestone })
         .unwrap_or_else(unknown)
 }
+pub(crate) async fn recent_issues(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+) -> Result<Vec<Issue>, Diagnostic> {
+    let mut issues = Vec::new();
+    for state in ["opened", "closed"] {
+        let value = reader
+            .get(&format!(
+                "{}/issues?state={state}&order_by=created_at&sort=desc&per_page=100",
+                prefix(repo)
+            ))
+            .await?;
+        let rows = value.as_array().ok_or_else(malformed)?;
+        if rows.len() > 100 {
+            return Err(malformed());
+        }
+        for row in rows {
+            let issue = issue_value(row, project_id)?;
+            if issue.state != state {
+                return Err(malformed());
+            }
+            issues.push(issue);
+        }
+    }
+    Ok(issues)
+}
 pub(crate) async fn candidates(
     reader: &ForgeRead,
     repo: &Repository,
@@ -302,6 +329,32 @@ pub(crate) fn request_value(v: &Value, number: u64) -> Result<PullRequest, Diagn
     }
     Ok(result)
 }
+pub(crate) async fn has_open_issue_search_rows(
+    reader: &ForgeRead,
+    repo: &Repository,
+    query: &str,
+) -> Result<bool, Diagnostic> {
+    let route = format!(
+        "{}/issues?state=opened&search={}&in=title",
+        prefix(repo),
+        encode(query)
+    );
+    Ok(!reader.list(&route, None, 10).await?.is_empty())
+}
+
+pub(crate) async fn has_request_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    source: &str,
+) -> Result<bool, Diagnostic> {
+    let route = format!(
+        "{}/merge_requests?scope=all&source_branch={}",
+        prefix(repo),
+        encode(source)
+    );
+    Ok(!reader.list(&route, None, 10).await?.is_empty())
+}
+
 pub(crate) async fn request_candidates(
     reader: &ForgeRead,
     repo: &Repository,

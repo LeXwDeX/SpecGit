@@ -87,6 +87,9 @@ export async function main(args) {
         const manifest = readCompiledTests(compiled.value.manifest, source);
         const env = { ...process.env };
         delete env.SPECGIT_TEST_BINARY;
+        // Windows process startup and teardown are slower; keep libtest from
+        // running every fixture-heavy binary at full CPU parallelism.
+        if (process.platform === 'win32') env.RUST_TEST_THREADS = '2';
         const failures = [];
         for (const [index, artifact] of manifest.artifacts.entries()) {
           const log = path.join(directory, `${index}.log`);

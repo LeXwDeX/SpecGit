@@ -169,6 +169,35 @@ pub fn open_regular(path: &Path) -> std::io::Result<File> {
     Ok(file)
 }
 
+/// Open a persistent lock without following a substituted leaf on Unix.
+pub(crate) fn open_lock(path: &Path) -> std::io::Result<File> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Lock is not a regular file",
+            ));
+        }
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Lock is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 fn ensure_directory(path: &Path) -> Result<(), Diagnostic> {
     safe_path(path)?;
     fs::create_dir_all(path).map_err(|e| filesystem_error("create_directory", &e))?;
@@ -593,20 +622,7 @@ impl AssetStore {
         safe_path(&lock_path)?;
         // The creator writes the marker only under the held lock, so a
         // concurrent opener never observes partial content after acquisition.
-        let mut file = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(file) => file,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&lock_path)
-                .map_err(|e| filesystem_error("lock_open", &e))?,
-            Err(e) => return Err(filesystem_error("lock_create", &e)),
-        };
+        let mut file = open_lock(&lock_path).map_err(|e| filesystem_error("lock_open", &e))?;
         let start = Instant::now();
         loop {
             match file.try_lock() {

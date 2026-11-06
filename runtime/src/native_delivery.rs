@@ -63,6 +63,17 @@ pub async fn candidate_search(
         Provider::Gitlab => gitlab::candidates(reader, repo, project_id, query).await,
     }
 }
+/// A bounded recent window narrows, but cannot eliminate, duplicate races.
+pub async fn recent_issues(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+) -> Result<Vec<Issue>, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::recent_issues(reader, repo, project_id).await,
+        Provider::Gitlab => gitlab::recent_issues(reader, repo, project_id).await,
+    }
+}
 pub async fn label_pool(reader: &ForgeRead, repo: &Repository) -> Result<Vec<String>, Diagnostic> {
     match repo.provider {
         Provider::Github => github::label_pool(reader, repo).await,
@@ -229,6 +240,30 @@ async fn create_label(
     match provider {
         Provider::Github => github::create_label(transport, tag).await,
         Provider::Gitlab => gitlab::create_label(transport, tag).await,
+    }
+}
+
+/// Read-only recovery probe: prove whether any open issue matches a title query.
+pub async fn recovery_issue_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    query: &str,
+) -> Result<bool, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::has_open_issue_search_rows(reader, repo, query).await,
+        Provider::Gitlab => gitlab::has_open_issue_search_rows(reader, repo, query).await,
+    }
+}
+
+/// Read-only recovery probe: prove whether any request uses the source branch.
+pub async fn recovery_request_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    source: &str,
+) -> Result<bool, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::has_request_candidates(reader, repo, source).await,
+        Provider::Gitlab => gitlab::has_request_candidates(reader, repo, source).await,
     }
 }
 

@@ -1723,7 +1723,7 @@ pub async fn run_with_hook_removals(
         let path = |bytes: Vec<u8>| -> Result<PathBuf, Diagnostic> {
             let text = std::str::from_utf8(&bytes)
                 .map_err(|_| Diagnostic::input("Git path is not UTF-8."))?;
-            let path = PathBuf::from(text.trim_end_matches(['\r', '\n']));
+            let path = PathBuf::from(crate::project::git_path_line(text));
             assets::safe_path(&path)?;
             Ok(path)
         };

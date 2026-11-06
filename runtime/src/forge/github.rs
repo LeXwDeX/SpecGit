@@ -168,6 +168,33 @@ fn verify_search_repository(row: &Value, repo: &Repository) -> Result<(), Diagno
     }
     Ok(())
 }
+pub(crate) async fn recent_issues(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+) -> Result<Vec<Issue>, Diagnostic> {
+    let mut issues = Vec::new();
+    for state in ["open", "closed"] {
+        let value = reader
+            .get(&format!(
+                "{}/issues?state={state}&sort=created&direction=desc&per_page=100",
+                prefix(repo)
+            ))
+            .await?;
+        let rows = value.as_array().ok_or_else(malformed)?;
+        if rows.len() > 100 {
+            return Err(malformed());
+        }
+        for row in rows.iter().filter(|row| row.get("pull_request").is_none()) {
+            let issue = issue_value(row, project_id)?;
+            if issue.state != state {
+                return Err(malformed());
+            }
+            issues.push(issue);
+        }
+    }
+    Ok(issues)
+}
 pub(crate) async fn candidates(
     reader: &ForgeRead,
     repo: &Repository,
@@ -378,6 +405,61 @@ pub(crate) fn request_value(v: &Value, number: u64) -> Result<PullRequest, Diagn
     }
     Ok(result)
 }
+pub(crate) async fn has_open_issue_search_rows(
+    reader: &ForgeRead,
+    repo: &Repository,
+    query: &str,
+) -> Result<bool, Diagnostic> {
+    let route = format!(
+        "search/issues?q={}",
+        encode(&format!(
+            "repo:{} is:issue is:open {}",
+            repo.path,
+            title_query(query)
+        ))
+    );
+    let mut found = false;
+    for page in 1..=10 {
+        let value = reader
+            .get(&format!("{route}&per_page=100&page={page}"))
+            .await?;
+        if value.get("incomplete_results").and_then(Value::as_bool) != Some(false) {
+            return Err(malformed());
+        }
+        let rows = value
+            .get("items")
+            .and_then(Value::as_array)
+            .ok_or_else(malformed)?;
+        if rows.len() > 100 {
+            return Err(malformed());
+        }
+        found |= !rows.is_empty();
+        if rows.len() < 100 {
+            return Ok(found);
+        }
+    }
+    Err(Diagnostic::new(
+        Code::OutputLimit,
+        "issue_search",
+        "Issue candidate search exceeds the complete read budget.",
+        "Inspect native candidates before recovery.",
+    ))
+}
+
+pub(crate) async fn has_request_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    source: &str,
+) -> Result<bool, Diagnostic> {
+    let owner = repo.path.split('/').next().ok_or_else(malformed)?;
+    let route = format!(
+        "{}/pulls?state=all&head={}",
+        prefix(repo),
+        encode(&format!("{owner}:{source}"))
+    );
+    Ok(!reader.list(&route, None, 10).await?.is_empty())
+}
+
 pub(crate) async fn request_candidates(
     reader: &ForgeRead,
     repo: &Repository,

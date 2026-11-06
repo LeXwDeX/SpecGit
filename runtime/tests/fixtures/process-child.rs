@@ -4,6 +4,7 @@ use std::{
     io::{Read, Write},
     time::Duration,
 };
+const CLOSING_QUERY: &str = include_str!("closing-issues.graphql");
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if let Some(directory) = std::env::var_os("SPECGIT_FIXTURE_UPDATE_DIR") {
@@ -786,6 +787,14 @@ fn native_api(args: &[String], path: &std::path::Path) {
         });
     }
     if method == "GET"
+        && endpoint == "projects/7/pipelines/71"
+        && let Some(delay_ms) = state["pipeline_delay_ms"].as_u64()
+    {
+        pause(path, &lock, &mut state, || {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        });
+    }
+    if method == "GET"
         && (endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo")
         && state["calls"]
             .as_array()
@@ -812,9 +821,8 @@ fn native_api(args: &[String], path: &std::path::Path) {
         eprintln!("HTTP 415: JSON content type required");
         std::process::exit(1);
     }
-    let fixed_closing_query = method == "POST"
-        && endpoint == "graphql"
-        && input["query"] == specgit::forge::github::CLOSING_ISSUES_QUERY;
+    let fixed_closing_query =
+        method == "POST" && endpoint == "graphql" && input["query"] == CLOSING_QUERY.trim_end();
     if (method == "GET" || fixed_closing_query) && state["read_failure"].is_string() {
         state["hanging_reader_pid"] = json!(std::process::id());
         snapshot::write(path, &state);
@@ -932,7 +940,7 @@ fn closing_api(
     }
     let (number, offset) = if gh {
         if method != "POST"
-            || input["query"] != specgit::forge::github::CLOSING_ISSUES_QUERY
+            || input["query"] != CLOSING_QUERY.trim_end()
             || input.as_object().is_none_or(|o| o.len() != 2)
             || input["variables"].as_object().is_none_or(|o| o.len() != 4)
         {
@@ -1051,6 +1059,10 @@ fn request_api(
     let label_write = method == "POST" && route.contains("/issues/") && route.ends_with("/labels");
     let value = if method == "GET" && route.contains("/branches/") {
         let name = route.rsplit('/').next().unwrap();
+        if state["branch_forbidden"] == name {
+            eprintln!("HTTP 403");
+            std::process::exit(1);
+        }
         let sha = &state["branch_heads"][name];
         if !sha.is_string() {
             eprintln!("HTTP 404");
@@ -1067,6 +1079,11 @@ fn request_api(
     } else if method == "GET" && list {
         state["requests"].clone()
     } else if method == "POST" && list {
+        if let Some(status) = state["request_create_status"].as_u64() {
+            snapshot::write(path, state);
+            eprintln!("HTTP {status}");
+            std::process::exit(1);
+        }
         let number = state["requests"].as_array().unwrap().len() as u64 + 41;
         let source = input[if gh { "head" } else { "source_branch" }]
             .as_str()
@@ -1180,6 +1197,11 @@ fn delivery_api(
     let route = endpoint.split('?').next().unwrap();
     let issue_rows = || {
         let closed = endpoint.contains("is%3Aclosed") || endpoint.contains("state=closed");
+        if state["empty_issue_search"] == true
+            && (endpoint.starts_with("search/issues?") || endpoint.contains("search="))
+        {
+            return json!([]);
+        }
         match state["issues"].as_array() {
             Some(issues) => json!(
                 issues
@@ -1231,6 +1253,11 @@ fn delivery_api(
         state["labels"].as_array_mut().unwrap().push(input.clone());
         input.clone()
     } else if method == "POST" && route.ends_with("/issues") {
+        if let Some(status) = state["issue_create_status"].as_u64() {
+            snapshot::write(path, state);
+            eprintln!("HTTP {status}");
+            std::process::exit(1);
+        }
         let number = state["issues"].as_array().unwrap().len() as u64 + 1;
         let labels = if gh {
             Value::Array(

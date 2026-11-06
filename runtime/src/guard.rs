@@ -43,7 +43,7 @@ struct Receipt {
 fn hook_block(stage: &str, executable: &str) -> String {
     if stage == "pre-push" {
         return format!(
-            "# >>> specgit-v2:{stage}:start >>>\nspecgit_input=$(mktemp \"${{TMPDIR:-/tmp}}/specgit-pre-push.XXXXXX\") || exit 1\ntrap 'rm -f \"$specgit_input\"' EXIT HUP INT TERM\ncat > \"$specgit_input\"\n{executable} guard --stage pre-push < \"$specgit_input\" || exit $?\nexec < \"$specgit_input\"\nrm -f \"$specgit_input\"\ntrap - EXIT HUP INT TERM\n# <<< specgit-v2:{stage}:end <<<"
+            "# >>> specgit-v2:{stage}:start >>>\nspecgit_input=$(mktemp \"${{TMPDIR:-/tmp}}/specgit-pre-push.XXXXXX\") || exit 1\ntrap 'rm -f \"$specgit_input\"' EXIT HUP INT TERM\ncat > \"$specgit_input\" || exit 1\n{executable} guard --stage pre-push < \"$specgit_input\" || exit $?\nexec < \"$specgit_input\"\nrm -f \"$specgit_input\"\ntrap - EXIT HUP INT TERM\n# <<< specgit-v2:{stage}:end <<<"
         );
     }
     format!(
@@ -194,20 +194,33 @@ fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic>
             "The existing Git hook has no shell shebang and was preserved.",
         ));
     }
-    if first.starts_with("#!")
-        && !["sh", "bash", "zsh"]
-            .iter()
-            .any(|shell| first.contains(shell))
-    {
+    let mut words = first[2..].split_whitespace();
+    let interpreter = words.next().and_then(|word| word.rsplit('/').next());
+    let shell = if interpreter == Some("env") {
+        match words.next() {
+            Some("-S") => words.next(),
+            other => other,
+        }
+    } else {
+        interpreter
+    };
+    let shell = shell.and_then(|word| word.rsplit('/').next());
+    if !matches!(shell, Some("sh" | "bash" | "zsh")) {
         return Err(rejected(
             "The existing Git hook is not a supported shell script and was preserved.",
         ));
     }
-    if first.starts_with("#!") {
-        let split = before.find('\n').map_or(before.len(), |index| index + 1);
-        return Ok(format!("{}{block}{}", &before[..split], &before[split..]));
-    }
-    Ok(format!("#!/bin/sh\n{block}{before}"))
+    let split = before.find('\n').map_or(before.len(), |index| index + 1);
+    let newline = if before[..split].ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    Ok(format!(
+        "{}{newline}{block}{}",
+        &before[..split],
+        &before[split..]
+    ))
 }
 
 pub(crate) async fn plan(
@@ -261,6 +274,24 @@ pub(crate) async fn plan_named_with_executable(
         return Err(rejected(
             "The effective Git hooks path is external to this repository and its common Git directory.",
         ));
+    }
+    if !uninstall
+        && hook_root.starts_with(&common_dir)
+        && let Some(source) = source
+    {
+        let executable = source
+            .canonicalize()
+            .map_err(|_| rejected("The shared CLI executable cannot be resolved."))?;
+        let project = root
+            .canonicalize()
+            .map_err(|_| rejected("The project root cannot be resolved."))?;
+        if executable.starts_with(project)
+            || config::worktree::source_in_same_repository_checkout(&executable, &root)?
+        {
+            return Err(rejected(
+                "Git hooks require an installed shared CLI outside this project checkout; do not use a project-local executable.",
+            ));
+        }
     }
     assets::safe_path(&hook_root)?;
     let legacy_pending = AssetStore::pending_at(&git_dir.join("specgit-v2/transactions"))?;
@@ -401,9 +432,16 @@ pub(crate) async fn plan_named_with_executable(
             Some(after.into_bytes())
         };
         #[cfg(unix)]
-        if change.before.bytes.is_none() && change.after.is_some() {
+        {
             use std::os::unix::fs::PermissionsExt;
-            change.permissions = Some(std::fs::Permissions::from_mode(0o755));
+            if !uninstall
+                && change
+                    .permissions
+                    .as_ref()
+                    .is_none_or(|permissions| permissions.mode() & 0o111 == 0)
+            {
+                change.permissions = Some(std::fs::Permissions::from_mode(0o755));
+            }
         }
         if !uninstall {
             recorded.insert(

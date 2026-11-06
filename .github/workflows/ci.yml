@@ -44,7 +44,15 @@ jobs:
 
       - name: Classify verification scope
         id: scope
-        run: node scripts/ci-change-scope.mjs --verification-only
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
+        run: |
+          if [[ "$BASE_SHA" =~ ^0+$ ]]; then
+            printf 'build=true\nmetadata=false\ndependencies=true\n' >> "$GITHUB_OUTPUT"
+          else
+            git show "$BASE_SHA:scripts/ci-change-scope.mjs" > "$RUNNER_TEMP/ci-change-scope.mjs"
+            node "$RUNNER_TEMP/ci-change-scope.mjs" --verification-only
+          fi
 
       - name: Verify classification outputs
         env:

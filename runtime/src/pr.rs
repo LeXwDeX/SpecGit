@@ -46,6 +46,9 @@ pub struct Options {
     /// Explicitly create selected catalog labels missing from the native project.
     #[arg(long, conflicts_with = "status")]
     pub create_labels: bool,
+    /// Clear an unconfirmed creation flag only after fresh native candidate checks.
+    #[arg(long, conflicts_with_all = ["request", "title", "body_file", "tags", "update_body", "update_references", "ready", "inspect", "status", "create_labels"])]
+    pub discard_uncertain: bool,
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     if options.status {
@@ -176,6 +179,9 @@ async fn execute(
     cwd: &Path,
     effects: &mut Effects,
 ) -> Result<Report, Diagnostic> {
+    if o.discard_uncertain {
+        return write::discard_uncertain(&o, process, cwd, effects).await;
+    }
     o.body_file = o
         .body_file
         .map(|p| if p.is_absolute() { p } else { cwd.join(p) });
@@ -211,7 +217,8 @@ fn validate(
     body: &str,
     labels: &[String],
 ) -> Result<(), Diagnostic> {
-    let violations = d.check(
+    let violations = d.check_for(
+        provider,
         issue,
         title,
         body,

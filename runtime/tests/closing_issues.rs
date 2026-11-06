@@ -8,6 +8,7 @@ use specgit::{
     project::{Provider, Repository},
 };
 use std::{fs, path::PathBuf};
+const CLOSING_QUERY: &str = include_str!("fixtures/closing-issues.graphql");
 
 struct Fixture {
     _root: tempfile::TempDir,
@@ -68,6 +69,32 @@ fn page(nodes: Value, more: bool, cursor: Value) -> Value {
     json!({"data":{"repository":{"databaseId":7,"nameWithOwner":"fixture/repo","pullRequest":{"number":41,"closingIssuesReferences":{"nodes":nodes,"pageInfo":{"hasNextPage":more,"endCursor":cursor}}}}}})
 }
 
+#[test]
+fn graphql_fixture_rejects_a_changed_protocol_query() {
+    use std::{io::Write, process::Stdio};
+    let f = Fixture::new(Provider::Github, json!({}));
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_specgit-process-fixture"))
+        .args(["api", "--method", "POST", "graphql"])
+        .env("SPECGIT_FIXTURE_API_FILE", &f.file)
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let input = json!({"query":CLOSING_QUERY.trim_end().replace("first: 100", "first: 10"),"variables":{"owner":"fixture","name":"repo","number":41,"after":null}});
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("fixture only supports the fixed read query")
+    );
+}
+
 #[tokio::test]
 async fn both_protocols_return_only_the_selected_requests_native_ids() {
     for provider in [Provider::Github, Provider::Gitlab] {
@@ -83,7 +110,7 @@ async fn both_protocols_return_only_the_selected_requests_native_ids() {
             if provider == Provider::Github {
                 assert_eq!(call["method"], "POST");
                 assert_eq!(call["endpoint"], "graphql");
-                assert_eq!(call["body"]["query"], forge::github::CLOSING_ISSUES_QUERY);
+                assert_eq!(call["body"]["query"], CLOSING_QUERY.trim_end());
                 assert_eq!(
                     call["body"]["variables"],
                     json!({"owner":"fixture","name":"repo","number":number,"after":null})
@@ -299,10 +326,7 @@ async fn graphql_documents_cannot_be_injected_through_identity_variables() {
     );
     let calls = f.calls();
     assert_eq!(calls.len(), 1);
-    assert_eq!(
-        calls[0]["body"]["query"],
-        forge::github::CLOSING_ISSUES_QUERY
-    );
+    assert_eq!(calls[0]["body"]["query"], CLOSING_QUERY.trim_end());
     assert!(
         !calls[0]["body"]["query"]
             .as_str()

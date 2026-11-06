@@ -1,0 +1,13 @@
+query SpecGitClosingIssues($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    databaseId
+    nameWithOwner
+    pullRequest(number: $number) {
+      number
+      closingIssuesReferences(first: 100, after: $after) {
+        nodes { number repository { databaseId nameWithOwner } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}

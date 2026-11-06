@@ -33,7 +33,15 @@ jobs:
           package-manager-cache: false
       - name: Classify the complete change
         id: changes
-        run: node scripts/ci-change-scope.mjs --verification-only
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+        run: |
+          if [[ "$BASE_SHA" =~ ^0+$ ]]; then
+            printf 'build=true\nmetadata=false\ndependencies=true\n' >> "$GITHUB_OUTPUT"
+          else
+            git show "$BASE_SHA:scripts/ci-change-scope.mjs" > "$RUNNER_TEMP/ci-change-scope.mjs"
+            node "$RUNNER_TEMP/ci-change-scope.mjs" --verification-only
+          fi
       - name: Verify classification outputs
         env:
           DEPENDENCIES: ${{ steps.changes.outputs.dependencies }}
@@ -42,8 +50,7 @@ jobs:
   # Blocks a pull request that introduces a vulnerable or badly licensed dependency.
   dependency-review:
     name: Dependency Review
-    needs: scope
-    if: github.event_name == 'pull_request' && needs.scope.outputs.dependencies == 'true'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
