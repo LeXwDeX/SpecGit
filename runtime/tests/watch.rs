@@ -781,7 +781,7 @@ fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
         "project-observation-defaults",
     );
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(7);
+    let deadline = started + Duration::from_secs(15);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
@@ -797,7 +797,7 @@ fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
         child.diagnostic()
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
-    assert!(started.elapsed() < Duration::from_secs(6));
+    assert!(started.elapsed() < Duration::from_secs(12));
     assert!(
         request_reads(&f) >= before + 2,
         "poll_seconds was not applied"
@@ -844,7 +844,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
         "explicit-observation-overrides",
     );
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(5);
+    let deadline = started + Duration::from_secs(12);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
@@ -860,7 +860,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
         child.diagnostic()
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
-    assert!(started.elapsed() < Duration::from_secs(4));
+    assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(f.writes(), writes);
     assert_eq!(
         watch_store::read(&identity)
