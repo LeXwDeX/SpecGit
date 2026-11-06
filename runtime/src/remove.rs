@@ -293,7 +293,9 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
         let completed = async {
             let w = crate::delivery_context::Workspace::load(process.clone(), &layout.root).await?;
             let s = selection::read(&w.context)?.ok_or_else(|| conflict(&selection_path, "The checkpoint disappeared."))?;
-            if s.project_id != w.facts.id || !s.checkpoint_valid(Some(&w.target)) || s.intents.iter().any(|i| i.issue.is_none()) {
+            let mut active = s.clone();
+            active.delivered_request = None;
+            if s.project_id != w.facts.id || s.pending_write() || (s.delivered_request.is_some() && (!s.replaceable() || s.delivered_request != s.request)) || !active.checkpoint_valid(Some(&w.target)) || s.intents.iter().any(|i| i.issue.is_none()) {
                 return Err(conflict(&selection_path, "The checkpoint is incomplete or belongs to another native project."));
             }
             let request = s.request.ok_or_else(|| conflict(&selection_path, "The checkpoint has no delivered request."))?;

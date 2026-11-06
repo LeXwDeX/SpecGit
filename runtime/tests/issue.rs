@@ -46,6 +46,117 @@ fn checkpoint_path(fixture: &Fixture) -> PathBuf {
     fixture.root.join(".git/specgit-v2/selection.json")
 }
 
+#[test]
+fn discard_uncertain_issue_previews_then_clears_without_creating() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        f.edit(|s| s["issue_create_status"] = json!(500));
+        assert_eq!(
+            f.run(&["issue", "--create-labels", "fix: recovery"])["exit"],
+            3
+        );
+        let before = fs::read(checkpoint_path(&f)).unwrap();
+        let preview = f.run(&["issue", "--discard-uncertain", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+        let writes = f.writes();
+        let applied = f.run(&["issue", "--discard-uncertain"]);
+        assert_eq!(applied["exit"], 0, "{applied}");
+        assert_eq!(f.writes(), writes);
+        let selection: serde_json::Value =
+            serde_json::from_slice(&fs::read(checkpoint_path(&f)).unwrap()).unwrap();
+        assert_eq!(selection["intents"][0]["write_started"], false);
+        assert!(selection["intents"][0]["issue"].is_null());
+    }
+}
+
+#[test]
+fn discard_uncertain_issue_preserves_checkpoint_for_candidates_and_failed_history() {
+    for provider in ["github", "gitlab"] {
+        for closed in [false, true] {
+            let f = Fixture::new(provider);
+            f.edit(|s| s["lose_issue_response"] = json!(true));
+            assert_eq!(
+                f.run(&["issue", "--create-labels", "fix: history"])["exit"],
+                3
+            );
+            if closed {
+                f.edit(|s| {
+                    s["issues"][0]["state"] = json!("closed");
+                    s["read_routes"][candidate_route(provider, true)] = if provider == "github" {
+                        json!({"incomplete_results":false,"items":[native_issue(provider, 1, true)]})
+                    } else { json!([native_issue(provider, 1, true)]) };
+                });
+            }
+            let before = fs::read(checkpoint_path(&f)).unwrap();
+            let result = f.run(&["issue", "--discard-uncertain"]);
+            assert_eq!(result["exit"], 3, "{provider} {closed}: {result}");
+            assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+        }
+        let f = Fixture::new(provider);
+        f.edit(|s| s["issue_create_status"] = json!(500));
+        assert_eq!(
+            f.run(&["issue", "--create-labels", "fix: history"])["exit"],
+            3
+        );
+        f.edit(|s| {
+            s["read_routes"][candidate_route(provider, true)] =
+                json!({"__fixture_error":"HTTP 500 history unavailable"})
+        });
+        let before = fs::read(checkpoint_path(&f)).unwrap();
+        let result = f.run(&["issue", "--discard-uncertain"]);
+        assert_eq!(result["exit"], 3, "{result}");
+        assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+    }
+}
+
+#[test]
+fn discard_uncertain_issue_timeout_preserves_checkpoint() {
+    let f = Fixture::new("github");
+    f.edit(|s| s["issue_create_status"] = json!(500));
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "fix: timeout recovery"])["exit"],
+        3
+    );
+    let before = fs::read(checkpoint_path(&f)).unwrap();
+    f.edit(|s| s["api_delay_ms"] = json!(100));
+    let output = f
+        .feature_command(&["issue", "--discard-uncertain"])
+        .env("SPECGIT_TEST_INSPECTION_BUDGET_MS", "20")
+        .output()
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["diagnostics"][0]["code"], "timeout", "{result}");
+    assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+}
+
+#[test]
+fn rejected_issue_creation_clears_only_proven_non_creation() {
+    for provider in ["github", "gitlab"] {
+        for (status, uncertain) in [
+            (400, false),
+            (401, false),
+            (403, false),
+            (422, false),
+            (404, true),
+            (409, true),
+            (500, true),
+        ] {
+            let f = Fixture::new(provider);
+            f.edit(|s| s["issue_create_status"] = json!(status));
+            let result = f.run(&["issue", "--create-labels", "fix: rejected creation"]);
+            assert_eq!(result["exit"], 3, "{result}");
+            let selection: serde_json::Value =
+                serde_json::from_slice(&fs::read(checkpoint_path(&f)).unwrap()).unwrap();
+            assert_eq!(
+                selection["intents"][0]["write_started"], uncertain,
+                "{result}"
+            );
+            assert!(f.state()["issues"].as_array().unwrap().is_empty());
+        }
+    }
+}
+
 fn candidate_route(provider: &str, closed: bool) -> String {
     if provider == "github" {
         format!(

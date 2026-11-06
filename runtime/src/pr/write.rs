@@ -2,6 +2,62 @@
 use super::preparation::Prepared;
 use super::*;
 
+pub(super) async fn discard_uncertain(
+    options: &Options,
+    process: Process,
+    cwd: &Path,
+    effects: &mut Effects,
+) -> Result<Report, Diagnostic> {
+    let process = process.with_inspection_budget(crate::process::configured_inspection_budget());
+    let w = Workspace::load(process, cwd).await?;
+    let mut lock = Locked::acquire(&w.context)?;
+    let mut selected = selection::read(&w.context)?
+        .ok_or_else(|| Diagnostic::input("No checkpoint has an uncertain request creation."))?;
+    if selected.project_id != w.facts.id || selected.target != w.target {
+        return Err(Diagnostic::input(
+            "The selected delivery project or target changed.",
+        ));
+    }
+    if !selected.request_write_started || selected.request.is_some() {
+        return Err(Diagnostic::input(
+            "No checkpoint has an uncertain request creation.",
+        ));
+    }
+    let repo = &w.context.repository;
+    let found =
+        crate::native_delivery::recovery_request_candidates(&w.reader, repo, w.branch()?).await?;
+    if found {
+        return Err(Diagnostic::new(
+            Code::AmbiguousRequest,
+            "pr",
+            "Native request candidates exist for an uncertain creation.",
+            "Inspect the candidates and adopt the exact request ID; the checkpoint was preserved.",
+        ));
+    }
+    w.process.ensure_inspection_budget("request_recovery")?;
+    w.unchanged().await?;
+    w.process.ensure_inspection_budget("request_recovery")?;
+    if !options.dry_run {
+        selected.request_write_started = false;
+        let effect = effects.begin(
+            "local",
+            "discard_uncertain_request",
+            serde_json::json!({"branch":selected.branch}),
+        );
+        lock.save(&selected)?;
+        effects.applied(effect);
+    }
+    Ok(Report::success(
+        "pr",
+        if options.dry_run {
+            "discard_prepared"
+        } else {
+            "uncertain_discarded"
+        },
+        serde_json::json!({"branch":selected.branch,"writes":!options.dry_run}),
+    ))
+}
+
 pub(super) async fn apply(
     o: &Options,
     prepared: Prepared,
@@ -96,9 +152,30 @@ async fn create_request(
         lock.save(selected)?;
         effects.applied(local_effect);
         let create_effect = effects.begin("native", "create_request", serde_json::json!({"repository":repo,"source":branch,"target":w.target,"next_action":"inspect_source_requests_then_adopt_exact_id"}));
-        let number = writer
+        let result = writer
             .create_request(branch, &w.target, &intended.title, &intended.body)
-            .await?;
+            .await;
+        let number = match result {
+            Ok(number) => number,
+            Err(error) => {
+                if matches!(error.http_status, Some(400 | 401 | 403 | 422))
+                    && matches!(
+                        error.code,
+                        Code::ProcessFailed | Code::AuthenticationFailed | Code::PermissionDenied
+                    )
+                {
+                    selected.request_write_started = false;
+                    let local_effect = effects.begin(
+                        "local",
+                        "save_selection",
+                        serde_json::json!({"branch":selected.branch,"repository":selected.repository}),
+                    );
+                    lock.save(selected)?;
+                    effects.applied(local_effect);
+                }
+                return Err(error);
+            }
+        };
         effects.locator(create_effect, "request", number);
         selected.request = Some(number);
         let local_effect = effects.begin(
