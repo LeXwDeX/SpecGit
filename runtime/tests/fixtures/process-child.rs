@@ -4,6 +4,7 @@ use std::{
     io::{Read, Write},
     time::Duration,
 };
+const CLOSING_QUERY: &str = include_str!("closing-issues.graphql");
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if let Some(directory) = std::env::var_os("SPECGIT_FIXTURE_UPDATE_DIR") {
@@ -786,6 +787,14 @@ fn native_api(args: &[String], path: &std::path::Path) {
         });
     }
     if method == "GET"
+        && endpoint == "projects/7/pipelines/71"
+        && let Some(delay_ms) = state["pipeline_delay_ms"].as_u64()
+    {
+        pause(path, &lock, &mut state, || {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        });
+    }
+    if method == "GET"
         && (endpoint == "repos/fixture/repo" || endpoint == "projects/fixture%2Frepo")
         && state["calls"]
             .as_array()
@@ -812,9 +821,8 @@ fn native_api(args: &[String], path: &std::path::Path) {
         eprintln!("HTTP 415: JSON content type required");
         std::process::exit(1);
     }
-    let fixed_closing_query = method == "POST"
-        && endpoint == "graphql"
-        && input["query"] == specgit::forge::github::CLOSING_ISSUES_QUERY;
+    let fixed_closing_query =
+        method == "POST" && endpoint == "graphql" && input["query"] == CLOSING_QUERY.trim_end();
     if (method == "GET" || fixed_closing_query) && state["read_failure"].is_string() {
         state["hanging_reader_pid"] = json!(std::process::id());
         snapshot::write(path, &state);
@@ -932,7 +940,7 @@ fn closing_api(
     }
     let (number, offset) = if gh {
         if method != "POST"
-            || input["query"] != specgit::forge::github::CLOSING_ISSUES_QUERY
+            || input["query"] != CLOSING_QUERY.trim_end()
             || input.as_object().is_none_or(|o| o.len() != 2)
             || input["variables"].as_object().is_none_or(|o| o.len() != 4)
         {
