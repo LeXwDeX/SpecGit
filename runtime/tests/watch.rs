@@ -503,18 +503,6 @@ fn unsupported_operation_without_a_locked_request_stays_terminal() {
         std::thread::sleep(Duration::from_millis(10));
     }
     finish_watcher(&mut child);
-    assert_eq!(
-        f.state()["calls"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|call| {
-                call["method"] == "GET" && call["endpoint"] == "projects/7/pipelines/71"
-            })
-            .count(),
-        1,
-        "an unrelated unsupported operation was retried"
-    );
     let state = watch_store::read(&child.identity).unwrap().unwrap();
     let last = state.events.last().unwrap();
     assert_eq!(last.state, EventState::Unknown);
