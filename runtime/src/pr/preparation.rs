@@ -42,6 +42,19 @@ pub(super) async fn prepare(
         mut issues,
         pool,
     } = discover(o, &w).await?;
+    if !o.inspect
+        && !o.dry_run
+        && request
+            .as_ref()
+            .is_some_and(|r| matches!(r.state.as_str(), "merged" | "closed"))
+    {
+        return Err(Diagnostic::new(
+            Code::InvalidInput,
+            "pr",
+            "The selected native request is already merged or closed.",
+            "Inspect the native request with pr --status before starting follow-up work.",
+        ));
+    }
     let transient_state = request
         .as_ref()
         .filter(|r| r.is_locked())

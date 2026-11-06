@@ -211,7 +211,8 @@ fn validate(
     body: &str,
     labels: &[String],
 ) -> Result<(), Diagnostic> {
-    let violations = d.check(
+    let violations = d.check_for(
+        provider,
         issue,
         title,
         body,

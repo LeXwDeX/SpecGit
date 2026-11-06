@@ -293,7 +293,7 @@ impl ForgeRead {
             })
             .and_then(Value::as_str)
             .ok_or_else(malformed)?;
-        if !path.eq_ignore_ascii_case(&repo.path) {
+        if !self.provider.same_path(path, &repo.path) {
             return Err(identity_error());
         }
         let default = value
