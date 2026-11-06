@@ -6,14 +6,14 @@ and [release procedure](runtime/distribution/README.md).
 
 # 2.19.0
 
-- Recover delivery checkpoints after deterministic native-create failures: roll back `write_started` only when the platform proves no object was created, allow removing a delivered checkpoint with no pending write, and add explicit `--discard-uncertain` recovery for `issue` and `pr`. Unpushed source branches report `pending_request`, and merged or closed requests report their terminal state instead of `bound`. (#842)
+- Recover delivery checkpoints after deterministic native-create failures: roll back `write_started` only when the platform proves no object was created, allow removing a delivered checkpoint with no pending write, and add explicit `--discard-uncertain` recovery for `issue` and `pr`. (#842)
 - Make native Git guard installation executable and shell-safe: preserve unsupported existing hooks, reject unsupported shebang interpreters, set the executable bit for managed hooks, and fail closed when the guard cannot read pre-push input. (#843)
 - Use one deterministic precedence for `--help`, `--version`, `--schema` and `--input-file`; select schema commands from positional tokens, stop option scans at `--`, honor `--human` on input errors, and strip exactly one line ending from Git paths. (#844)
 - Bind verification to the trusted base classifier and align runner gates; `SpecGit Acceptance` remains the required merge gate. (#845)
-- Preserve platform limits and terminal semantics in delivery observation: bound unknown check-state retries, expire stale leases during `inbox --no-refresh`, and retain published events when lease release fails. (#846)
+- Preserve platform limits and terminal semantics in delivery observation: bound unknown check-state retries, report unpushed source branches as `pending_request`, report merged or closed requests as terminal instead of `bound`, expire stale leases during a refreshing `inbox`, and retain published events when lease release fails. (#846)
 - Harden local asset updates and user Skill ownership: recognize CRLF-owned files, use symlink-safe lock handling, preserve the baseline during self-update, report `not_applied` for backup collisions, and align the schema contract with init/setup local writes. (#847)
-- Remove fixed timing and self-referential assumptions from native tests: synchronize on observed poll progress, verify the GitHub closing-query fixture against an independent protocol string, and keep Windows test concurrency bounded. (#848)
-- Align per-attempt release artifact directories with the release assembler and restore 2.19.0 release metadata. (#855)
+- Remove fixed timing and self-referential assumptions from native tests: synchronize on observed poll progress and verify the GitHub closing-query fixture against an independent protocol string. (#848)
+- Align per-attempt release artifact directories with the release assembler, give the Windows hook suite one libtest worker, and restore 2.19.0 release metadata. (#855)
 
 # 2.18.0
 
