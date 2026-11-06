@@ -4,6 +4,17 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.19.0
+
+- Recover delivery checkpoints after deterministic native-create failures: roll back `write_started` only when the platform proves no object was created, allow removing a delivered checkpoint with no pending write, and add explicit `--discard-uncertain` recovery for `issue` and `pr`. (#842)
+- Make native Git guard installation executable and shell-safe: preserve unsupported existing hooks, reject unsupported shebang interpreters, set the executable bit for managed hooks, and fail closed when the guard cannot read pre-push input. (#843)
+- Use one deterministic precedence for `--help`, `--version`, `--schema` and `--input-file`; select schema commands from positional tokens, stop option scans at `--`, honor `--human` on input errors, and strip exactly one line ending from Git paths. (#844)
+- Bind verification to the trusted base classifier and align runner gates; `SpecGit Acceptance` remains the required merge gate. (#845)
+- Preserve platform limits and terminal semantics in delivery observation: bound unknown check-state retries, report unpushed source branches as `pending_request`, report merged or closed requests as terminal instead of `bound`, expire stale leases during a refreshing `inbox`, and retain published events when lease release fails. (#846)
+- Harden local asset updates and user Skill ownership: recognize CRLF-owned files, use symlink-safe lock handling, preserve the baseline during self-update, report `not_applied` for backup collisions, and align the schema contract with init/setup local writes. (#847)
+- Remove fixed timing and self-referential assumptions from native tests: synchronize on observed poll progress and verify the GitHub closing-query fixture against an independent protocol string. (#848)
+- Align per-attempt release artifact directories with the release assembler, give the Windows hook suite one libtest worker, and restore 2.19.0 release metadata. (#855)
+
 # 2.18.0
 
 - The native pre-commit guard now rejects staged additions and modifications of `.specgit.yaml` and generated `specgit-native` Skill files. A generated Skill is identified by the managed `info/exclude` block or the init/setup ownership receipt; damaged evidence fails closed, staged deletions stay allowed for `git rm --cached`, and a same-named manual file does not gain protection. The project Skill, init/setup human output and `specgit update` now tell agents to keep these files untracked. (#837)
