@@ -17,21 +17,48 @@ use specgit::{
 
 pub async fn run() {
     let mut raw: Vec<_> = std::env::args_os().collect();
-    let mut json = raw.iter().any(|s| s == "--json")
-        || (!raw.iter().any(|s| s == "--human")
-            && !std::io::IsTerminal::is_terminal(&std::io::stdout()));
-    if raw
-        .iter()
-        .take_while(|s| *s != "--")
-        .any(|s| s == "--schema")
-    {
-        let mut command = Cli::command();
-        if let Some(name) = raw
-            .iter()
-            .skip(1)
-            .filter_map(|s| s.to_str())
-            .find(|s| command.get_subcommands().any(|c| c.get_name() == *s))
+    let (positions, subcommand, version, _) = argument_positions(&raw);
+    let has = |value: &str| positions.iter().any(|&i| raw[i] == value);
+    let mut json =
+        has("--json") || (!has("--human") && !std::io::IsTerminal::is_terminal(&std::io::stdout()));
+    let discovery = if has("--help") || has("-h") {
+        Some("--help")
+    } else if version {
+        Some("--version")
+    } else {
+        None
+    };
+    if let Some(flag) = discovery {
+        let mut args = vec![raw[0].clone()];
+        if flag == "--help"
+            && let Some(name) = subcommand.as_ref()
         {
+            args.push(name.into());
+        }
+        args.push(flag.into());
+        let error = Cli::try_parse_from(args).err().expect("discovery flag");
+        if json {
+            let operation = if flag == "--version" {
+                "version"
+            } else {
+                "help"
+            };
+            emit(
+                Report::success(
+                    operation,
+                    "ok",
+                    serde_json::json!({"text":error.to_string()}),
+                ),
+                true,
+            );
+        } else {
+            let _ = error.print();
+        }
+        return;
+    }
+    if has("--schema") {
+        let mut command = Cli::command();
+        if let Some(name) = subcommand.as_deref() {
             command.build();
             command = command
                 .find_subcommand(name)
@@ -47,7 +74,18 @@ pub async fn run() {
         emit(Report::success("schema", "ok", contract), true);
         return;
     }
-    let input_path = explicit_input_path(&raw);
+    let input_path = match explicit_input_path(&raw, &positions) {
+        Ok(path) => path,
+        Err(()) => {
+            let report = Report::failure(
+                "input",
+                Diagnostic::input("Inline --input-file path must be UTF-8."),
+            );
+            let exit = report.exit;
+            emit(report, json);
+            std::process::exit(i32::from(exit));
+        }
+    };
     if let Some(path) = input_path {
         let cancellation = tokio_util::sync::CancellationToken::new();
         let input = tokio::select! {
@@ -60,7 +98,8 @@ pub async fn run() {
         match normalized {
             Ok(args) => {
                 raw = args;
-                json = !raw.iter().any(|s| s == "--human");
+                let (positions, _, _, _) = argument_positions(&raw);
+                json = !positions.iter().any(|&i| raw[i] == "--human");
             }
             Err(error) => {
                 let code = match error {
@@ -80,7 +119,7 @@ pub async fn run() {
                     ),
                 );
                 let exit = report.exit;
-                emit(report, true);
+                emit(report, json);
                 std::process::exit(i32::from(exit));
             }
         }
@@ -176,17 +215,65 @@ pub async fn run() {
     emit(report, json);
     std::process::exit(i32::from(exit));
 }
-fn explicit_input_path(raw: &[std::ffi::OsString]) -> Option<std::ffi::OsString> {
-    let mut args = raw.iter().skip(1).take_while(|s| *s != "--");
-    while let Some(arg) = args.next() {
+fn explicit_input_path(
+    raw: &[std::ffi::OsString],
+    positions: &[usize],
+) -> Result<Option<std::ffi::OsString>, ()> {
+    for &i in positions {
+        let arg = &raw[i];
         if arg == "--input-file" {
-            return args.next().cloned();
+            return Ok(raw.get(i + 1).filter(|value| *value != "--").cloned());
         }
         if let Some(value) = arg.to_str().and_then(|s| s.strip_prefix("--input-file=")) {
-            return Some(value.into());
+            return Ok(Some(value.into()));
+        }
+        if arg.to_string_lossy().starts_with("--input-file=") {
+            return Err(());
         }
     }
-    None
+    Ok(None)
+}
+
+fn argument_positions(
+    raw: &[std::ffi::OsString],
+) -> (Vec<usize>, Option<String>, bool, Option<usize>) {
+    let mut definition = Cli::command();
+    definition.build();
+    let mut positions = Vec::new();
+    let mut subcommand = None;
+    let mut subcommand_index = None;
+    let mut version = false;
+    let mut command_position = true;
+    let mut i = 1;
+    while i < raw.len() && raw[i] != "--" {
+        let arg = raw[i].to_string_lossy();
+        if arg.starts_with('-') {
+            positions.push(i);
+            if command_position && matches!(arg.as_ref(), "--version" | "-V") {
+                version = true;
+            }
+            let name = arg
+                .strip_prefix("--")
+                .and_then(|s| (!s.contains('=')).then_some(s));
+            if name.is_some_and(|name| {
+                definition
+                    .get_arguments()
+                    .any(|a| a.get_long() == Some(name) && a.get_action().takes_values())
+            }) {
+                i += 1;
+            }
+        } else if command_position {
+            command_position = false;
+            if let Some(command) = definition.find_subcommand(arg.as_ref()) {
+                subcommand = Some(arg.into_owned());
+                subcommand_index = Some(i);
+                definition = command.clone();
+                definition.build();
+            }
+        }
+        i += 1;
+    }
+    (positions, subcommand, version, subcommand_index)
 }
 async fn interrupted() {
     #[cfg(unix)]

@@ -156,22 +156,34 @@ pub(super) enum Commands {
     },
 }
 pub(super) fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
-    if raw.iter().any(|arg| arg == "setup")
-        && raw.iter().filter_map(|arg| arg.to_str()).any(|arg| {
-            [
-                "--root",
-                "--provider",
-                "--api-host",
-                "--register-claude",
-                "--claude-settings",
-                "--register-codex",
-                "--codex-root",
-                "--register-opencode",
-                "--opencode-root",
-            ]
-            .contains(&arg.split('=').next().unwrap_or(arg))
-                || matches!(arg, "global" | "--scope=global")
-        })
+    let (positions, command, _, command_index) = super::argument_positions(raw);
+    if command.as_deref() == Some("setup")
+        && positions
+            .iter()
+            .filter_map(|&i| raw[i].to_str())
+            .any(|arg| {
+                [
+                    "--root",
+                    "--provider",
+                    "--api-host",
+                    "--register-claude",
+                    "--claude-settings",
+                    "--register-codex",
+                    "--codex-root",
+                    "--register-opencode",
+                    "--opencode-root",
+                ]
+                .contains(&arg.split('=').next().unwrap_or(arg))
+                    || arg == "--scope=global"
+            })
+        || command.as_deref() == Some("setup")
+            && positions
+                .iter()
+                .any(|&i| raw[i] == "--scope" && raw.get(i + 1).is_some_and(|v| v == "global"))
+        || command.as_deref() == Some("setup")
+            && command_index
+                .and_then(|i| raw.get(i + 1))
+                .is_some_and(|arg| arg == "global")
     {
         return Diagnostic::new(
             Code::InvalidInput,
@@ -192,13 +204,33 @@ pub(super) fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
         "--configure-rules",
         "--force",
     ];
-    if raw.iter().skip(1).filter_map(|v| v.to_str()).any(|value| {
-        (RETIRED.contains(&value.split('=').next().unwrap_or(value))
-            && !(value.split('=').next() == Some("--scope")
-                && raw.iter().any(|arg| arg == "setup")))
-            || ["bind", "unbind", "accept", "finish", "merge", "promotion"].contains(&value)
-            || value == "--merge"
-    }) {
+    let mut root = raw.iter().skip(1);
+    let mut first = None;
+    while let Some(arg) = root.next() {
+        if arg == "--" {
+            break;
+        }
+        if arg == "--cwd" || arg == "--input-file" {
+            root.next();
+            continue;
+        }
+        if !arg.to_string_lossy().starts_with('-') {
+            first = arg.to_str();
+            break;
+        }
+    }
+    if first.is_some_and(|value| {
+        ["bind", "unbind", "accept", "finish", "merge", "promotion"].contains(&value)
+    }) || positions
+        .iter()
+        .filter_map(|&i| raw[i].to_str())
+        .any(|value| {
+            (RETIRED.contains(&value.split('=').next().unwrap_or(value))
+                && !(value.split('=').next() == Some("--scope")
+                    && command.as_deref() == Some("setup")))
+                || value == "--merge"
+        })
+    {
         return Diagnostic::new(
             Code::InvalidInput,
             "major_version",

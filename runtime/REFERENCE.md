@@ -78,6 +78,10 @@ visible long aliases for argv, conflicts, required options (`requires`, with any
 group listed under the command's `groups`) and side-effect classification. Engineering qualification generates
 `schemas/` from this contract and compares them with the installed executable.
 Public ZIPs contain only the executable; use its embedded offline `--schema`.
+Help takes precedence over version, then schema; these discovery options do not
+read `--input-file`. Schema discovery does not validate other operands or options:
+an unknown command returns the root contract, and a known command selects its
+contract even when other arguments are invalid. Tokens after `--` are positional.
 
 Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
 `--input-file <path>`. Ordinary non-TTY stdout defaults to a single JSON report;
