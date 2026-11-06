@@ -51,7 +51,27 @@ pub(super) async fn discard_uncertain(
             &intent.title,
         )
         .await?;
-        if raw_open || !candidates.read.issues.is_empty() || !candidates.history.is_empty() {
+        let recent = crate::native_delivery::recent_issues(
+            &w.reader,
+            &w.context.repository,
+            w.facts.id,
+        )
+        .await?;
+        let normalize = |title: &str| {
+            title
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
+        let recent_match = recent
+            .iter()
+            .any(|issue| normalize(&issue.title) == normalize(&intent.title));
+        if raw_open
+            || recent_match
+            || !candidates.read.issues.is_empty()
+            || !candidates.history.is_empty()
+        {
             return Err(Diagnostic::new(
                 Code::AmbiguousRequest,
                 "issue",
