@@ -427,6 +427,96 @@ fn manage(root: &Path, action: &str) -> std::process::Output {
         .unwrap()
 }
 
+#[cfg(unix)]
+#[test]
+fn install_makes_existing_hook_executable_and_blocks_commit() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = fixture();
+    let hook = hook_path(temp.path(), "pre-commit");
+    fs::write(&hook, "#!/bin/sh\n# user content\n").unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o644)).unwrap();
+    let result = manage(temp.path(), "--install");
+    assert!(result.status.success(), "{result:?}");
+    assert_ne!(fs::metadata(&hook).unwrap().permissions().mode() & 0o111, 0);
+    fs::write(temp.path().join("changed"), "change").unwrap();
+    git(temp.path(), &["add", "changed"]);
+    let result = hooked_git(temp.path(), &["commit", "-m", "unbound"]);
+    assert!(!result.status.success(), "{result:?}");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("checkpoint"));
+}
+
+#[test]
+fn install_validates_shebang_and_preserves_unsupported_hooks() {
+    for shell in ["fish", "csh", "tcsh", "pwsh"] {
+        let temp = fixture();
+        let hook = hook_path(temp.path(), "pre-commit");
+        let original = format!("#!/usr/bin/{shell}\n# user content\n");
+        fs::write(&hook, &original).unwrap();
+        let result = manage(temp.path(), "--install");
+        assert!(!result.status.success(), "accepted {shell}: {result:?}");
+        assert_eq!(fs::read_to_string(&hook).unwrap(), original);
+    }
+    let temp = fixture();
+    let hook = hook_path(temp.path(), "pre-commit");
+    fs::write(&hook, "#!/usr/bin/env -S bash\n# user content\n").unwrap();
+    assert!(manage(temp.path(), "--install").status.success());
+}
+
+#[test]
+fn install_terminates_shebang_without_newline() {
+    let temp = fixture();
+    let hook = hook_path(temp.path(), "pre-commit");
+    fs::write(&hook, "#!/bin/sh").unwrap();
+    assert!(manage(temp.path(), "--install").status.success());
+    assert!(
+        fs::read_to_string(hook)
+            .unwrap()
+            .starts_with("#!/bin/sh\n# >>>")
+    );
+}
+
+#[test]
+fn install_rejects_project_local_executable() {
+    let temp = fixture();
+    let local = temp.path().join(if cfg!(windows) {
+        "specgit.exe"
+    } else {
+        "specgit"
+    });
+    fs::copy(executable::binary(), &local).unwrap();
+    let result = Command::new(local)
+        .current_dir(temp.path())
+        .args(["guard", "--install"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success(), "{result:?}");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("outside"));
+    assert!(!hook_path(temp.path(), "pre-commit").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_push_stdin_read_error_fails_closed_but_eof_succeeds() {
+    let temp = fixture();
+    assert!(guard(temp.path(), "pre-push", "").status.success());
+    let input = fs::File::open(temp.path()).unwrap();
+    let result = executable::command()
+        .current_dir(temp.path())
+        .args(["guard", "--stage", "pre-push"])
+        .stdin(Stdio::from(input))
+        .output()
+        .unwrap();
+    assert!(!result.status.success(), "{result:?}");
+    assert!(manage(temp.path(), "--install").status.success());
+    let input = fs::File::open(temp.path()).unwrap();
+    let result = Command::new(hook_path(temp.path(), "pre-push"))
+        .current_dir(temp.path())
+        .stdin(Stdio::from(input))
+        .output()
+        .unwrap();
+    assert!(!result.status.success(), "{result:?}");
+}
+
 #[test]
 fn pre_commit_requires_a_checkpoint_only_when_tracked_changes_are_staged() {
     let temp = fixture();
