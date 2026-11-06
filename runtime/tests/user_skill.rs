@@ -160,15 +160,8 @@ fn backup_publication_collision_is_schema_valid_and_preserves_the_winner() {
     assert_eq!(report["exit"], 0, "{report}");
     let backup = PathBuf::from(report["evidence"]["backup"].as_str().unwrap());
     assert_eq!(fs::read(&backup).unwrap(), edited);
-    let winner = backup.with_file_name(
-        backup
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .strip_suffix("-1")
-            .unwrap(),
-    );
+    let name = backup.file_name().unwrap().to_str().unwrap();
+    let winner = backup.with_file_name(name.rsplit_once('-').map(|(base, _)| base).unwrap());
     assert_eq!(fs::read(winner).unwrap(), b"winner");
 }
 #[test]
