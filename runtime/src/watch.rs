@@ -234,11 +234,7 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
         ));
     }
     if o.no_refresh {
-        let state = if watch_store::read(&identity)?.is_some() {
-            Store::new(identity.clone())?.expire_lease()?
-        } else {
-            None
-        };
+        let state = watch_store::read(&identity)?;
         let ids: Vec<_> = state
             .as_ref()
             .into_iter()
@@ -252,6 +248,7 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
             json!({"subscription":identity,"pending_event_ids":ids,"requires_refresh":true,"expired_unacknowledged":state.as_ref().map_or(0, |s|s.expired_unacknowledged)}),
         ));
     }
+    Store::new(identity)?.expire_lease()?;
     let mut r = run(
         Options {
             request: o.request,
