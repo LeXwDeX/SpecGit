@@ -154,7 +154,16 @@ fn offer_at(
         Ok(store) => store,
         // The offer cache is advisory; a peer holding the lock must not fail
         // the hook or suppress the context delivered to this session.
-        Err(d) if d.code == Code::LockBusy => return Ok(String::new()),
+        Err(d) if d.code == Code::LockBusy => {
+            // A peer owns the advisory cache. Deliver the candidates without
+            // recording them; suppressing SessionStart context is worse than
+            // offering the same text again next callback.
+            return Ok(candidates
+                .iter()
+                .map(|(_, text)| *text)
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
         Err(d) => return Err(d),
     };
     let current = Snapshot::read(&path)?;
