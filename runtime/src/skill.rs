@@ -301,6 +301,7 @@ fn apply(
             .as_secs();
         // create-new publication prevents overwriting a previous backup, including
         // same-second refreshes and dangling links with the same name.
+        let mut injected = false;
         for suffix in 0..1000 {
             let name = if suffix == 0 {
                 format!("SKILL.md.specgit-backup-{seconds}")
@@ -326,8 +327,9 @@ fn apply(
             recheck(&path, &before, lock.as_ref())?;
             let index = effects.begin("local", "backup_user_skill", json!({"path":backup}));
             #[cfg(feature = "test-fixtures")]
-            if suffix == 0 && std::env::var_os("SPECGIT_FIXTURE_SKILL_BACKUP_COLLISION").is_some() {
+            if !injected && std::env::var_os("SPECGIT_FIXTURE_SKILL_BACKUP_COLLISION").is_some() {
                 fs::write(&backup, b"winner").map_err(io_error)?;
+                injected = true;
             }
             match staged.persist_noclobber(&backup) {
                 Ok(_) => {
