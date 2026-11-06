@@ -132,7 +132,6 @@ fn report(
     state: &State,
     event_state: &EventState,
     persistence_failure: Option<Diagnostic>,
-    release_failure: Option<Diagnostic>,
 ) -> Report {
     let events: Vec<_> = state
         .events
@@ -178,19 +177,11 @@ fn report(
             true,
         );
     }
-    if let Some(d) = release_failure {
-        result.diagnostics.push(d);
-    }
     result
 }
 pub async fn run(o: Options, process: Process, cwd: &Path) -> Report {
     match Box::pin(transport::subscribe(o, process, cwd, false)).await {
-        Ok((r, persistence_failure, release_failure)) => report(
-            &r.state,
-            &r.event_state,
-            persistence_failure,
-            release_failure,
-        ),
+        Ok((r, persistence_failure)) => report(&r.state, &r.event_state, persistence_failure),
         Err(d) => Report::failure("watch", d),
     }
 }
@@ -200,8 +191,8 @@ pub async fn observe_subscription(
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
     match transport::subscribe(o, process, cwd, false).await? {
-        (_, Some(d), _) => Err(d),
-        (events, None, _) => Ok(events),
+        (_, Some(d)) => Err(d),
+        (events, None) => Ok(events),
     }
 }
 pub async fn observe_until_attention(
@@ -210,8 +201,8 @@ pub async fn observe_until_attention(
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
     match transport::subscribe(o, process, cwd, true).await? {
-        (_, Some(d), _) => Err(d),
-        (events, None, _) => Ok(events),
+        (_, Some(d)) => Err(d),
+        (events, None) => Ok(events),
     }
 }
 pub async fn inbox(o: InboxOptions, process: Process, cwd: &Path) -> Report {
@@ -232,16 +223,7 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
         ));
     }
     if o.no_refresh {
-        let mut state = watch_store::read(&identity)?;
-        let now = watch_store::now();
-        if state
-            .as_ref()
-            .and_then(|s| s.lease.as_ref())
-            .is_some_and(|lease| lease.deadline <= now)
-        {
-            Store::new(identity.clone())?.expire_lease(now)?;
-            state = watch_store::read(&identity)?;
-        }
+        let state = watch_store::read(&identity)?;
         let ids: Vec<_> = state
             .as_ref()
             .into_iter()
