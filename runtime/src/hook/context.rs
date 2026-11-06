@@ -86,6 +86,7 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         marker.remote.as_deref(),
         marker.provider,
         None,
+        false,
     )
     .await
     {
