@@ -223,7 +223,16 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
         ));
     }
     if o.no_refresh {
-        let state = watch_store::read(&identity)?;
+        let mut state = watch_store::read(&identity)?;
+        let now = watch_store::now();
+        if state
+            .as_ref()
+            .and_then(|s| s.lease.as_ref())
+            .is_some_and(|lease| lease.deadline <= now)
+        {
+            Store::new(identity.clone())?.expire_lease(now)?;
+            state = watch_store::read(&identity)?;
+        }
         let ids: Vec<_> = state
             .as_ref()
             .into_iter()

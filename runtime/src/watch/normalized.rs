@@ -13,6 +13,7 @@ pub(super) struct Observation {
     pub next_step: NextAction,
     pub terminal: bool,
     pub retryable: bool,
+    pub unknown_checks: bool,
     pub same_source_mismatch: bool,
 }
 
@@ -40,6 +41,9 @@ pub(super) fn normalized(
         next_step,
         terminal,
         retryable,
+        unknown_checks: assessment.diagnostics.iter().any(|d| {
+            d.code == crate::diagnostic::Code::MalformedResponse && d.operation == "checks_state"
+        }),
         same_source_mismatch: request.is_some_and(|r| {
             evidence
                 .project_id
