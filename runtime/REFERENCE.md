@@ -861,10 +861,10 @@ relative or unavailable home is invalid input with no writes. Symbolic links
 anywhere below the resolved home are refused, including a dangling file link.
 No Git repository or declaration is required.
 
-Installation uses the same embedded Skill as project setup. Its final line is
+Installation uses the same embedded Skill as project setup. Its marker line is
 `<!-- specgit:managed sha256=<64 lowercase hex digits> -->`; the digest covers
 every byte before that line, including the preceding newline. A valid marker
-line establishes ownership. A foreign file (no valid marker) is a conflict and
+line establishes ownership wherever it appears. A foreign file (no valid marker) is a conflict and
 is never adopted. A managed file is refreshed to the current embedded content.
 If its body hash differs, or content was appended after the marker, refresh first
 preserves the exact old bytes and permissions in a sibling

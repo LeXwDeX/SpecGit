@@ -104,6 +104,73 @@ fn managed_refresh_uses_current_bytes_and_edited_refresh_preserves_backup() {
     }
     assert_eq!(fs::read_dir(f.path.parent().unwrap()).unwrap().count(), 3);
 }
+
+#[test]
+fn crlf_markers_preserve_ownership_and_edits() {
+    let f = Fixture::new();
+    let crlf = |body: &str| {
+        format!(
+            "{body}<!-- specgit:managed sha256={} -->\r\n",
+            hash(body.as_bytes())
+        )
+        .into_bytes()
+    };
+    let owned = crlf("old\r\n");
+    f.write(&owned);
+    assert_eq!(f.run(&["skill", "--user", "--remove"])["status"], "removed");
+    f.write(&owned);
+    assert_eq!(
+        f.run(&["skill", "--user", "--refresh-only"])["status"],
+        "refreshed"
+    );
+    let edited = [owned.as_slice(), b"later\r\n"].concat();
+    f.write(&edited);
+    assert_eq!(
+        f.run(&["skill", "--user", "--remove"])["diagnostics"][0]["code"],
+        "ownership_conflict"
+    );
+    let report = f.run(&["skill", "--user"]);
+    assert_eq!(
+        fs::read(report["evidence"]["backup"].as_str().unwrap()).unwrap(),
+        edited
+    );
+    f.write(b"foreign\r\n");
+    assert_eq!(
+        f.run(&["skill", "--user"])["diagnostics"][0]["code"],
+        "ownership_conflict"
+    );
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn backup_publication_collision_is_schema_valid_and_preserves_the_winner() {
+    let f = Fixture::new();
+    let edited = [b"edit\n".as_slice(), &managed("old\n")].concat();
+    f.write(&edited);
+    let output = f
+        .command()
+        .env("SPECGIT_FIXTURE_SKILL_BACKUP_COLLISION", "1")
+        .args(["skill", "--user", "--json"])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    jsonschema::draft202012::validate(&schema, &report).unwrap();
+    assert_eq!(report["exit"], 0, "{report}");
+    let backup = PathBuf::from(report["evidence"]["backup"].as_str().unwrap());
+    assert_eq!(fs::read(&backup).unwrap(), edited);
+    let winner = backup.with_file_name(
+        backup
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .strip_suffix("-1")
+            .unwrap(),
+    );
+    assert_eq!(fs::read(winner).unwrap(), b"winner");
+}
 #[test]
 fn foreign_content_conflicts_but_refresh_only_skips_it() {
     let f = Fixture::new();
