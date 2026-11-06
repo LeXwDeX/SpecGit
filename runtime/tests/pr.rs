@@ -169,6 +169,34 @@ fn clear_request_binding(f: &Fixture) {
 }
 
 #[test]
+fn explicitly_selected_terminal_request_is_not_bound() {
+    for provider in ["github", "gitlab"] {
+        for merged in [false, true] {
+            let f = fixture(provider, 1);
+            assert_eq!(f.run(&["pr"])["exit"], 0);
+            clear_request_binding(&f);
+            f.edit(|s| {
+                s["requests"][0]["state"] = json!(if provider == "gitlab" && merged {
+                    "merged"
+                } else {
+                    "closed"
+                });
+                s["requests"][0]["merged"] = json!(merged);
+            });
+            let result = f.run(&["pr", "--request", "41"]);
+            assert_ne!(result["status"], "bound", "{provider}: {result}");
+            assert_ne!(result["exit"], 0, "{provider}: {result}");
+            assert!(
+                result["diagnostics"][0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("already merged or closed")
+            );
+        }
+    }
+}
+
+#[test]
 fn gitlab_locked_candidate_blocks_mutations_but_previews_unknown_identity() {
     let f = fixture("gitlab", 1);
     assert_eq!(f.run(&["pr"])["exit"], 0);

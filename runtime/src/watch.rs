@@ -228,7 +228,7 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
             .as_ref()
             .into_iter()
             .flat_map(|s| &s.events)
-            .filter(|e| e.acknowledged_at.is_none())
+            .filter(|e| e.acknowledged_at.is_none() && !e.superseded)
             .map(|e| &e.id)
             .collect();
         return Ok(Report::success(
