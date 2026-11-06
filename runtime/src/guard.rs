@@ -226,9 +226,7 @@ fn hook_shebang(before: &str) -> Result<(), Diagnostic> {
         if matches!(*word, "-c" | "-s" | "--command" | "--stdin")
             || word.starts_with("--command=")
             || word.starts_with("--stdin=")
-            || (word.starts_with('-')
-                && !word.starts_with("--")
-                && (*word).contains(['c', 's']))
+            || (word.starts_with('-') && !word.starts_with("--") && (*word).contains(['c', 's']))
         {
             return Err(rejected(
                 "The existing Git hook invokes an inline shell command and was preserved.",
