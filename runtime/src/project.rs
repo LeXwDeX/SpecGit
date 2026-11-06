@@ -7,6 +7,13 @@ use crate::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
+pub(crate) fn git_path_line(text: &str) -> &str {
+    let text = text.strip_suffix('\n').unwrap_or(text);
+    #[cfg(windows)]
+    let text = text.strip_suffix('\r').unwrap_or(text);
+    text
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Context {
     pub root: PathBuf,
