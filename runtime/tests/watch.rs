@@ -473,24 +473,48 @@ fn watch_once_reports_locked_as_transient_without_writes() {
 
 #[test]
 fn unsupported_operation_without_a_locked_request_stays_terminal() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let f = fixture("gitlab");
     let mut child = polling(&f, "unsupported-operation-terminal");
     wait_for_poll(&f, &mut child, 1);
     // This is an unsupported native operation, but not the verified
     // locked-request diagnostic. It must not enter the retry path.
     f.edit(|s| {
+        s["calls"] = json!([]);
         s["read_routes"]["projects/7/pipelines/71"] = json!({"__fixture_error":"unknown command"});
+        s["pipeline_delay_ms"] = json!(16_000);
     });
-    let started = Instant::now();
-    while child.try_wait().unwrap().is_none() {
+    loop {
+        let calls = f.state();
+        if calls["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|call| call["method"] == "GET" && call["endpoint"] == "projects/7/pipelines/71")
+        {
+            break;
+        }
+        let state = watch_store::read(&child.identity).unwrap().unwrap();
         assert!(
-            started.elapsed() < Duration::from_secs(15),
-            "an unrelated unsupported operation was retried: {}",
+            child.try_wait().unwrap().is_none() && child.within_budget(Some(&state)),
+            "the second pipeline request was not observed: {}",
             child.diagnostic()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    finish_watcher(&mut child);
+    assert_eq!(
+        f.state()["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| {
+                call["method"] == "GET" && call["endpoint"] == "projects/7/pipelines/71"
+            })
+            .count(),
+        1,
+        "an unrelated unsupported operation was retried"
+    );
     let state = watch_store::read(&child.identity).unwrap().unwrap();
     let last = state.events.last().unwrap();
     assert_eq!(last.state, EventState::Unknown);
