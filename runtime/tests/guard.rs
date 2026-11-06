@@ -456,6 +456,19 @@ fn install_validates_shebang_and_preserves_unsupported_hooks() {
         assert!(!result.status.success(), "accepted {shell}: {result:?}");
         assert_eq!(fs::read_to_string(&hook).unwrap(), original);
     }
+    for shebang in [
+        "#!/usr/bin/env -S bash -c",
+        "#!/bin/bash -c",
+        "#!/bin/sh -s",
+    ] {
+        let temp = fixture();
+        let hook = hook_path(temp.path(), "pre-commit");
+        let original = format!("{shebang}\n# user content\n");
+        fs::write(&hook, &original).unwrap();
+        let result = manage(temp.path(), "--install");
+        assert!(!result.status.success(), "accepted {shebang}: {result:?}");
+        assert_eq!(fs::read_to_string(&hook).unwrap(), original);
+    }
     let temp = fixture();
     let hook = hook_path(temp.path(), "pre-commit");
     fs::write(&hook, "#!/usr/bin/env -S bash\n# user content\n").unwrap();
@@ -1073,6 +1086,25 @@ fn pre_push_rejects_malformed_and_unmatched_mirror_refs() {
         &format!("refs/remotes/origin/x {oid} refs/heads/x {zero}\n"),
     );
     assert_eq!(denied.status.code(), Some(1));
+}
+
+#[test]
+fn pre_push_rejects_updating_a_remote_branch_other_than_the_checkpoint() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let oid = "1111111111111111111111111111111111111111";
+    let zero = "0000000000000000000000000000000000000000";
+    let result = guard(
+        temp.path(),
+        "pre-push",
+        &format!("refs/heads/feature {oid} refs/heads/main {zero}\n"),
+    );
+    assert_eq!(result.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("refs/heads/main"),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 #[test]

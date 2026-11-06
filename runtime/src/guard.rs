@@ -194,20 +194,31 @@ fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic>
             "The existing Git hook has no shell shebang and was preserved.",
         ));
     }
-    let mut words = first[2..].split_whitespace();
-    let interpreter = words.next().and_then(|word| word.rsplit('/').next());
-    let shell = if interpreter == Some("env") {
-        match words.next() {
-            Some("-S") => words.next(),
-            other => other,
+    let words: Vec<&str> = first[2..].split_whitespace().collect();
+    let interpreter = words.first().and_then(|word| word.rsplit('/').next());
+    let shell_index = if interpreter == Some("env") {
+        let mut index = 1;
+        if words.get(index) == Some(&"-S") {
+            index += 1;
         }
+        index
     } else {
-        interpreter
+        0
     };
-    let shell = shell.and_then(|word| word.rsplit('/').next());
+    let shell = words
+        .get(shell_index)
+        .and_then(|word| word.rsplit('/').next());
     if !matches!(shell, Some("sh" | "bash" | "zsh")) {
         return Err(rejected(
             "The existing Git hook is not a supported shell script and was preserved.",
+        ));
+    }
+    if words[shell_index + 1..]
+        .iter()
+        .any(|word| matches!(*word, "-c" | "--command" | "-s" | "--stdin"))
+    {
+        return Err(rejected(
+            "The existing Git hook invokes an inline shell command and was preserved.",
         ));
     }
     let split = before.find('\n').map_or(before.len(), |index| index + 1);
@@ -1209,6 +1220,7 @@ fn zero_oid(value: &str) -> bool {
 /// A pushed branch and the exact local object Git is about to send.
 struct PushedBranch {
     branch: String,
+    remote_branch: String,
     oid: String,
 }
 
@@ -1240,12 +1252,16 @@ fn pushed_branches(bytes: &[u8]) -> Result<Vec<PushedBranch>, Diagnostic> {
                 "A non-branch, non-tag ref update cannot be matched to an Issue checkpoint.",
             ));
         };
-        if !remote_ref.starts_with("refs/heads/") {
+        let Some(remote_branch) = remote_ref.strip_prefix("refs/heads/") else {
             return Err(rejected(
                 "A local branch may only be guarded when it updates a remote branch ref.",
             ));
-        }
-        if branch.is_empty() || branch.len() > 1024 {
+        };
+        if branch.is_empty()
+            || remote_branch.is_empty()
+            || branch.len() > 1024
+            || remote_branch.len() > 1024
+        {
             return Err(Diagnostic::input("pre-push branch identity is invalid."));
         }
         if ![40, 64].contains(&local_oid.len()) || !local_oid.bytes().all(|b| b.is_ascii_hexdigit())
@@ -1254,6 +1270,7 @@ fn pushed_branches(bytes: &[u8]) -> Result<Vec<PushedBranch>, Diagnostic> {
         }
         branches.push(PushedBranch {
             branch: branch.to_owned(),
+            remote_branch: remote_branch.to_owned(),
             oid: (*local_oid).to_owned(),
         });
         if branches.len() > 100 {
@@ -1342,10 +1359,10 @@ pub async fn check(
     let selected = checkpoint_valid(&context, declaration.target.as_deref())?;
     if matches!(stage, Stage::PrePush) {
         for pushed in &pushed {
-            if pushed.branch != selected.branch {
+            if pushed.branch != selected.branch || pushed.remote_branch != selected.branch {
                 return Err(rejected(&format!(
-                    "Ref refs/heads/{} is not covered by the checkpoint for refs/heads/{}.",
-                    pushed.branch, selected.branch
+                    "Ref refs/heads/{} pushes to refs/heads/{} but the checkpoint covers refs/heads/{}.",
+                    pushed.branch, pushed.remote_branch, selected.branch
                 )));
             }
         }
