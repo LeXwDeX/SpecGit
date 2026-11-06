@@ -18,7 +18,7 @@ use std::{
 #[derive(Debug, clap::Args)]
 pub struct Options {
     /// Exact issue IDs to adopt or complete Conventional Commit titles to create.
-    #[arg(required = true, num_args = 1..)]
+    #[arg(required_unless_present = "discard_uncertain", num_args = 1..)]
     pub specs: Vec<String>,
     /// One final Markdown body file per new title, in title order.
     #[arg(long)]
@@ -43,6 +43,9 @@ pub struct Options {
     /// Exact review digests from --inspect after comparing candidates and confirming a distinct WHY.
     #[arg(long)]
     pub reviewed_candidates: Vec<String>,
+    /// Clear unconfirmed creation flags only after fresh native candidate checks.
+    #[arg(long, conflicts_with_all = ["specs", "body_file", "tags", "branch", "inspect", "create_labels", "reviewed_candidates"])]
+    pub discard_uncertain: bool,
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     let mut effects = Effects::default();
@@ -84,6 +87,9 @@ async fn execute(
     cwd: &Path,
     effects: &mut Effects,
 ) -> Result<Report, Diagnostic> {
+    if options.discard_uncertain {
+        return write::discard_uncertain(&options, process, cwd, effects).await;
+    }
     preparation::normalize(&mut options, cwd)?;
     let mut prepared = preparation::prepare(&options, process, cwd).await?;
     // Keep the project creation lock through candidate reads, writes and readback.

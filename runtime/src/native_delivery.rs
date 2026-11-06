@@ -256,3 +256,27 @@ mod tests {
         }
     }
 }
+
+/// Read-only recovery probe: prove whether any open issue matches a title query.
+pub async fn recovery_issue_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    query: &str,
+) -> Result<bool, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::has_open_issue_search_rows(reader, repo, query).await,
+        Provider::Gitlab => gitlab::has_open_issue_search_rows(reader, repo, query).await,
+    }
+}
+
+/// Read-only recovery probe: prove whether any request uses the source branch.
+pub async fn recovery_request_candidates(
+    reader: &ForgeRead,
+    repo: &Repository,
+    source: &str,
+) -> Result<bool, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::has_request_candidates(reader, repo, source).await,
+        Provider::Gitlab => gitlab::has_request_candidates(reader, repo, source).await,
+    }
+}
