@@ -475,8 +475,8 @@ fn install_terminates_shebang_without_newline() {
     );
 }
 
-#[test]
-fn install_rejects_project_local_executable() {
+#[tokio::test]
+async fn install_rejects_project_local_executable() {
     let temp = fixture();
     let local = temp.path().join(if cfg!(windows) {
         "specgit.exe"
@@ -484,13 +484,18 @@ fn install_rejects_project_local_executable() {
         "specgit"
     });
     fs::copy(executable::binary(), &local).unwrap();
-    let result = Command::new(local)
-        .current_dir(temp.path())
-        .args(["guard", "--install"])
-        .output()
-        .unwrap();
-    assert!(!result.status.success(), "{result:?}");
-    assert!(String::from_utf8_lossy(&result.stderr).contains("outside"));
+    let result = specgit::guard::install_with_executable(
+        &specgit::process::Process::default(),
+        temp.path(),
+        false,
+        &local,
+    )
+    .await;
+    let error = result.expect_err("a project-local executable must be rejected");
+    assert!(
+        error.message.contains("outside"),
+        "unexpected diagnostic: {error}"
+    );
     assert!(!hook_path(temp.path(), "pre-commit").exists());
 }
 
