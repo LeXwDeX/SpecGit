@@ -71,11 +71,9 @@ function verifiedBinary(entry, directory, version, source) {
   return { ...entry, file };
 }
 function platformArtifactDirectory(input, target) {
-  const fixed = path.join(input, `release-platform-${target}`);
-  if (existsSync(fixed)) return fixed;
-  const prefix = `release-platform-${target}-`;
+  const prefix = `release-platform-${target}`;
   const matches = readdirSync(input, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && entry.name.startsWith(prefix))
+    .filter(entry => entry.isDirectory() && (entry.name === prefix || entry.name.startsWith(`${prefix}-`)))
     .map(entry => path.join(input, entry.name));
   need(matches.length === 1, `Expected one release artifact directory for ${target}.`);
   return matches[0];
