@@ -1214,6 +1214,13 @@ meet this proof are rejected; no SHA comparison is simply disabled.
 
 ### Git guard executable binding
 
+For hooks in Git metadata, `guard --install` rejects a running CLI inside the
+project checkout or another checkout of the same repository. Run the installed
+shared CLI outside those checkouts. Existing hooks must use `sh`, `bash` or
+`zsh` shebangs, including `env -S` forms. Installation makes a non-executable
+hook executable. A pre-push input read failure blocks the push; clean EOF is
+accepted as an empty update list.
+
 New guard blocks in Git metadata pin the absolute shared CLI path and quote it for
 POSIX/Git Bash. `guard --install` (or the recorded setup refresh) migrates owned
 bare-command blocks after ownership checks. Pre-push temporary files use `TMPDIR`

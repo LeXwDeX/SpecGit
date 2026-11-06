@@ -66,10 +66,13 @@ pub(super) async fn run(command: &Commands, cwd: &Path) {
             std::process::exit(2);
         };
         let mut bytes = vec![];
-        if matches!(stage, specgit::guard::Stage::PrePush) {
-            let _ = io::stdin()
+        if matches!(stage, specgit::guard::Stage::PrePush)
+            && let Err(error) = io::stdin()
                 .take((specgit::cli_contract::MAX_INPUT_BYTES + 1) as u64)
-                .read_to_end(&mut bytes);
+                .read_to_end(&mut bytes)
+        {
+            eprintln!("git_guard: failed to read pre-push input: {error}");
+            std::process::exit(1);
         }
         match specgit::guard::check(*stage, &bytes, &Process::default(), cwd).await {
             Ok(()) => std::process::exit(0),
