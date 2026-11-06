@@ -13,6 +13,7 @@ pub(super) struct Observation {
     pub next_step: NextAction,
     pub terminal: bool,
     pub retryable: bool,
+    pub unknown_checks: bool,
     pub same_source_mismatch: bool,
 }
 
@@ -31,6 +32,7 @@ pub(super) fn normalized(
         reason,
         terminal,
         retryable,
+        unknown_checks,
     } = classification::classify(assessment, context, goal, &revision);
     let next_step = actions::next_step(assessment, goal, request_id, &state);
     Observation {
@@ -40,6 +42,7 @@ pub(super) fn normalized(
         next_step,
         terminal,
         retryable,
+        unknown_checks,
         same_source_mismatch: request.is_some_and(|r| {
             evidence
                 .project_id
