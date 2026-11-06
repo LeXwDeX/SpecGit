@@ -2779,7 +2779,11 @@ fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
     let identity: Identity =
         serde_json::from_value(result["evidence"]["subscription"].clone()).unwrap();
     assert!(
-        watch_store::read(&identity).unwrap().unwrap().lease.is_none(),
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .lease
+            .is_none(),
         "unknown terminal state did not release the lease"
     );
 }
