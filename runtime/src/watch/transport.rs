@@ -134,6 +134,7 @@ pub(super) async fn subscribe(
         deadline,
     };
     let mut failures = 0_u32;
+    let mut unknown_checks = 0_u32;
     let mut context = initial;
     let mut verified = None;
     let mut previous_digest = digest.clone();
@@ -198,6 +199,21 @@ pub(super) async fn subscribe(
         if observation.revision.local_head != context.head || observation.terminal {
             verified = None;
         }
+        unknown_checks = if observation.state == EventState::Unknown && observation.unknown_checks {
+            unknown_checks.saturating_add(1)
+        } else {
+            0
+        };
+        if unknown_checks >= 3 {
+            observation.reason =
+                "Native checks reported an unrecognized state in three observations.".into();
+            override_next_step(
+                &mut observation,
+                ActionKind::RefreshNativeEvidence,
+                "Repeated observations could not interpret the check state; inspect native checks and refresh the exact request before acting.",
+            );
+            observation.terminal = true;
+        }
         finish_poll(&process, deadline, &mut observation);
         let state = store.publish_next_action(
             observation.revision,
@@ -229,6 +245,11 @@ pub(super) async fn subscribe(
             0
         };
         let delay = backoff_delay(timing, failures, &lease.owner, deadline);
+        let delay = if unknown_checks > 0 {
+            delay.min(Duration::from_secs(2))
+        } else {
+            delay
+        };
         tokio::select! { _ = tokio::time::sleep(delay) => {}, _ = process.cancellation.cancelled() => {} }
     };
     store.release(&lease)?;
@@ -418,6 +439,7 @@ async fn current_observation(
                 ),
                 terminal: true,
                 retryable: false,
+                unknown_checks: false,
                 same_source_mismatch: false,
             },
             None,
