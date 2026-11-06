@@ -2769,7 +2769,7 @@ fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
 }
 
 #[test]
-fn no_refresh_cleans_expired_lease_without_stealing_live_lock() {
+fn no_refresh_is_read_only_and_refresh_cleans_expired_lease() {
     let f = fixture("github");
     let observed = f.run(&watch("checks"));
     let identity: Identity =
@@ -2787,7 +2787,7 @@ fn no_refresh_cleans_expired_lease_without_stealing_live_lock() {
             .is_some()
     );
     drop(lock);
-    assert_eq!(f.run(&args)["status"], "unverified");
+    assert_eq!(f.run(&inbox())["status"], "checks_passed");
     assert!(
         watch_store::read(&identity)
             .unwrap()

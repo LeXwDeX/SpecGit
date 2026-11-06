@@ -252,8 +252,17 @@ pub(super) async fn subscribe(
         };
         tokio::select! { _ = tokio::time::sleep(delay) => {}, _ = process.cancellation.cancelled() => {} }
     };
-    let release = store.release(&lease).err();
+    let release = store.release(&lease).err().map(release_diagnostic);
     Ok((result.0, result.1, release))
+}
+
+fn release_diagnostic(error: crate::diagnostic::Diagnostic) -> crate::diagnostic::Diagnostic {
+    crate::diagnostic::Diagnostic::new(
+        error.code,
+        "release_watch_lease",
+        &error.message,
+        &error.remedy,
+    )
 }
 
 fn append_bounded(text: &mut String, suffix: &str, limit: usize) {
@@ -495,4 +504,20 @@ fn backoff_delay(timing: Timing, failures: u32, owner: &str, deadline: Instant) 
             .min(300),
     )
     .min(deadline.saturating_duration_since(Instant::now()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_diagnostic;
+    use crate::diagnostic::{Code, Diagnostic};
+
+    #[test]
+    fn release_failure_keeps_the_cause_and_names_the_operation() {
+        let error = Diagnostic::new(Code::LockBusy, "watch_state", "busy", "retry later");
+        let diagnostic = release_diagnostic(error);
+        assert_eq!(diagnostic.code, Code::LockBusy);
+        assert_eq!(diagnostic.operation, "release_watch_lease");
+        assert_eq!(diagnostic.message, "busy");
+        assert_eq!(diagnostic.remedy, "retry later");
+    }
 }
