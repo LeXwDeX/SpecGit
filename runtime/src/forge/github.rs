@@ -168,6 +168,33 @@ fn verify_search_repository(row: &Value, repo: &Repository) -> Result<(), Diagno
     }
     Ok(())
 }
+pub(crate) async fn recent_issues(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+) -> Result<Vec<Issue>, Diagnostic> {
+    let mut issues = Vec::new();
+    for state in ["open", "closed"] {
+        let value = reader
+            .get(&format!(
+                "{}/issues?state={state}&sort=created&direction=desc&per_page=100",
+                prefix(repo)
+            ))
+            .await?;
+        let rows = value.as_array().ok_or_else(malformed)?;
+        if rows.len() > 100 {
+            return Err(malformed());
+        }
+        for row in rows.iter().filter(|row| row.get("pull_request").is_none()) {
+            let issue = issue_value(row, project_id)?;
+            if issue.state != state {
+                return Err(malformed());
+            }
+            issues.push(issue);
+        }
+    }
+    Ok(issues)
+}
 pub(crate) async fn candidates(
     reader: &ForgeRead,
     repo: &Repository,
