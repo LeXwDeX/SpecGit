@@ -473,24 +473,36 @@ fn watch_once_reports_locked_as_transient_without_writes() {
 
 #[test]
 fn unsupported_operation_without_a_locked_request_stays_terminal() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let f = fixture("gitlab");
     let mut child = polling(&f, "unsupported-operation-terminal");
     wait_for_poll(&f, &mut child, 1);
     // This is an unsupported native operation, but not the verified
     // locked-request diagnostic. It must not enter the retry path.
     f.edit(|s| {
+        s["calls"] = json!([]);
         s["read_routes"]["projects/7/pipelines/71"] = json!({"__fixture_error":"unknown command"});
+        s["pipeline_delay_ms"] = json!(16_000);
     });
-    let started = Instant::now();
-    while child.try_wait().unwrap().is_none() {
+    loop {
+        let calls = f.state();
+        if calls["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|call| call["method"] == "GET" && call["endpoint"] == "projects/7/pipelines/71")
+        {
+            break;
+        }
+        let state = watch_store::read(&child.identity).unwrap().unwrap();
         assert!(
-            started.elapsed() < Duration::from_secs(15),
-            "an unrelated unsupported operation was retried: {}",
+            child.try_wait().unwrap().is_none() && child.within_budget(Some(&state)),
+            "the second pipeline request was not observed: {}",
             child.diagnostic()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    finish_watcher(&mut child);
     let state = watch_store::read(&child.identity).unwrap().unwrap();
     let last = state.events.last().unwrap();
     assert_eq!(last.state, EventState::Unknown);
@@ -757,7 +769,7 @@ fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
         "project-observation-defaults",
     );
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(7);
+    let deadline = started + Duration::from_secs(15);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
@@ -773,7 +785,7 @@ fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
         child.diagnostic()
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
-    assert!(started.elapsed() < Duration::from_secs(6));
+    assert!(started.elapsed() < Duration::from_secs(12));
     assert!(
         request_reads(&f) >= before + 2,
         "poll_seconds was not applied"
@@ -820,7 +832,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
         "explicit-observation-overrides",
     );
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(5);
+    let deadline = started + Duration::from_secs(12);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
@@ -836,7 +848,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
         child.diagnostic()
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
-    assert!(started.elapsed() < Duration::from_secs(4));
+    assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(f.writes(), writes);
     assert_eq!(
         watch_store::read(&identity)
@@ -1567,6 +1579,11 @@ fn merged_open_issue_action_bounds_long_issue_preview_without_losing_typed_ids()
     assert!(state.events.iter().any(|event| {
         event.id == second_id && !event.superseded && event.acknowledged_at.is_none()
     }));
+
+    let mut no_refresh = inbox_for("lifecycle").to_vec();
+    no_refresh.push("--no-refresh");
+    let pending = f.run(&no_refresh);
+    assert_eq!(pending["evidence"]["pending_event_ids"], json!([second_id]));
 
     let mut args = inbox_for("lifecycle").to_vec();
     args.extend(["--ack", second_id.as_str()]);

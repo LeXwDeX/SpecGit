@@ -152,8 +152,8 @@ fn receipt_read_conflict(error: &std::io::Error) -> Diagnostic {
 async fn recorded_skills(process: &Process, root: &Path) -> Result<Vec<String>, Diagnostic> {
     let bytes = project::git(process, root, &["rev-parse", "--absolute-git-dir"]).await?;
     let git_dir = std::str::from_utf8(&bytes)
-        .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 Git directory."))?
-        .trim_end_matches(['\r', '\n']);
+        .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 Git directory."))?;
+    let git_dir = project::git_path_line(git_dir);
     let receipt = Path::new(git_dir).join("specgit-v2/agent-assets/ownership.json");
     let metadata = match std::fs::symlink_metadata(&receipt) {
         Ok(metadata) => metadata,
@@ -214,11 +214,9 @@ pub async fn path(process: &Process, root: &Path) -> Result<PathBuf, Diagnostic>
         ],
     )
     .await?;
-    Ok(PathBuf::from(
-        String::from_utf8(bytes)
-            .map_err(|_| Diagnostic::input("Invalid Git exclude path."))?
-            .trim_end_matches(['\r', '\n']),
-    ))
+    Ok(PathBuf::from(project::git_path_line(
+        &String::from_utf8(bytes).map_err(|_| Diagnostic::input("Invalid Git exclude path."))?,
+    )))
 }
 
 fn conflict() -> Diagnostic {

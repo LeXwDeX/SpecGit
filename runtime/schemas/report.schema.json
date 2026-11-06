@@ -872,7 +872,8 @@
               "code": {"type": "string", "minLength": 1},
               "operation": {"type": "string", "minLength": 1},
               "message": {"type": "string", "minLength": 1},
-              "remedy": {"type": "string", "minLength": 1}
+              "remedy": {"type": "string", "minLength": 1},
+              "http_status": {"type": "integer", "minimum": 100, "maximum": 599}
             }}
           ]
         },
@@ -1097,7 +1098,8 @@
                 "code": {"type": "string", "minLength": 1},
                 "operation": {"type": "string", "minLength": 1},
                 "message": {"type": "string", "minLength": 1},
-                "remedy": {"type": "string", "minLength": 1}
+                "remedy": {"type": "string", "minLength": 1},
+                "http_status": {"type": "integer", "minimum": 100, "maximum": 599}
               }
             }
           ]
@@ -1244,6 +1246,11 @@
           "remedy": {
             "type": "string",
             "minLength": 1
+          },
+          "http_status": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599
           }
         },
         "required": [

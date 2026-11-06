@@ -18,7 +18,7 @@ use std::{
 #[derive(Debug, clap::Args)]
 pub struct Options {
     /// Exact issue IDs to adopt or complete Conventional Commit titles to create.
-    #[arg(required = true, num_args = 1..)]
+    #[arg(required_unless_present = "discard_uncertain", num_args = 1..)]
     pub specs: Vec<String>,
     /// One final Markdown body file per new title, in title order.
     #[arg(long)]
@@ -43,6 +43,9 @@ pub struct Options {
     /// Exact review digests from --inspect after comparing candidates and confirming a distinct WHY.
     #[arg(long)]
     pub reviewed_candidates: Vec<String>,
+    /// Clear unconfirmed creation flags only after fresh native candidate checks.
+    #[arg(long, conflicts_with_all = ["specs", "body_file", "tags", "branch", "inspect", "create_labels", "reviewed_candidates"])]
+    pub discard_uncertain: bool,
 }
 pub async fn run(options: Options, process: Process, cwd: &Path) -> Report {
     let mut effects = Effects::default();
@@ -84,6 +87,9 @@ async fn execute(
     cwd: &Path,
     effects: &mut Effects,
 ) -> Result<Report, Diagnostic> {
+    if options.discard_uncertain {
+        return write::discard_uncertain(&options, process, cwd, effects).await;
+    }
     preparation::normalize(&mut options, cwd)?;
     let mut prepared = preparation::prepare(&options, process, cwd).await?;
     // Keep the project creation lock through candidate reads, writes and readback.
@@ -121,7 +127,13 @@ fn validate(
     body: &str,
     labels: &[String],
 ) -> Result<(), Diagnostic> {
-    let errors = d.check(true, title, body, &spec::canonical_labels(provider, labels));
+    let errors = d.check_for(
+        provider,
+        true,
+        title,
+        body,
+        &spec::canonical_labels(provider, labels),
+    );
     if errors.is_empty() {
         Ok(())
     } else {
@@ -146,4 +158,23 @@ fn uncertain(evidence: serde_json::Value) -> Report {
     );
     report.evidence = evidence;
     report
+}
+
+#[cfg(test)]
+mod body_limit_tests {
+    use crate::{config::Declaration, identity::Provider, spec::Specification};
+
+    #[test]
+    fn github_and_gitlab_body_limits_are_checked_before_creation() {
+        let d = Declaration::default();
+        let spec = Specification::new(&d);
+        let at_limit = "界".repeat(65_536);
+        let over_limit = format!("{at_limit}x");
+        let validate =
+            |provider, body: &str| super::validate(spec, provider, "fix: test", body, &[]);
+        assert!(validate(Provider::Github, &at_limit).is_ok());
+        assert!(validate(Provider::Github, &over_limit).is_err());
+        assert!(validate(Provider::Gitlab, &over_limit).is_ok());
+        assert!(validate(Provider::Gitlab, &"x".repeat(1_048_577)).is_err());
+    }
 }

@@ -576,3 +576,15 @@ fn windows_atomic_replace_preserves_edits_after_a_confirmed_sharing_failure() {
         edit_at_atomic_barrier("atomic-replace-blocked", readonly, true);
     }
 }
+#[cfg(unix)]
+#[test]
+fn asset_lock_rejects_symlink_without_touching_target() {
+    use std::{fs, os::unix::fs::symlink, time::Duration};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let foreign = root.join("foreign");
+    fs::write(&foreign, b"foreign").unwrap();
+    symlink(&foreign, root.join(".specgit-lock")).unwrap();
+    assert!(specgit::assets::AssetStore::lock(&root, &[], Duration::from_secs(1)).is_err());
+    assert_eq!(fs::read(foreign).unwrap(), b"foreign");
+}

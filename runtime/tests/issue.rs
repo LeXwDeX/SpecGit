@@ -46,6 +46,117 @@ fn checkpoint_path(fixture: &Fixture) -> PathBuf {
     fixture.root.join(".git/specgit-v2/selection.json")
 }
 
+#[test]
+fn discard_uncertain_issue_previews_then_clears_without_creating() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        f.edit(|s| s["issue_create_status"] = json!(500));
+        assert_eq!(
+            f.run(&["issue", "--create-labels", "fix: recovery"])["exit"],
+            3
+        );
+        let before = fs::read(checkpoint_path(&f)).unwrap();
+        let preview = f.run(&["issue", "--discard-uncertain", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+        let writes = f.writes();
+        let applied = f.run(&["issue", "--discard-uncertain"]);
+        assert_eq!(applied["exit"], 0, "{applied}");
+        assert_eq!(f.writes(), writes);
+        let selection: serde_json::Value =
+            serde_json::from_slice(&fs::read(checkpoint_path(&f)).unwrap()).unwrap();
+        assert_eq!(selection["intents"][0]["write_started"], false);
+        assert!(selection["intents"][0]["issue"].is_null());
+    }
+}
+
+#[test]
+fn discard_uncertain_issue_preserves_checkpoint_for_candidates_and_failed_history() {
+    for provider in ["github", "gitlab"] {
+        for closed in [false, true] {
+            let f = Fixture::new(provider);
+            f.edit(|s| s["lose_issue_response"] = json!(true));
+            assert_eq!(
+                f.run(&["issue", "--create-labels", "fix: history"])["exit"],
+                3
+            );
+            if closed {
+                f.edit(|s| {
+                    s["issues"][0]["state"] = json!("closed");
+                    s["read_routes"][candidate_route(provider, true)] = if provider == "github" {
+                        json!({"incomplete_results":false,"items":[native_issue(provider, 1, true)]})
+                    } else { json!([native_issue(provider, 1, true)]) };
+                });
+            }
+            let before = fs::read(checkpoint_path(&f)).unwrap();
+            let result = f.run(&["issue", "--discard-uncertain"]);
+            assert_eq!(result["exit"], 3, "{provider} {closed}: {result}");
+            assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+        }
+        let f = Fixture::new(provider);
+        f.edit(|s| s["issue_create_status"] = json!(500));
+        assert_eq!(
+            f.run(&["issue", "--create-labels", "fix: history"])["exit"],
+            3
+        );
+        f.edit(|s| {
+            s["read_routes"][candidate_route(provider, true)] =
+                json!({"__fixture_error":"HTTP 500 history unavailable"})
+        });
+        let before = fs::read(checkpoint_path(&f)).unwrap();
+        let result = f.run(&["issue", "--discard-uncertain"]);
+        assert_eq!(result["exit"], 3, "{result}");
+        assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+    }
+}
+
+#[test]
+fn discard_uncertain_issue_timeout_preserves_checkpoint() {
+    let f = Fixture::new("github");
+    f.edit(|s| s["issue_create_status"] = json!(500));
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "fix: timeout recovery"])["exit"],
+        3
+    );
+    let before = fs::read(checkpoint_path(&f)).unwrap();
+    f.edit(|s| s["api_delay_ms"] = json!(100));
+    let output = f
+        .feature_command(&["issue", "--discard-uncertain"])
+        .env("SPECGIT_TEST_INSPECTION_BUDGET_MS", "20")
+        .output()
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["diagnostics"][0]["code"], "timeout", "{result}");
+    assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), before);
+}
+
+#[test]
+fn rejected_issue_creation_clears_only_proven_non_creation() {
+    for provider in ["github", "gitlab"] {
+        for (status, uncertain) in [
+            (400, false),
+            (401, false),
+            (403, false),
+            (422, false),
+            (404, true),
+            (409, true),
+            (500, true),
+        ] {
+            let f = Fixture::new(provider);
+            f.edit(|s| s["issue_create_status"] = json!(status));
+            let result = f.run(&["issue", "--create-labels", "fix: rejected creation"]);
+            assert_eq!(result["exit"], 3, "{result}");
+            let selection: serde_json::Value =
+                serde_json::from_slice(&fs::read(checkpoint_path(&f)).unwrap()).unwrap();
+            assert_eq!(
+                selection["intents"][0]["write_started"], uncertain,
+                "{result}"
+            );
+            assert!(f.state()["issues"].as_array().unwrap().is_empty());
+        }
+    }
+}
+
 fn candidate_route(provider: &str, closed: bool) -> String {
     if provider == "github" {
         format!(
@@ -65,6 +176,69 @@ fn candidate_route(provider: &str, closed: bool) -> String {
 
 fn native_issue(provider: &str, number: u64, closed: bool) -> serde_json::Value {
     json!({"repository_url":"https://forge.example/api/v3/repos/fixture/repo","number":number,"iid":number,"project_id":7,"title":"fix: history","body":"Current WHY","description":"Current WHY","labels":[],"state":if closed {"closed"} else if provider == "github" {"open"} else {"opened"},"state_reason":"completed","updated_at":"2026-10-01T00:00:00Z","html_url":format!("https://forge.example/fixture/repo/issues/{number}"),"web_url":format!("https://forge.example/fixture/repo/-/issues/{number}")})
+}
+
+#[test]
+fn github_body_limit_is_checked_before_issue_creation_and_checkpoint() {
+    let f = Fixture::new("github");
+    let body = f.root.join("body.md");
+    fs::write(&body, "x".repeat(65_537)).unwrap();
+    let rejected = f.run(&[
+        "issue",
+        "fix: bounded body",
+        "--body-file",
+        "body.md",
+        "--create-labels",
+    ]);
+    assert_ne!(rejected["exit"], 0, "{rejected}");
+    assert_eq!(f.writes(), 0, "{rejected}");
+    assert!(!checkpoint_path(&f).exists(), "{rejected}");
+
+    fs::write(&body, "x".repeat(65_536)).unwrap();
+    let created = f.run(&[
+        "issue",
+        "fix: bounded body",
+        "--body-file",
+        "body.md",
+        "--create-labels",
+    ]);
+    assert_eq!(created["exit"], 0, "{created}");
+    assert_eq!(
+        f.state()["issues"][0]["body"].as_str().unwrap().len(),
+        65_536
+    );
+    assert_eq!(created["evidence"]["selection"]["issues"], json!([1]));
+}
+
+#[test]
+fn checkpoint_repository_case_follows_provider_path_rules() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let created = f.run(&["issue", "fix: case test", "--create-labels"]);
+        assert_eq!(created["exit"], 0, "{created}");
+        let checkpoint = fs::read(checkpoint_path(&f)).unwrap();
+        git(
+            &f.root,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://forge.example/Fixture/Repo.git",
+            ],
+        );
+        let status = f.run(&["status"]);
+        if provider == "github" {
+            assert_eq!(status["exit"], 0, "{status}");
+            assert_eq!(
+                status["evidence"]["selection"]["issues"],
+                json!([1]),
+                "{status}"
+            );
+        } else {
+            assert_ne!(status["exit"], 0, "{status}");
+        }
+        assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), checkpoint);
+    }
 }
 
 #[test]
@@ -329,7 +503,7 @@ fn milestone_context_refreshes_without_changing_checkpoint_or_candidate_digest()
 }
 
 #[test]
-fn closed_history_is_separate_and_does_not_change_candidate_reviews() {
+fn matching_recent_closed_history_also_changes_candidate_reviews() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new(provider);
         f.edit(|state| state["issues"] = json!([native_issue(provider, 1, false)]));
@@ -343,11 +517,8 @@ fn closed_history_is_separate_and_does_not_change_candidate_reviews() {
         let report = f.run(&["issue", "fix: history", "--inspect"]);
         assert_eq!(report["exit"], 0, "{report}");
         let evidence = &report["evidence"]["candidates"][0];
-        assert_eq!(
-            evidence["issues"],
-            before["evidence"]["candidates"][0]["issues"]
-        );
-        assert_eq!(
+        assert_eq!(evidence["issues"].as_array().unwrap().len(), 2);
+        assert_ne!(
             evidence["review_digest"],
             before["evidence"]["candidates"][0]["review_digest"]
         );
@@ -382,11 +553,7 @@ fn closed_history_is_separate_and_does_not_change_candidate_reviews() {
 
         f.edit(|state| state["issues"] = json!([native_issue(provider, 1, true)]));
         let created = f.run(&["issue", "fix: history", "--create-labels"]);
-        assert_eq!(
-            created["exit"], 0,
-            "history cannot gate creation: {created}"
-        );
-        assert_eq!(created["evidence"]["selection"]["issues"], json!([2]));
+        assert_eq!(created["status"], "candidate_review_required", "{created}");
         assert_eq!(f.state()["issues"][0]["state"], "closed");
     }
 }
@@ -462,7 +629,7 @@ fn history_is_one_bounded_page_in_platform_order_with_optional_fields() {
         let f = Fixture::new(provider);
         f.edit(|state| {
             state["issues"] = json!((1..=25).rev().map(|id| {
-                json!({"number":id,"iid":id,"project_id":7,"title":"fix: history","state":"closed","state_reason":null,"updated_at":"2026-10-01T00:00:00Z"})
+                json!({"number":id,"iid":id,"project_id":7,"title":"fix: prior history","body":"history","description":"history","labels":[],"state":"closed","state_reason":null,"updated_at":"2026-10-01T00:00:00Z"})
             }).collect::<Vec<_>>());
         });
         let report = f.run(&["issue", "fix: history", "--inspect"]);
@@ -1078,7 +1245,7 @@ fn issue_inspection_reports_candidate_timing_and_pagination_for_each_forge() {
         assert_eq!(candidate["pagination"]["items_seen"], 0, "{report}");
         assert_eq!(candidate["pagination"]["page_limit"], 10, "{report}");
         assert_eq!(candidate["pagination"]["complete"], true, "{report}");
-        assert_eq!(candidate["requests_executed"], 2, "{report}");
+        assert_eq!(candidate["requests_executed"], 4, "{report}");
         let human_candidate = &human["candidates"][0];
         assert_eq!(human["inspection"]["budget_ms"], 120_000);
         assert_eq!(human["inspection"]["complete"], true);
@@ -1237,6 +1404,72 @@ fn response_loss_requires_exact_native_adoption_and_never_duplicates() {
             r["evidence"]["issues"][0]["body"],
             "User edited after creation"
         );
+    }
+}
+
+#[test]
+fn multiple_issue_labels_use_one_pool_read_and_one_refresh() {
+    for provider in ["github", "gitlab"] {
+        for existing in [false, true] {
+            let f = Fixture::new(provider);
+            fs::write(f.root.join(".specgit.yaml"), format!("version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: off\ntags:\n  - name: alpha\n    color: 112233\n  - name: beta\n    color: 445566\n")).unwrap();
+            if existing {
+                f.edit(|s| s["labels"] = json!([{"name":"alpha"},{"name":"beta"}]));
+            }
+            let result = f.run(&[
+                "issue",
+                "fix: multiple labels",
+                "--tags",
+                "alpha,beta",
+                "--create-labels",
+            ]);
+            assert_eq!(result["exit"], 0, "{provider}: {result}");
+            let calls = f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| {
+                    c["method"] == "GET"
+                        && c["endpoint"]
+                            .as_str()
+                            .unwrap()
+                            .split('?')
+                            .next()
+                            .unwrap()
+                            .ends_with("/labels")
+                })
+                .count();
+            assert_eq!(calls, if existing { 2 } else { 3 }, "{provider}: {result}");
+        }
+    }
+}
+
+#[test]
+fn recent_issue_blocks_duplicate_when_search_index_is_stale() {
+    for provider in ["github", "gitlab"] {
+        for closed in [false, true] {
+            let f = Fixture::new(provider);
+            assert_eq!(
+                f.run(&["issue", "fix: recent title", "--create-labels"])["exit"],
+                0
+            );
+            fs::remove_file(f.root.join(".git/specgit-v2/selection.json")).unwrap();
+            f.edit(|s| {
+                s["empty_issue_search"] = json!(true);
+                if closed {
+                    s["issues"][0]["state"] = json!("closed");
+                }
+            });
+            let writes = f.writes();
+            let blocked = f.run(&["issue", "fix: RECENT TITLE", "--create-labels"]);
+            assert_eq!(
+                blocked["status"], "candidate_review_required",
+                "{provider}: {blocked}"
+            );
+            assert_eq!(f.writes(), writes);
+            let created = f.run(&["issue", "fix: different title", "--create-labels"]);
+            assert_eq!(created["exit"], 0, "{provider}: {created}");
+        }
     }
 }
 
@@ -1901,6 +2134,8 @@ fn github_duplicate_search_accepts_canonical_repository_casing() {
                 format!("repos/{remote_path}"): s["project"].clone(),
                 format!("repos/{remote_path}/labels?per_page=100&page=1"): [],
                 format!("repos/{remote_path}/issues/1"): open.clone(),
+                format!("repos/{remote_path}/issues?state=open&sort=created&direction=desc&per_page=100"): [open.clone()],
+                format!("repos/{remote_path}/issues?state=closed&sort=created&direction=desc&per_page=100"): [closed.clone()],
                 candidate_route("github", false).replace("fixture%2Frepo", &encoded): {"incomplete_results":false,"items":[open]},
                 candidate_route("github", true).replace("fixture%2Frepo", &encoded): {"incomplete_results":false,"items":[closed]},
             });

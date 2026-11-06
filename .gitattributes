@@ -14,3 +14,6 @@ scripts/ci-change-scope.mjs text eol=lf
 
 # The publisher renders Release notes from this template byte-for-byte.
 .github/RELEASE_TEMPLATE.md text eol=lf
+
+# GraphQL fixtures are compared as protocol text; keep them LF on every checkout.
+runtime/tests/fixtures/*.graphql text eol=lf

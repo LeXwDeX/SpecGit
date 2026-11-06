@@ -78,6 +78,10 @@ visible long aliases for argv, conflicts, required options (`requires`, with any
 group listed under the command's `groups`) and side-effect classification. Engineering qualification generates
 `schemas/` from this contract and compares them with the installed executable.
 Public ZIPs contain only the executable; use its embedded offline `--schema`.
+Help takes precedence over version, then schema; these discovery options do not
+read `--input-file`. Schema discovery does not validate other operands or options:
+an unknown command returns the root contract, and a known command selects its
+contract even when other arguments are invalid. Tokens after `--` are positional.
 
 Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
 `--input-file <path>`. Ordinary non-TTY stdout defaults to a single JSON report;
@@ -857,10 +861,10 @@ relative or unavailable home is invalid input with no writes. Symbolic links
 anywhere below the resolved home are refused, including a dangling file link.
 No Git repository or declaration is required.
 
-Installation uses the same embedded Skill as project setup. Its final line is
+Installation uses the same embedded Skill as project setup. Its marker line is
 `<!-- specgit:managed sha256=<64 lowercase hex digits> -->`; the digest covers
 every byte before that line, including the preceding newline. A valid marker
-line establishes ownership. A foreign file (no valid marker) is a conflict and
+line establishes ownership wherever it appears. A foreign file (no valid marker) is a conflict and
 is never adopted. A managed file is refreshed to the current embedded content.
 If its body hash differs, or content was appended after the marker, refresh first
 preserves the exact old bytes and permissions in a sibling
@@ -1213,6 +1217,13 @@ Unknown ancestry, stale source/target results and merge-train ancestry that cann
 meet this proof are rejected; no SHA comparison is simply disabled.
 
 ### Git guard executable binding
+
+For hooks in Git metadata, `guard --install` rejects a running CLI inside the
+project checkout or another checkout of the same repository. Run the installed
+shared CLI outside those checkouts. Existing hooks must use `sh`, `bash` or
+`zsh` shebangs, including `env -S` forms. Installation makes a non-executable
+hook executable. A pre-push input read failure blocks the push; clean EOF is
+accepted as an empty update list.
 
 New guard blocks in Git metadata pin the absolute shared CLI path and quote it for
 POSIX/Git Bash. `guard --install` (or the recorded setup refresh) migrates owned
