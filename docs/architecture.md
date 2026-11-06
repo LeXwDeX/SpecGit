@@ -81,7 +81,7 @@ only on a lower layer. Layer 0 contains pure rules and models.
 | `remove` | 9 | `assets`, `config`, `delivery_context`, `diagnostic`, `guard`, `guidance`, `local_exclude`, `observation`, `process`, `project`, `report`, `selection`, `setup` |
 | `report` | 0 | `diagnostic`, `observation_model` |
 | `selection` | 2 | `assets`, `declaration`, `delivery_model`, `diagnostic`, `identity`, `input`, `project` |
-| `self_update` | 2 | `diagnostic`, `process`, `report`, `skill` |
+| `self_update` | 2 | `assets`, `diagnostic`, `process`, `report`, `skill` |
 | `setup` | 8 | `assets`, `config`, `diagnostic`, `guard`, `guidance`, `input`, `local_exclude`, `process`, `project`, `project_receipt`, `prompts`, `report`, `skill` |
 | `skill` | 2 | `assets`, `diagnostic`, `report` |
 | `spec` | 0 | `declaration`, `diagnostic`, `identity`, `label_rules`, `template_rules` |
@@ -120,6 +120,7 @@ flowchart TD
   self_update --> process
   self_update --> report
   self_update --> skill
+  self_update --> assets
   skill --> assets
   skill --> report
   setup --> skill
@@ -238,7 +239,7 @@ The intended boundaries are:
 - `skill` owns the embedded Skill source shared with `setup`, and manages only
   the explicitly selected user Skill file. It depends on `assets`, `diagnostic`
   and `report`; no project or host state is loaded.
-- `self_update` depends only on `process`, `diagnostic`, `report` and `skill`. It owns
+- `self_update` depends only on `assets`, `process`, `diagnostic`, `report` and `skill`. It owns
   release selection, verification and executable replacement. Tests may
   redirect the install target only in `test-fixtures` builds.
   Its post-install Skill child uses the new executable, bounded argv transport

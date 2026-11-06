@@ -56,6 +56,7 @@ fn marker(bytes: &[u8]) -> Option<(&[u8], &str, bool)> {
     let mut found = None;
     for raw in bytes.split_inclusive(|b| *b == b'\n') {
         let line = raw.strip_suffix(b"\n").unwrap_or(raw);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
         if let Some(digest) = std::str::from_utf8(line)
             .ok()
             .and_then(|line| line.strip_prefix(MARKER))
@@ -324,6 +325,10 @@ fn apply(
             staged.as_file().sync_all().map_err(io_error)?;
             recheck(&path, &before, lock.as_ref())?;
             let index = effects.begin("local", "backup_user_skill", json!({"path":backup}));
+            #[cfg(feature = "test-fixtures")]
+            if suffix == 0 && std::env::var_os("SPECGIT_FIXTURE_SKILL_BACKUP_COLLISION").is_some() {
+                fs::write(&backup, b"winner").map_err(io_error)?;
+            }
             match staged.persist_noclobber(&backup) {
                 Ok(_) => {
                     effects.applied(index);
@@ -335,7 +340,7 @@ fn apply(
                     break;
                 }
                 Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    effects.operations[index].outcome = "not_applied";
+                    effects.operations.truncate(index);
                 }
                 Err(e) => return Err(io_error(e.error)),
             }
