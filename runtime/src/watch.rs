@@ -132,6 +132,7 @@ fn report(
     state: &State,
     event_state: &EventState,
     persistence_failure: Option<Diagnostic>,
+    release_failure: Option<Diagnostic>,
 ) -> Report {
     let events: Vec<_> = state
         .events
@@ -177,11 +178,19 @@ fn report(
             true,
         );
     }
+    if let Some(d) = release_failure {
+        result.diagnostics.push(d);
+    }
     result
 }
 pub async fn run(o: Options, process: Process, cwd: &Path) -> Report {
     match Box::pin(transport::subscribe(o, process, cwd, false)).await {
-        Ok((r, persistence_failure)) => report(&r.state, &r.event_state, persistence_failure),
+        Ok((r, persistence_failure, release_failure)) => report(
+            &r.state,
+            &r.event_state,
+            persistence_failure,
+            release_failure,
+        ),
         Err(d) => Report::failure("watch", d),
     }
 }
@@ -191,8 +200,9 @@ pub async fn observe_subscription(
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
     match transport::subscribe(o, process, cwd, false).await? {
-        (_, Some(d)) => Err(d),
-        (events, None) => Ok(events),
+        (_, Some(d), _) => Err(d),
+        (_, None, Some(d)) => Err(d),
+        (events, None, None) => Ok(events),
     }
 }
 pub async fn observe_until_attention(
@@ -201,8 +211,9 @@ pub async fn observe_until_attention(
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
     match transport::subscribe(o, process, cwd, true).await? {
-        (_, Some(d)) => Err(d),
-        (events, None) => Ok(events),
+        (_, Some(d), _) => Err(d),
+        (_, None, Some(d)) => Err(d),
+        (events, None, None) => Ok(events),
     }
 }
 pub async fn inbox(o: InboxOptions, process: Process, cwd: &Path) -> Report {
@@ -237,6 +248,7 @@ async fn inbox_inner(o: InboxOptions, process: Process, cwd: &Path) -> Result<Re
             json!({"subscription":identity,"pending_event_ids":ids,"requires_refresh":true,"expired_unacknowledged":state.as_ref().map_or(0, |s|s.expired_unacknowledged)}),
         ));
     }
+    Store::new(identity)?.expire_lease()?;
     let mut r = run(
         Options {
             request: o.request,

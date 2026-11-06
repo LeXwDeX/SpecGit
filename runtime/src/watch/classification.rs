@@ -12,6 +12,7 @@ pub(super) struct Classified {
     pub reason: String,
     pub terminal: bool,
     pub retryable: bool,
+    pub unknown_checks: bool,
 }
 
 pub(super) fn classify(
@@ -74,11 +75,17 @@ pub(super) fn classify(
     ) && goal == Goal::Checks)
         || (state == EventState::Unknown && !retryable);
     let reason = reason(assessment, &codes);
+    let unknown_checks = state == EventState::Unknown
+        && assessment
+            .diagnostics
+            .iter()
+            .any(|d| d.code == Code::MalformedResponse && d.operation == "checks_state");
     Classified {
         state,
         reason,
         terminal,
         retryable,
+        unknown_checks,
     }
 }
 
