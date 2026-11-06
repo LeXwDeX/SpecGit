@@ -179,29 +179,23 @@ fn executable_binding(changes: &[Change]) -> &'static str {
     }
 }
 
-fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic> {
-    if before.contains("specgit-v2:pre-") {
-        return Err(rejected(
-            "An unowned SpecGit Git-hook marker already exists.",
-        ));
-    }
-    if before.is_empty() {
-        return Ok(format!("#!/bin/sh\n{block}"));
-    }
+fn hook_shebang(before: &str) -> Result<(), Diagnostic> {
     let first = before.lines().next().unwrap_or("");
     if !first.starts_with("#!") {
         return Err(rejected(
             "The existing Git hook has no shell shebang and was preserved.",
         ));
     }
-    let words: Vec<&str> = first[2..].split_whitespace().collect();
+    let raw = &first[2..];
+    if raw.contains(['\'', '"', '\\']) {
+        return Err(rejected(
+            "The existing Git hook has an ambiguous shell shebang and was preserved.",
+        ));
+    }
+    let words: Vec<&str> = raw.split_whitespace().collect();
     let interpreter = words.first().and_then(|word| word.rsplit('/').next());
     let shell_index = if interpreter == Some("env") {
-        let mut index = 1;
-        if words.get(index) == Some(&"-S") {
-            index += 1;
-        }
-        index
+        if words.get(1) == Some(&"-S") { 2 } else { 1 }
     } else {
         0
     };
@@ -213,14 +207,47 @@ fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic>
             "The existing Git hook is not a supported shell script and was preserved.",
         ));
     }
-    if words[shell_index + 1..]
-        .iter()
-        .any(|word| matches!(*word, "-c" | "--command" | "-s" | "--stdin"))
-    {
+    let mut after_separator = false;
+    for word in &words[shell_index + 1..] {
+        if *word == "--" {
+            after_separator = true;
+            continue;
+        }
+        if after_separator && word.starts_with('-') {
+            return Err(rejected(
+                "The existing Git hook invokes a script other than itself and was preserved.",
+            ));
+        }
+        if *word == "-" {
+            return Err(rejected(
+                "The existing Git hook reads its script from stdin and was preserved.",
+            ));
+        }
+        if matches!(*word, "-c" | "-s" | "--command" | "--stdin")
+            || word.starts_with("--command=")
+            || word.starts_with("--stdin=")
+            || (word.starts_with('-')
+                && !word.starts_with("--")
+                && (*word).contains(['c', 's']))
+        {
+            return Err(rejected(
+                "The existing Git hook invokes an inline shell command and was preserved.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic> {
+    if before.contains("specgit-v2:pre-") {
         return Err(rejected(
-            "The existing Git hook invokes an inline shell command and was preserved.",
+            "An unowned SpecGit Git-hook marker already exists.",
         ));
     }
+    if before.is_empty() {
+        return Ok(format!("#!/bin/sh\n{block}"));
+    }
+    hook_shebang(before)?;
     let split = before.find('\n').map_or(before.len(), |index| index + 1);
     let newline = if before[..split].ends_with('\n') {
         ""
@@ -411,6 +438,9 @@ pub(crate) async fn plan_named_with_executable(
         let original_empty = old.map_or(before.is_empty(), |old| old.original_empty);
         let exact_generated = old.is_some_and(|old| before == format!("#!/bin/sh\n{}", old.block));
         let (after, created) = if let Some(old) = old {
+            if !uninstall {
+                hook_shebang(before)?;
+            }
             if before.matches(&old.block).count() != 1 {
                 return Err(rejected(
                     "An owned SpecGit Git-hook block was edited, removed, or duplicated.",
@@ -812,16 +842,7 @@ pub async fn health_plan(
         let snapshot = Snapshot::read(&hook.path)?;
         let script = std::str::from_utf8(snapshot.bytes.as_deref().unwrap_or_default())
             .map_err(|_| rejected("The recorded Git hook is not UTF-8."))?;
-        let first = script.lines().next().unwrap_or("");
-        if !first.starts_with("#!")
-            || !["sh", "bash", "zsh"]
-                .iter()
-                .any(|shell| first.contains(shell))
-        {
-            return Err(rejected(
-                "The recorded Git hook has no supported shell shebang.",
-            ));
-        }
+        hook_shebang(script)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

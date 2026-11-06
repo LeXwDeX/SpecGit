@@ -460,6 +460,14 @@ fn install_validates_shebang_and_preserves_unsupported_hooks() {
         "#!/usr/bin/env -S bash -c",
         "#!/bin/bash -c",
         "#!/bin/sh -s",
+        "#!/usr/bin/env -S bash \"-c\" \":\"",
+        "#!/bin/bash '-c' ':'",
+        "#!/usr/bin/env -S bash -cfoo",
+        "#!/usr/bin/env -S bash -ec",
+        "#!/usr/bin/env -S bash -sfoo",
+        "#!/usr/bin/env -S bash -- -cfoo",
+        "#!/usr/bin/env -S bash -",
+        "#!/bin/bash \"\\\\-c\"",
     ] {
         let temp = fixture();
         let hook = hook_path(temp.path(), "pre-commit");
@@ -469,10 +477,43 @@ fn install_validates_shebang_and_preserves_unsupported_hooks() {
         assert!(!result.status.success(), "accepted {shebang}: {result:?}");
         assert_eq!(fs::read_to_string(&hook).unwrap(), original);
     }
+    for shebang in [
+        "#!/usr/bin/env -S bash",
+        "#!/usr/bin/env -S bash -eu",
+        "#!/usr/bin/env bash",
+        "#!/bin/bash -e",
+        "#!/bin/sh",
+        "#!/usr/bin/env -S sh -eu",
+    ] {
+        let temp = fixture();
+        let hook = hook_path(temp.path(), "pre-commit");
+        let original = format!("{shebang}\n# user content\n");
+        fs::write(&hook, &original).unwrap();
+        let result = manage(temp.path(), "--install");
+        assert!(result.status.success(), "rejected {shebang}: {result:?}");
+        assert!(
+            fs::read_to_string(&hook)
+                .unwrap()
+                .starts_with(&format!("{shebang}\n# >>>"))
+        );
+    }
+}
+
+#[test]
+fn refresh_rejects_a_recorded_hook_with_an_inline_shebang() {
     let temp = fixture();
     let hook = hook_path(temp.path(), "pre-commit");
-    fs::write(&hook, "#!/usr/bin/env -S bash\n# user content\n").unwrap();
     assert!(manage(temp.path(), "--install").status.success());
+    let installed = fs::read_to_string(&hook).unwrap();
+    let changed = installed.replacen("#!/bin/sh", "#!/bin/bash -c", 1);
+    fs::write(&hook, &changed).unwrap();
+    let result = manage(temp.path(), "--install");
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("inline shell command"),
+        "{result:?}"
+    );
+    assert_eq!(fs::read_to_string(&hook).unwrap(), changed);
 }
 
 #[test]
@@ -1067,6 +1108,13 @@ fn installed_guard_rejects_a_real_push_of_unbound_commits() {
         push.status.success(),
         "{}",
         String::from_utf8_lossy(&push.stderr)
+    );
+    let renamed = hooked_git_env(&root, &environment, &["push", "-q", "local", "feature:main"]);
+    assert!(!renamed.status.success());
+    assert!(
+        String::from_utf8_lossy(&renamed.stderr).contains("refs/heads/main"),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
     );
 }
 
