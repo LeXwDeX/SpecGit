@@ -1592,6 +1592,11 @@ fn merged_open_issue_action_bounds_long_issue_preview_without_losing_typed_ids()
         event.id == second_id && !event.superseded && event.acknowledged_at.is_none()
     }));
 
+    let mut no_refresh = inbox_for("lifecycle").to_vec();
+    no_refresh.push("--no-refresh");
+    let pending = f.run(&no_refresh);
+    assert_eq!(pending["evidence"]["pending_event_ids"], json!([second_id]));
+
     let mut args = inbox_for("lifecycle").to_vec();
     args.extend(["--ack", second_id.as_str()]);
     let acknowledged = f.run(&args);
