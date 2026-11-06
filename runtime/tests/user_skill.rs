@@ -160,9 +160,18 @@ fn backup_publication_collision_is_schema_valid_and_preserves_the_winner() {
     assert_eq!(report["exit"], 0, "{report}");
     let backup = PathBuf::from(report["evidence"]["backup"].as_str().unwrap());
     assert_eq!(fs::read(&backup).unwrap(), edited);
-    let name = backup.file_name().unwrap().to_str().unwrap();
-    let winner = backup.with_file_name(name.rsplit_once('-').map(|(base, _)| base).unwrap());
-    assert_eq!(fs::read(winner).unwrap(), b"winner");
+    let parent = backup.parent().unwrap();
+    let winner = fs::read_dir(parent)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| fs::read(entry.path()).ok().as_deref() == Some(b"winner".as_slice()))
+        .unwrap_or_else(|| {
+            panic!(
+                "fixture collision winner was not found in {}",
+                parent.display()
+            )
+        });
+    assert_eq!(fs::read(winner.path()).unwrap(), b"winner");
 }
 #[test]
 fn foreign_content_conflicts_but_refresh_only_skips_it() {
