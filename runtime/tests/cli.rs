@@ -465,6 +465,42 @@ fn successful_help_never_substitutes_for_account_api_evidence() {
 /// `--schema` must publish every option dependency, including one on a group,
 /// so a machine client never builds an input that clap is certain to reject.
 #[test]
+fn schema_lists_init_and_setup_write_boundaries() {
+    for (command, expected) in [
+        (
+            "init",
+            &[
+                "guard", "guidance", "routing", "receipt", "inspect", "dry_run",
+            ][..],
+        ),
+        (
+            "setup",
+            &[
+                "guard",
+                "guidance",
+                "routing",
+                "receipt",
+                "uninstall",
+                "rollback",
+                "dry_run",
+            ][..],
+        ),
+    ] {
+        let out = executable::command()
+            .args([command, "--schema", "--json"])
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let writes = report["evidence"]["command"]["effects"]["local_writes"]
+            .as_str()
+            .unwrap();
+        for item in expected {
+            assert!(writes.contains(item), "{command}: missing {item}: {writes}");
+        }
+    }
+}
+
+#[test]
 fn schema_publishes_option_requirements_and_the_groups_they_name() {
     let out = executable::command()
         .args(["--schema", "--json"])
