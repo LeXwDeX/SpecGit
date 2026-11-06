@@ -68,6 +68,69 @@ fn native_issue(provider: &str, number: u64, closed: bool) -> serde_json::Value 
 }
 
 #[test]
+fn github_body_limit_is_checked_before_issue_creation_and_checkpoint() {
+    let f = Fixture::new("github");
+    let body = f.root.join("body.md");
+    fs::write(&body, "x".repeat(65_537)).unwrap();
+    let rejected = f.run(&[
+        "issue",
+        "fix: bounded body",
+        "--body-file",
+        "body.md",
+        "--create-labels",
+    ]);
+    assert_ne!(rejected["exit"], 0, "{rejected}");
+    assert_eq!(f.writes(), 0, "{rejected}");
+    assert!(!checkpoint_path(&f).exists(), "{rejected}");
+
+    fs::write(&body, "x".repeat(65_536)).unwrap();
+    let created = f.run(&[
+        "issue",
+        "fix: bounded body",
+        "--body-file",
+        "body.md",
+        "--create-labels",
+    ]);
+    assert_eq!(created["exit"], 0, "{created}");
+    assert_eq!(
+        f.state()["issues"][0]["body"].as_str().unwrap().len(),
+        65_536
+    );
+    assert_eq!(created["evidence"]["selection"]["issues"], json!([1]));
+}
+
+#[test]
+fn checkpoint_repository_case_follows_provider_path_rules() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let created = f.run(&["issue", "fix: case test", "--create-labels"]);
+        assert_eq!(created["exit"], 0, "{created}");
+        let checkpoint = fs::read(checkpoint_path(&f)).unwrap();
+        git(
+            &f.root,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://forge.example/Fixture/Repo.git",
+            ],
+        );
+        let status = f.run(&["status"]);
+        if provider == "github" {
+            assert_eq!(status["exit"], 0, "{status}");
+            assert_eq!(
+                status["evidence"]["selection"]["issues"],
+                json!([1]),
+                "{status}"
+            );
+        } else {
+            assert_ne!(status["exit"], 0, "{status}");
+        }
+        assert_eq!(fs::read(checkpoint_path(&f)).unwrap(), checkpoint);
+    }
+}
+
+#[test]
 fn milestone_context_is_read_only_and_distinguishes_absence_from_unknown() {
     // Protocol sources: docs.github.com/rest/issues/issues#get-an-issue and
     // docs.gitlab.com/api/issues/#single-issue (embedded milestone has no required web_url).
