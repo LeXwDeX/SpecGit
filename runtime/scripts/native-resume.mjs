@@ -87,13 +87,16 @@ export async function main(args) {
         const manifest = readCompiledTests(compiled.value.manifest, source);
         const env = { ...process.env };
         delete env.SPECGIT_TEST_BINARY;
-        // Windows process startup and teardown are slower; keep libtest from
-        // running every fixture-heavy binary at full CPU parallelism.
-        if (process.platform === 'win32') env.RUST_TEST_THREADS = '2';
         const failures = [];
         for (const [index, artifact] of manifest.artifacts.entries()) {
+          // Windows process startup and teardown are slower; keep libtest from
+          // running every fixture-heavy binary at full CPU parallelism. The hook
+          // suite starts one native CLI per case, so give it a single worker.
+          const suiteEnv = process.platform === 'win32'
+            ? { ...env, RUST_TEST_THREADS: artifact.target.src_path.includes('hooks.rs') ? '1' : '2' }
+            : env;
           const log = path.join(directory, `${index}.log`);
-          try { command(artifact.executable, ['--color', 'never'], { env, log }); }
+          try { command(artifact.executable, ['--color', 'never'], { env: suiteEnv, log }); }
           catch (error) {
             const output = readFileSync(log, 'utf8');
             failures.push(`${artifact.target.src_path}: ${error.message}\n${output.slice(-64 * 1024)}`);

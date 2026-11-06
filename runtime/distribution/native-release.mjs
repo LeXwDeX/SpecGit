@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,11 +70,19 @@ function verifiedBinary(entry, directory, version, source) {
   need(digest(bytes) === entry.sha256, 'Native executable digest differs.');
   return { ...entry, file };
 }
+function platformArtifactDirectory(input, target) {
+  const prefix = `release-platform-${target}`;
+  const matches = readdirSync(input, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && (entry.name === prefix || entry.name.startsWith(`${prefix}-`)))
+    .map(entry => path.join(input, entry.name));
+  need(matches.length === 1, `Expected one release artifact directory for ${target}.`);
+  return matches[0];
+}
 export function assemble(input, output, version, source) {
   identity(version, source);
   need(!existsSync(output), 'Choose a fresh native bundle directory.');
   const binaries = Object.keys(targets).map(target => {
-    const directory = path.join(input, `release-platform-${target}`);
+    const directory = platformArtifactDirectory(input, target);
     const entry = JSON.parse(readFileSync(path.join(directory, 'smoke.json'), 'utf8'));
     need(entry.target === target, 'Platform artifact target mismatch.');
     return verifiedBinary(entry, directory, version, source);

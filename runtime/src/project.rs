@@ -215,7 +215,7 @@ pub async fn resolve(
     api_host: Option<&str>,
 ) -> Result<Context, Diagnostic> {
     let state = git_state(process, cwd).await?;
-    resolve_git_state(process, state, remote, provider, api_host).await
+    resolve_git_state(process, state, remote, provider, api_host, true).await
 }
 pub(crate) async fn resolve_git_state(
     process: &Process,
@@ -223,6 +223,7 @@ pub(crate) async fn resolve_git_state(
     remote: Option<&str>,
     provider: Option<Provider>,
     api_host: Option<&str>,
+    include_status: bool,
 ) -> Result<Context, Diagnostic> {
     let GitState { root, fields } = state;
     let remotes = trim_line(git(process, &root, &["remote"]).await?)?;
@@ -256,13 +257,16 @@ pub(crate) async fn resolve_git_state(
             "Inspect the repository object database.",
         ));
     }
-    let dirty = !git(
-        process,
-        &root,
-        &["--no-optional-locks", "status", "--porcelain=v1", "-z"],
-    )
-    .await?
-    .is_empty();
+    // Hook callbacks do not read `dirty`; skipping the status probe keeps the
+    // bounded host callback below its deadline on slow platforms.
+    let dirty = include_status
+        && !git(
+            process,
+            &root,
+            &["--no-optional-locks", "status", "--porcelain=v1", "-z"],
+        )
+        .await?
+        .is_empty();
     Ok(Context {
         root,
         git_dir,

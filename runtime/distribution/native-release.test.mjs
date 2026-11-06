@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -49,6 +49,28 @@ test('assembles three native executables and rejects changed bytes or duplicate 
   const file = path.join(f.output, release.binaries[0].filename);
   const changed = readFileSync(file); changed[100] ^= 1; writeFileSync(file, changed);
   assert.throws(() => verifyNativeBundle(f.output, version, source), /digest differs/);
+});
+test('assembles artifacts from per-attempt directories', t => {
+  const f = fixture(t);
+  for (const target of Object.keys(targets)) {
+    renameSync(path.join(f.input, `release-platform-${target}`), path.join(f.input, `release-platform-${target}-2`));
+  }
+  const release = assemble(f.input, f.output, version, source);
+  assert.equal(release.binaries.length, 3);
+});
+test('rejects duplicate artifact directories for one target', t => {
+  const f = fixture(t);
+  const target = Object.keys(targets)[0];
+  const fixed = path.join(f.input, `release-platform-${target}`);
+  const attempt = path.join(f.input, `release-platform-${target}-2`);
+  renameSync(fixed, attempt);
+  cpSync(attempt, fixed, { recursive: true });
+  assert.throws(() => assemble(f.input, f.output, version, source), /Expected one release artifact directory/);
+  const f2 = fixture(t);
+  const first = path.join(f2.input, `release-platform-${target}-1`);
+  renameSync(path.join(f2.input, `release-platform-${target}`), first);
+  cpSync(first, path.join(f2.input, `release-platform-${target}-2`), { recursive: true });
+  assert.throws(() => assemble(f2.input, f2.output, version, source), /Expected one release artifact directory/);
 });
 test('missing smoke evidence and mismatched native hosts cannot qualify a build', t => {
   const f = fixture(t);
