@@ -1109,7 +1109,11 @@ fn installed_guard_rejects_a_real_push_of_unbound_commits() {
         "{}",
         String::from_utf8_lossy(&push.stderr)
     );
-    let renamed = hooked_git_env(&root, &environment, &["push", "-q", "local", "feature:main"]);
+    let renamed = hooked_git_env(
+        &root,
+        &environment,
+        &["push", "-q", "local", "feature:main"],
+    );
     assert!(!renamed.status.success());
     assert!(
         String::from_utf8_lossy(&renamed.stderr).contains("refs/heads/main"),
