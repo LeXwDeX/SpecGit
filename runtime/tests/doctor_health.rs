@@ -1202,6 +1202,21 @@ fn doctor_coordinates_setup_owned_guard_refresh_and_preserves_independent_guard_
         let fixed = f.run(&["doctor", "--offline", "--fix"]);
         assert_eq!(fixed["exit"], 0, "{fixed}");
         assert_eq!(fixed["evidence"]["health"]["status"], "healthy", "{fixed}");
+        if independent {
+            let guard = fixed["evidence"]["repair"]["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|result| result["id"] == "guard")
+                .expect("guard repair");
+            assert!(
+                !guard["transaction"]["transaction"]
+                    .as_str()
+                    .unwrap()
+                    .is_empty(),
+                "{fixed}"
+            );
+        }
         for stage in ["pre-commit", "pre-push"] {
             let script = fs::read_to_string(hooks.join(stage)).unwrap();
             assert!(script.contains("# foreign hook kept"));
