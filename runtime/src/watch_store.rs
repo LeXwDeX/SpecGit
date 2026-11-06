@@ -278,25 +278,6 @@ impl Store {
         })
         .map(|_| ())
     }
-    pub fn expire_lease(&self, at: u64) -> Result<(), Diagnostic> {
-        let _lease_lock =
-            match AssetStore::lock(&self.root.join("lease"), &[], Duration::from_millis(100)) {
-                Ok(lock) => lock,
-                Err(d) if d.code == Code::LockBusy => return Ok(()),
-                Err(d) => return Err(d),
-            };
-        self.update(|state| {
-            if state
-                .lease
-                .as_ref()
-                .is_some_and(|lease| lease.deadline <= at)
-            {
-                state.lease = None;
-            }
-            Ok(())
-        })?;
-        Ok(())
-    }
     fn update(
         &self,
         mutate: impl FnOnce(&mut State) -> Result<(), Diagnostic>,
