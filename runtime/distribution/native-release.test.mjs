@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -49,6 +49,14 @@ test('assembles three native executables and rejects changed bytes or duplicate 
   const file = path.join(f.output, release.binaries[0].filename);
   const changed = readFileSync(file); changed[100] ^= 1; writeFileSync(file, changed);
   assert.throws(() => verifyNativeBundle(f.output, version, source), /digest differs/);
+});
+test('assembles artifacts from per-attempt directories', t => {
+  const f = fixture(t);
+  for (const target of Object.keys(targets)) {
+    renameSync(path.join(f.input, `release-platform-${target}`), path.join(f.input, `release-platform-${target}-2`));
+  }
+  const release = assemble(f.input, f.output, version, source);
+  assert.equal(release.binaries.length, 3);
 });
 test('missing smoke evidence and mismatched native hosts cannot qualify a build', t => {
   const f = fixture(t);
