@@ -2750,6 +2750,7 @@ fn scheduling_windows_remain_pending_and_unknown_statuses_remain_retryable() {
 fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
     let f = fixture("gitlab");
     f.edit(|s| s["read_routes"]["projects/7/pipelines/71"]["status"] = json!("future_status"));
+    let started = std::time::Instant::now();
     let result = f.run(&[
         "watch",
         "--request",
@@ -2763,9 +2764,24 @@ fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
         "--poll-seconds",
         "1",
     ]);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "unknown checks did not stop before the deadline: {result}"
+    );
     assert_eq!(result["status"], "unknown", "{result}");
+    assert_eq!(result["exit"], 3, "{result}");
+    assert_eq!(
+        result["next_actions"][0]["kind"], "refresh_native_evidence",
+        "{result}"
+    );
     let action = result["next_actions"][0]["message"].as_str().unwrap();
     assert!(action.contains("inspect native checks"), "{result}");
+    let identity: Identity =
+        serde_json::from_value(result["evidence"]["subscription"].clone()).unwrap();
+    assert!(
+        watch_store::read(&identity).unwrap().unwrap().lease.is_none(),
+        "unknown terminal state did not release the lease"
+    );
 }
 
 #[test]
@@ -2774,17 +2790,57 @@ fn no_refresh_is_read_only_and_refresh_cleans_expired_lease() {
     let observed = f.run(&watch("checks"));
     let identity: Identity =
         serde_json::from_value(observed["evidence"]["subscription"].clone()).unwrap();
+    let state_root = identity
+        .git_dir
+        .join("specgit-v2/subscriptions")
+        .join(identity.key());
+    let state_path = state_root.join("state.json");
+    let entries = |root: &std::path::Path| {
+        let mut names: Vec<_> = std::fs::read_dir(root)
+            .map(|read| {
+                read.map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
     let store = Store::new(identity.clone()).unwrap();
     let (lock, _) = store.lease(watch_store::now().saturating_sub(1)).unwrap();
+    let before = std::fs::read(&state_path).unwrap();
+    let entries_before = entries(&state_root);
     let mut args = inbox().to_vec();
     args.push("--no-refresh");
     assert_eq!(f.run(&args)["status"], "unverified");
+    assert_eq!(std::fs::read(&state_path).unwrap(), before);
+    assert_eq!(entries(&state_root), entries_before);
     assert!(
         watch_store::read(&identity)
             .unwrap()
             .unwrap()
             .lease
             .is_some()
+    );
+    let fresh = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "fresh-session",
+        "--goal",
+        "checks",
+        "--no-refresh",
+    ]);
+    assert_eq!(fresh["status"], "unverified");
+    let fresh_identity: Identity =
+        serde_json::from_value(fresh["evidence"]["subscription"].clone()).unwrap();
+    assert!(
+        !identity
+            .git_dir
+            .join("specgit-v2/subscriptions")
+            .join(fresh_identity.key())
+            .exists(),
+        "no-refresh created subscription state"
     );
     drop(lock);
     assert_eq!(f.run(&inbox())["status"], "checks_passed");
