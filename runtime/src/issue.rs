@@ -121,7 +121,13 @@ fn validate(
     body: &str,
     labels: &[String],
 ) -> Result<(), Diagnostic> {
-    let errors = d.check(true, title, body, &spec::canonical_labels(provider, labels));
+    let errors = d.check_for(
+        provider,
+        true,
+        title,
+        body,
+        &spec::canonical_labels(provider, labels),
+    );
     if errors.is_empty() {
         Ok(())
     } else {
@@ -146,4 +152,23 @@ fn uncertain(evidence: serde_json::Value) -> Report {
     );
     report.evidence = evidence;
     report
+}
+
+#[cfg(test)]
+mod body_limit_tests {
+    use crate::{config::Declaration, identity::Provider, spec::Specification};
+
+    #[test]
+    fn github_and_gitlab_body_limits_are_checked_before_creation() {
+        let d = Declaration::default();
+        let spec = Specification::new(&d);
+        let at_limit = "界".repeat(65_536);
+        let over_limit = format!("{at_limit}x");
+        let validate =
+            |provider, body: &str| super::validate(spec, provider, "fix: test", body, &[]);
+        assert!(validate(Provider::Github, &at_limit).is_ok());
+        assert!(validate(Provider::Github, &over_limit).is_err());
+        assert!(validate(Provider::Gitlab, &over_limit).is_ok());
+        assert!(validate(Provider::Gitlab, &"x".repeat(1_048_577)).is_err());
+    }
 }
