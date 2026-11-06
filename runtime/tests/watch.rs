@@ -2757,3 +2757,54 @@ fn scheduling_windows_remain_pending_and_unknown_statuses_remain_retryable() {
         }
     }
 }
+
+#[test]
+fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
+    let f = fixture("gitlab");
+    f.edit(|s| s["read_routes"]["projects/7/pipelines/71"]["status"] = json!("future_status"));
+    let result = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "unknown-bounded",
+        "--goal",
+        "checks",
+        "--timeout-seconds",
+        "9",
+        "--poll-seconds",
+        "1",
+    ]);
+    assert_eq!(result["status"], "unknown", "{result}");
+    let action = result["next_actions"][0]["message"].as_str().unwrap();
+    assert!(action.contains("inspect native checks"), "{result}");
+}
+
+#[test]
+fn no_refresh_cleans_expired_lease_without_stealing_live_lock() {
+    let f = fixture("github");
+    let observed = f.run(&watch("checks"));
+    let identity: Identity =
+        serde_json::from_value(observed["evidence"]["subscription"].clone()).unwrap();
+    let store = Store::new(identity.clone()).unwrap();
+    let (lock, _) = store.lease(watch_store::now().saturating_sub(1)).unwrap();
+    let mut args = inbox().to_vec();
+    args.push("--no-refresh");
+    assert_eq!(f.run(&args)["status"], "unverified");
+    assert!(
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .lease
+            .is_some()
+    );
+    drop(lock);
+    assert_eq!(f.run(&args)["status"], "unverified");
+    assert!(
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .lease
+            .is_none()
+    );
+}
