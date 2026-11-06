@@ -51,12 +51,9 @@ pub(super) async fn discard_uncertain(
             &intent.title,
         )
         .await?;
-        let recent = crate::native_delivery::recent_issues(
-            &w.reader,
-            &w.context.repository,
-            w.facts.id,
-        )
-        .await?;
+        let recent =
+            crate::native_delivery::recent_issues(&w.reader, &w.context.repository, w.facts.id)
+                .await?;
         let normalize = |title: &str| {
             title
                 .split_whitespace()
