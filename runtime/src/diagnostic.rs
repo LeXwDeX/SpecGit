@@ -39,6 +39,8 @@ pub struct Diagnostic {
     pub operation: String,
     pub message: String,
     pub remedy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
 }
 impl Diagnostic {
     pub fn new(code: Code, operation: &str, message: &str, remedy: &str) -> Self {
@@ -47,6 +49,7 @@ impl Diagnostic {
             operation: operation.into(),
             message: message.into(),
             remedy: remedy.into(),
+            http_status: None,
         }
     }
     pub fn input(message: &str) -> Self {
@@ -135,7 +138,7 @@ pub fn classify_failure(operation: &str, stderr: &[u8]) -> Diagnostic {
             "The authenticated session cannot read this resource.",
             "Check the native repository read permissions for this operation.",
         )
-    } else if text.contains("http 404") || text.contains("not found") {
+    } else if text.contains("http 404") || text.contains("http 409") || text.contains("not found") {
         (
             Code::AmbiguousNotFound,
             "The resource is missing or inaccessible to this session.",
@@ -176,5 +179,68 @@ pub fn classify_failure(operation: &str, stderr: &[u8]) -> Diagnostic {
             "Run the named operation through the authenticated native CLI to diagnose locally.",
         )
     };
-    Diagnostic::new(code, operation, message, remedy)
+    let mut diagnostic = Diagnostic::new(code, operation, message, remedy);
+    // Only accept one unambiguous native CLI HTTP marker, not arbitrary digits.
+    let statuses: Vec<_> = text
+        .match_indices("http ")
+        .filter_map(|(index, _)| {
+            let bytes = text.as_bytes();
+            let digits = bytes.get(index + 5..index + 8)?;
+            if !digits.iter().all(u8::is_ascii_digit)
+                || bytes.get(index + 8).is_some_and(u8::is_ascii_digit)
+            {
+                return None;
+            }
+            std::str::from_utf8(digits).ok()?.parse::<u16>().ok()
+        })
+        .collect();
+    if let [status] = statuses.as_slice()
+        && (100..=599).contains(status)
+        && text.lines().next().is_some_and(|line| {
+            line.trim() == format!("http {status}")
+                || ((line.starts_with("gh: ") || line.starts_with("glab: "))
+                    && line.trim_end().ends_with(&format!("(http {status})")))
+        })
+    {
+        diagnostic.http_status = Some(*status);
+    }
+    diagnostic
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_status_is_unavailable_for_ambiguous_failures() {
+        assert_eq!(
+            classify_failure("delivery_write", b"HTTP 422").http_status,
+            Some(422)
+        );
+        assert_eq!(
+            classify_failure("delivery_write", b"HTTP 500").http_status,
+            Some(500)
+        );
+        assert_eq!(
+            classify_failure("delivery_write", b"connection reset HTTP 422").http_status,
+            None
+        );
+        assert_eq!(
+            classify_failure("delivery_write", b"HTTP 422 HTTP 500").http_status,
+            None
+        );
+        assert_eq!(
+            classify_failure("delivery_write", b"HTTP 4220").http_status,
+            None
+        );
+        assert_eq!(
+            classify_failure("delivery_write", b"unexpected EOF: HTTP 422").http_status,
+            None
+        );
+        assert_eq!(
+            classify_failure("delivery_write", b"gh: Validation Failed (HTTP 422)\nbody")
+                .http_status,
+            Some(422)
+        );
+    }
 }

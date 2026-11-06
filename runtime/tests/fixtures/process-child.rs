@@ -1067,6 +1067,11 @@ fn request_api(
     } else if method == "GET" && list {
         state["requests"].clone()
     } else if method == "POST" && list {
+        if let Some(status) = state["request_create_status"].as_u64() {
+            snapshot::write(path, state);
+            eprintln!("HTTP {status}");
+            std::process::exit(1);
+        }
         let number = state["requests"].as_array().unwrap().len() as u64 + 41;
         let source = input[if gh { "head" } else { "source_branch" }]
             .as_str()
@@ -1231,6 +1236,11 @@ fn delivery_api(
         state["labels"].as_array_mut().unwrap().push(input.clone());
         input.clone()
     } else if method == "POST" && route.ends_with("/issues") {
+        if let Some(status) = state["issue_create_status"].as_u64() {
+            snapshot::write(path, state);
+            eprintln!("HTTP {status}");
+            std::process::exit(1);
+        }
         let number = state["issues"].as_array().unwrap().len() as u64 + 1;
         let labels = if gh {
             Value::Array(

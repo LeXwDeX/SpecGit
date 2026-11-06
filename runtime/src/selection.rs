@@ -222,7 +222,11 @@ pub fn branch_mismatch_diagnostic(checkpoint: &BranchMismatch) -> Diagnostic {
                 .as_deref()
                 .unwrap_or("<detached HEAD>")
         ),
-        "Return to the recorded branch or use a separate worktree for independent delivery; the checkpoint remains unchanged.",
+        if checkpoint.delivered() {
+            "The checkpoint is delivered. Update the target branch and select the next Issues with `issue <spec> --branch <name>`; the checkpoint remains unchanged."
+        } else {
+            "Return to the recorded branch or use a separate worktree for independent delivery; the checkpoint remains unchanged."
+        },
     )
 }
 pub struct Locked {

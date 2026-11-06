@@ -703,7 +703,7 @@ fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
         initialize(&f.root);
         let inspect = || {
             let out = f
-                .command(&["remove"])
+                .command(&["remove", "--dry-run"])
                 .env_remove("GIT_OPTIONAL_LOCKS")
                 .output()
                 .unwrap();
@@ -722,6 +722,11 @@ fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
         let rejected = inspect();
         assert_ne!(rejected["exit"], 0, "{provider}: {rejected}");
         assert_eq!(inventory(&f.root), before);
+        f.edit(|s| s["issues"][0]["state"] = json!("closed"));
+        let unmerged = inspect();
+        assert_ne!(unmerged["exit"], 0, "{provider}: {unmerged}");
+        assert_eq!(inventory(&f.root), before);
+        f.edit(|s| s["issues"][0]["state"] = json!("open"));
         f.edit(|s| {
             s["requests"][0]["state"] = json!(if provider == "github" {
                 "closed"
@@ -732,6 +737,29 @@ fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
         });
         assert_ne!(f.run(&["remove"])["exit"], 0);
         f.edit(|s| s["issues"][0]["state"] = json!("closed"));
+        let status = f.run(&["pr", "--status"]);
+        assert_eq!(status["exit"], 0, "{provider}: {status}");
+        let checkpoint = PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"]))
+            .join("specgit-v2/selection.json");
+        let saved: Value = serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+        assert_eq!(saved["delivered_request"], 41, "{provider}: {saved}");
+        git(&f.root, &["switch", "-c", "next-work"]);
+        let foreign = inspect();
+        assert_ne!(foreign["exit"], 0, "{provider}: {foreign}");
+        assert!(foreign.to_string().contains("feature"), "{foreign}");
+        assert!(
+            foreign.to_string().contains("issue <spec> --branch <name>"),
+            "{foreign}"
+        );
+        git(&f.root, &["switch", "feature"]);
+        let mut pending = saved.clone();
+        pending["intents"].as_array_mut().unwrap().push(json!({
+            "title": "fix: pending", "body": "body", "labels": [],
+            "issue": null, "write_started": true
+        }));
+        fs::write(&checkpoint, serde_json::to_vec(&pending).unwrap()).unwrap();
+        assert_ne!(inspect()["exit"], 0, "{provider}: pending write");
+        fs::write(&checkpoint, serde_json::to_vec(&saved).unwrap()).unwrap();
         fs::File::options()
             .write(true)
             .open(&tracked)
