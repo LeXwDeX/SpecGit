@@ -61,8 +61,8 @@ not Release attachments. A branch dispatch cannot publish.
 
 For failed publication, reuse the retained signed bundle from the original attempt.
 Re-signing creates different signature bytes and cannot overwrite an existing
-immutable signature asset. Before any upload, retrying the job with the original
-successful build artifacts is safe.
+immutable signature asset. Do not rerun the assembly job: it signs again. Retry
+only the publisher with the original retained signed bundle, even after a partial upload.
 For a failed run, manual recovery requires all three native build jobs and every
 assembly step before publication, including signing, to have succeeded. A build
 or signing failure is not recoverable publication evidence. The retained signature
