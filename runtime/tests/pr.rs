@@ -337,6 +337,66 @@ fn no_diff_or_unpushed_head_leaves_request_pending_without_remote_writes() {
     assert_eq!(f.writes(), writes);
 }
 #[test]
+fn multiple_request_labels_use_one_pool_read_and_one_refresh() {
+    for provider in ["github", "gitlab"] {
+        for existing in [false, true] {
+            let f = fixture(provider, 1);
+            fs::write(f.root.join(".specgit.yaml"), format!("version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: off\ntags:\n  - name: alpha\n    color: 112233\n  - name: beta\n    color: 445566\n")).unwrap();
+            f.edit(|s| {
+                s["calls"] = json!([]);
+                if existing {
+                    s["labels"] = json!([{"name":"alpha"},{"name":"beta"}]);
+                }
+            });
+            let result = f.run(&["pr", "--tags", "alpha,beta", "--create-labels"]);
+            assert_eq!(result["exit"], 0, "{provider}: {result}");
+            let calls = f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| {
+                    c["method"] == "GET"
+                        && c["endpoint"]
+                            .as_str()
+                            .unwrap()
+                            .split('?')
+                            .next()
+                            .unwrap()
+                            .ends_with("/labels")
+                })
+                .count();
+            assert_eq!(calls, if existing { 2 } else { 3 }, "{provider}: {result}");
+        }
+    }
+}
+
+#[test]
+fn missing_source_branch_is_pending_but_forbidden_is_not() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        let writes = f.writes();
+        f.edit(|s| s["branch_heads"]["feature"] = json!(null));
+        let missing = f.run(&["pr"]);
+        assert_eq!(
+            missing["status"], "pending_request",
+            "{provider}: {missing}"
+        );
+        assert_eq!(missing["evidence"]["reason"], "source_head_not_pushed");
+        let remedy = missing.to_string().to_lowercase();
+        assert!(
+            remedy.contains("push") && remedy.contains("access"),
+            "{missing}"
+        );
+        f.edit(|s| s["branch_forbidden"] = json!("feature"));
+        let denied = f.run(&["pr"]);
+        assert_eq!(
+            denied["diagnostics"][0]["code"], "permission_denied",
+            "{provider}: {denied}"
+        );
+        assert_eq!(f.writes(), writes);
+    }
+}
+#[test]
 fn newly_supplied_association_is_resolved_before_creation_or_body_update() {
     let f = fixture("github", 1);
     fs::write(f.root.join("body.md"), "Complete user body\n\nCloses #999").unwrap();

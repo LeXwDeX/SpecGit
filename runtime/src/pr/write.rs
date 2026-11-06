@@ -170,12 +170,10 @@ async fn add_labels(
         .collect();
     if !missing.is_empty() {
         let catalog = w.specification().catalog();
+        let pool = native_delivery::label_pool(&w.reader, repo).await?;
+        let mut created = Vec::new();
         for label in &missing {
-            if !spec::label_contains(
-                w.context.repository.provider,
-                &native_delivery::label_pool(&w.reader, repo).await?,
-                label,
-            ) {
+            if !spec::label_contains(w.context.repository.provider, &pool, label) {
                 if !o.create_labels {
                     return Err(Diagnostic::new(
                         Code::ConfirmationRequired,
@@ -191,11 +189,13 @@ async fn add_labels(
                         Diagnostic::input("A required existing label disappeared from its pool.")
                     })?)
                     .await?;
-                if !spec::label_contains(
-                    w.context.repository.provider,
-                    &native_delivery::label_pool(&w.reader, repo).await?,
-                    label,
-                ) {
+                created.push((label, label_effect));
+            }
+        }
+        if !created.is_empty() {
+            let pool = native_delivery::label_pool(&w.reader, repo).await?;
+            for (label, label_effect) in created {
+                if !spec::label_contains(w.context.repository.provider, &pool, label) {
                     return Err(changed());
                 }
                 effects.applied(label_effect);

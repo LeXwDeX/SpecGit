@@ -1059,6 +1059,10 @@ fn request_api(
     let label_write = method == "POST" && route.contains("/issues/") && route.ends_with("/labels");
     let value = if method == "GET" && route.contains("/branches/") {
         let name = route.rsplit('/').next().unwrap();
+        if state["branch_forbidden"] == name {
+            eprintln!("HTTP 403");
+            std::process::exit(1);
+        }
         let sha = &state["branch_heads"][name];
         if !sha.is_string() {
             eprintln!("HTTP 404");
@@ -1188,6 +1192,11 @@ fn delivery_api(
     let route = endpoint.split('?').next().unwrap();
     let issue_rows = || {
         let closed = endpoint.contains("is%3Aclosed") || endpoint.contains("state=closed");
+        if state["empty_issue_search"] == true
+            && (endpoint.starts_with("search/issues?") || endpoint.contains("search="))
+        {
+            return json!([]);
+        }
         match state["issues"].as_array() {
             Some(issues) => json!(
                 issues

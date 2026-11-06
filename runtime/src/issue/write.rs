@@ -68,6 +68,7 @@ pub(super) async fn apply(
     let writer =
         native_delivery::IssueWrite::new(write_process, &w.context.root, &w.context.repository)?;
     let catalog = w.specification().catalog();
+    let mut pool = None;
     for index in 0..selection.intents.len() {
         let intent = selection.intents[index].clone();
         if intent.issue.is_some() {
@@ -76,7 +77,21 @@ pub(super) async fn apply(
         if intent.write_started {
             return Ok(uncertain(serde_json::json!({"title":intent.title})));
         }
-        ensure_labels(options, w, &writer, &intent, &catalog, effects).await?;
+        if !intent.labels.is_empty() {
+            if pool.is_none() {
+                pool = Some(native_delivery::label_pool(&w.reader, &w.context.repository).await?);
+            }
+            ensure_labels(
+                options,
+                w,
+                &writer,
+                &intent.labels,
+                pool.as_mut().unwrap(),
+                &catalog,
+                effects,
+            )
+            .await?;
+        }
         create_issue(w, &writer, &mut lock, selection, index, &intent, effects).await?;
     }
     // Resume always validates remote facts, including preserved user edits.
@@ -96,7 +111,7 @@ pub(super) async fn apply(
     Ok(Report::success(
         "issue",
         "selected",
-        serde_json::json!({"selection":selection,"issues":issues,"request":"pending_request"}),
+        serde_json::json!({"selection":selection,"issues":issues,"request":"pending_request","duplicate_check":"Recent issue checks are bounded and cannot eliminate duplicate races."}),
     ))
 }
 
@@ -104,13 +119,14 @@ async fn ensure_labels(
     options: &Options,
     w: &Workspace,
     writer: &native_delivery::IssueWrite,
-    intent: &IssueIntent,
+    labels: &[String],
+    pool: &mut Vec<String>,
     catalog: &BTreeMap<String, config::Tag>,
     effects: &mut Effects,
 ) -> Result<(), Diagnostic> {
-    for label in &intent.labels {
-        let pool = native_delivery::label_pool(&w.reader, &w.context.repository).await?;
-        if !spec::label_contains(w.context.repository.provider, &pool, label) {
+    let mut created = Vec::new();
+    for label in labels {
+        if !spec::label_contains(w.context.repository.provider, pool, label) {
             if !options.create_labels {
                 return Err(Diagnostic::new(
                     Code::ConfirmationRequired,
@@ -131,11 +147,13 @@ async fn ensure_labels(
             );
             w.unchanged_issue().await?;
             writer.create_label(tag).await?;
-            if !spec::label_contains(
-                w.context.repository.provider,
-                &native_delivery::label_pool(&w.reader, &w.context.repository).await?,
-                label,
-            ) {
+            created.push((label, label_effect));
+        }
+    }
+    if !created.is_empty() {
+        *pool = native_delivery::label_pool(&w.reader, &w.context.repository).await?;
+        for (label, label_effect) in created {
+            if !spec::label_contains(w.context.repository.provider, pool, label) {
                 return Err(Diagnostic::new(
                     Code::MalformedResponse,
                     "label",
