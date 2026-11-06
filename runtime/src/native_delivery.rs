@@ -63,6 +63,17 @@ pub async fn candidate_search(
         Provider::Gitlab => gitlab::candidates(reader, repo, project_id, query).await,
     }
 }
+/// A bounded recent window narrows, but cannot eliminate, duplicate races.
+pub async fn recent_issues(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+) -> Result<Vec<Issue>, Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::recent_issues(reader, repo, project_id).await,
+        Provider::Gitlab => gitlab::recent_issues(reader, repo, project_id).await,
+    }
+}
 pub async fn label_pool(reader: &ForgeRead, repo: &Repository) -> Result<Vec<String>, Diagnostic> {
     match repo.provider {
         Provider::Github => github::label_pool(reader, repo).await,

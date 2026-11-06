@@ -118,7 +118,7 @@ pub(super) async fn subscribe(
     process: Process,
     cwd: &Path,
     stop_on_attention: bool,
-) -> Result<(ObservedEvents, Option<Diagnostic>), Diagnostic> {
+) -> Result<(ObservedEvents, Option<Diagnostic>, Option<Diagnostic>), Diagnostic> {
     let (initial, mut declaration, mut digest) = local_snapshot(&process, cwd).await?;
     let configured = declaration.observation.clone();
     let timing = timing(&o, &configured)?;
@@ -252,8 +252,26 @@ pub(super) async fn subscribe(
         };
         tokio::select! { _ = tokio::time::sleep(delay) => {}, _ = process.cancellation.cancelled() => {} }
     };
-    store.release(&lease)?;
-    Ok(result)
+    Ok(finish_release(&store, &lease, result))
+}
+
+fn finish_release(
+    store: &Store,
+    lease: &watch_store::Lease,
+    result: (ObservedEvents, Option<Diagnostic>),
+) -> (ObservedEvents, Option<Diagnostic>, Option<Diagnostic>) {
+    let release = store.release(lease).err().map(|d| {
+        Diagnostic::new(
+            d.code,
+            "release_watch_lease",
+            &format!(
+                "The event was published, but local lease release failed: {}",
+                d.message
+            ),
+            &d.remedy,
+        )
+    });
+    (result.0, result.1, release)
 }
 
 fn append_bounded(text: &mut String, suffix: &str, limit: usize) {
@@ -495,4 +513,67 @@ fn backoff_delay(timing: Timing, failures: u32, owner: &str, deadline: Instant) 
             .min(300),
     )
     .min(deadline.saturating_duration_since(Instant::now()))
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+    use crate::identity::{Provider, Repository};
+    use crate::watch_store::Goal;
+
+    #[test]
+    fn release_conflict_keeps_published_event_in_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().canonicalize().unwrap();
+        let identity = Identity {
+            repository: Repository {
+                provider: Provider::Github,
+                host: "forge.example".into(),
+                path: "owner/repo".into(),
+            },
+            worktree: path.clone(),
+            git_dir: path,
+            session: "release-test".into(),
+            request: 1,
+            goal: Goal::Checks,
+        };
+        let store = Store::new(identity).unwrap();
+        let (_lock, mut lease) = store.lease(watch_store::now() + 60).unwrap();
+        let state = store
+            .publish(
+                Revision {
+                    head: "a".repeat(40),
+                    local_head: "a".repeat(40),
+                    target: "main".into(),
+                    declaration: "b".repeat(64),
+                    evidence_digest: "c".repeat(64),
+                },
+                EventState::ChecksPassed,
+                "passed".into(),
+                "inspect".into(),
+                watch_store::now(),
+            )
+            .unwrap();
+        lease.owner = "wrong-owner".into();
+        let (events, persistence, release) = finish_release(
+            &store,
+            &lease,
+            (
+                ObservedEvents {
+                    state,
+                    event_state: EventState::ChecksPassed,
+                },
+                None,
+            ),
+        );
+        let report = super::super::report(&events.state, &events.event_state, persistence, release);
+        assert_eq!(report.evidence["events"].as_array().unwrap().len(), 1);
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.operation == "release_watch_lease")
+        );
+        assert_eq!(report.exit, 0);
+    }
 }
