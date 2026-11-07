@@ -82,8 +82,9 @@ jobs:
     if: needs.changes.outputs.build == 'true'
     # 可信事件用 Azure；fork PR 用 GitHub 托管 runner，不能让 fork 的代码上自托管机器。
     runs-on: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runs_on) || fromJSON(matrix.hosted_runs_on) }}
-    # Allow the Windows VM to finish both source and installed regressions.
-    timeout-minutes: ${{ matrix.label == 'windows' && 60 || 45 }}
+    # Allow the Windows VM to finish both source and installed regressions,
+    # including a slower shared runner, within one job budget.
+    timeout-minutes: ${{ matrix.label == 'windows' && 120 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -166,13 +167,13 @@ jobs:
           node-version: '20.19.0'
           package-manager-cache: false
       - name: Rust formatting and lint
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase lint --target '${{ matrix.target }}'
       - name: Compile native test executables
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase compile-tests --target '${{ matrix.target }}'
       - name: Rust public interface and real subprocess regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase source-tests --target '${{ matrix.target }}'
       - uses: actions/setup-python@ec52d0af729a7c50ced4261d17a07916f43f5b8e
         if: runner.os != 'macOS'
@@ -182,16 +183,16 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 -c 'import sys, zipfile; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
       - name: Native distribution regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase distribution-tests --target '${{ matrix.target }}'
       - name: Compile remapped release executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase compile-release --target '${{ matrix.target }}'
       - name: Install native executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase install --target '${{ matrix.target }}'
       - name: Repeat public journeys through the installed native executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase profile --target '${{ matrix.target }}'
       - name: Retain installed artifacts and complete test accounting
         if: always()
