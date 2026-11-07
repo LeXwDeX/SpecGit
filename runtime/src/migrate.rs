@@ -61,7 +61,7 @@ async fn git_path(process: &Process, cwd: &Path, args: &[&str]) -> Result<PathBu
     let bytes = project::git(process, cwd, args).await?;
     let text = String::from_utf8(bytes)
         .map_err(|_| Diagnostic::input("Git returned an invalid filesystem path."))?;
-    let path = PathBuf::from(text.trim_end_matches(['\r', '\n']));
+    let path = PathBuf::from(project::git_path_line(&text));
     path_identity(&if path.is_absolute() {
         path
     } else {

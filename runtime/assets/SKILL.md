@@ -11,6 +11,7 @@ description: SpecGit 是装在 PATH 上的用户级 `specgit` CLI（Rust 原生 
 - checkpoint 是当前分支/worktree 所选 Issue 的本地记录，存放在 Git 私有目录。原生 Git guard 在 commit/push 时检查它和 `Issue: #N` trailer。
 - 先读项目 AGENTS.md、用户目标和本地 `.specgit.yaml`。规格和进度写在 Issue；验证和评审链接放在 PR/MR 讨论里。不在步骤 Issue 或其他任务系统里重复证据。
 - GitHub/GitLab 负责 CI、平台评审、分支保护、实际合并和常规 Issue 关闭。
+- SpecGit 生成的本地资产（`.specgit.yaml` 和生成的 `specgit-native` Skill）必须保持 untracked：不要 `git add -f`，不要提交其新增或修改；原生 Git guard 会拒绝这类暂存。历史遗留的已跟踪副本用授权的 `git rm --cached <path>` 清理，工作区文件保留。
 
 ## 命令速查
 
@@ -104,7 +105,7 @@ checkpoint 诊断要求 Agent 自行恢复，而不是新的人工授权例外�
 使用有界 `watch`，带精确请求 ID、稳定会话 ID 以及 checks 或生命周期目标。checks 目标不证明合并/关闭。失败后遵循 `diagnostics[].remedy`、`next_actions` 和 `effects`。退出码 0 表示操作或读取成功，即使 CI 失败；要检查 status/conclusion。
 没有 checks 时，显式的 checks 目标保持未观察；它不确立平台要求，也不禁止其他生命周期工作。不确定的写入通过原生回读和精确 ID 恢复，不盲目重试，超时后也不重新创建。
 
-评审、本地修复或跟踪可以在给出已验证结果和限制后结束，无需合并。平台交付要求原生回读确认合并到预期目标，并关闭所有应关闭的关联 Issue；非默认目标分支可能使 Issue 保持打开。
+评审、本地修复或跟踪可以在给出已验证结果和限制后结束，无需合并。平台交付要求原生回读确认合并到预期目标，原生关闭集合覆盖每个所选 Issue，且所有关联 Issue 已关闭；正文 `Closes` 引用或本地选择不能单独构成完成，GitHub 的非 `completed` `state_reason` 也不算完成。非默认目标分支可能使 Issue 保持打开。
 在所选偏好和任务范围内，通过 SpecGit 之外的 gh/glab 注册原生 auto-merge。`native_auto_merge=false` 只禁用 auto-merge 注册，不禁用已授权的普通合并。当前 head 的必需检查、评审和平台保护仍然适用。
 Agent 补充关闭默认关闭。在任务内选择时，回读合并、预期关联和实际关闭。发布需要独立的发布证据，且必须包含在任务内；仅合并不会把目标扩大到发布。
 

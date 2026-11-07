@@ -20,6 +20,23 @@ impl<'a> Specification<'a> {
     pub fn check(self, issue: bool, title: &str, body: &str, labels: &[String]) -> Vec<Violation> {
         check(self.declaration, issue, title, body, labels)
     }
+    pub fn check_for(
+        self,
+        provider: Provider,
+        issue: bool,
+        title: &str,
+        body: &str,
+        labels: &[String],
+    ) -> Vec<Violation> {
+        let mut violations = self.check(issue, title, body, labels);
+        if provider == Provider::Github && body.chars().count() > 65_536 {
+            violations.push(violation(
+                "body_too_large",
+                "GitHub native spec content exceeds 65536 characters.",
+            ));
+        }
+        violations
+    }
     pub fn catalog(self) -> BTreeMap<String, Tag> {
         catalog(self.declaration)
     }

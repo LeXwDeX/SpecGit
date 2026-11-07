@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { parse } from 'yaml';
 import { assertReleaseActorCredentials } from '../release-workflow-contract.mjs';
 const workflow = name => readFileSync(new URL(`../../.github/workflows/${name}`, import.meta.url), 'utf8');
@@ -59,7 +62,17 @@ test('protected acceptance requires applicable native verification and a ready m
   for (const phase of ['lint', 'compile-tests', 'source-tests', 'distribution-tests', 'compile-release', 'install', 'profile']) assert(commands.includes(`--phase ${phase} `));
 });
 
-test('CI and release use GitHub-hosted native runners for all platforms', () => {
+test('CI native routes preserve owner and fork runner labels', () => {
+  const job = parse(workflow('ci.yml')).jobs.rust;
+  assert.equal(job['runs-on'], "${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runs_on) || fromJSON(matrix.hosted_runs_on) }}");
+  assert.deepEqual(job.strategy.matrix.include.map(row => [row.label, JSON.parse(row.runs_on), JSON.parse(row.hosted_runs_on)]), [
+    ['linux', ['self-hosted', 'Linux', 'X64', 'azure-f16'], ['ubuntu-24.04']],
+    ['macos', ['macos-15'], ['macos-15']],
+    ['windows', ['self-hosted', 'Windows', 'X64', 'azure-win'], ['windows-2025']],
+  ]);
+});
+
+test('CI and release preserve native platform labels and hosted macOS checks', () => {
   for (const [file, id] of [['ci.yml', 'rust'], ['release-prepare.yml', 'build']]) {
     const job = parse(workflow(file)).jobs[id];
     assert.deepEqual(job.strategy.matrix.include.map(row => [row.label, row.os]), [
@@ -72,6 +85,61 @@ test('CI and release use GitHub-hosted native runners for all platforms', () => 
     assert(check.run.includes('test "$RUNNER_ENVIRONMENT" = github-hosted'));
     assert(check.run.includes('test "$RUNNER_ARCH" = ARM64'));
   }
+});
+
+test('PR classifier changes cannot suppress Rust or dependency classification', () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'specgit-ci-scope-')));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  try {
+    git('init', '-q');
+    git('config', 'user.name', 'CI test');
+    git('config', 'user.email', 'ci@example.invalid');
+    mkdirSync(path.join(root, 'scripts'));
+    const classifier = path.join(root, 'scripts/ci-change-scope.mjs');
+    writeFileSync(classifier, readFileSync(new URL('../ci-change-scope.mjs', import.meta.url)));
+    git('add', '.'); git('commit', '-qm', 'base');
+    const base = git('rev-parse', 'HEAD');
+    writeFileSync(classifier, "process.stdout.write('build=false\\nmetadata=true\\ndependencies=false\\n');\n");
+    git('add', '.'); git('commit', '-qm', 'replace classifier');
+    const head = git('rev-parse', 'HEAD');
+    const event = path.join(root, 'event.json');
+    writeFileSync(event, JSON.stringify({ pull_request: { base: { sha: base }, head: { sha: head } } }));
+    for (const [file, id] of [['ci.yml', 'scope'], ['security.yml', 'changes']]) {
+      const job = parse(workflow(file)).jobs[file === 'ci.yml' ? 'changes' : 'scope'];
+      const step = job.steps.find(s => s.id === id);
+      assert.equal(step.env.BASE_SHA, file === 'ci.yml'
+        ? '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}'
+        : '${{ github.event.pull_request.base.sha || github.event.before || github.sha }}');
+      const output = path.join(root, `${id}.out`);
+      writeFileSync(output, '');
+      execFileSync('bash', ['-e', '-c', step.run], { cwd: root, env: { ...process.env, BASE_SHA: base, RUNNER_TEMP: root, GITHUB_OUTPUT: output, GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: event } });
+      assert.match(readFileSync(output, 'utf8'), /^build=true$/m);
+      assert.match(readFileSync(output, 'utf8'), /^dependencies=true$/m);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('release artifacts are selected by the current attempt', () => {
+  const jobs = parse(release).jobs;
+  const upload = jobs.build.steps.find(step => step.uses?.startsWith('actions/upload-artifact@'));
+  const download = jobs.assemble.steps.find(step => step.uses?.startsWith('actions/download-artifact@'));
+  assert.equal(upload.with.name, 'release-platform-${{ matrix.target }}-${{ github.run_attempt }}');
+  assert.equal(download.with.pattern, 'release-platform-*-${{ github.run_attempt }}');
+  const recovery = readFileSync(new URL('../../runtime/distribution/README.md', import.meta.url), 'utf8');
+  assert.match(recovery, /Do not rerun the assembly job: it signs again/);
+  assert.match(recovery, /Retry\s+only the publisher with the original retained signed bundle/);
+});
+
+test('dependency review is an unconditional PR high-severity gate and cooldowns match', () => {
+  const review = parse(workflow('security.yml')).jobs['dependency-review'];
+  assert.equal(review.if, "github.event_name == 'pull_request'");
+  assert.equal(review.needs, undefined);
+  const step = review.steps.find(s => s.uses?.startsWith('actions/dependency-review-action@'));
+  assert.equal(step.with['fail-on-severity'], 'high');
+  assert.notEqual(step['continue-on-error'], true);
+  assert.notEqual(review['continue-on-error'], true);
+  const dependabot = parse(readFileSync(new URL('../../.github/dependabot.yml', import.meta.url), 'utf8'));
+  for (const ecosystem of ['cargo', 'npm', 'github-actions']) assert.equal(dependabot.updates.find(update => update['package-ecosystem'] === ecosystem).cooldown['default-days'], 7);
 });
 
 test('release checks precede signing and scheduled Node audits enforce failures', () => {

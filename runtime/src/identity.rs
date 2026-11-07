@@ -11,6 +11,13 @@ pub enum Provider {
     Gitlab,
 }
 impl Provider {
+    pub fn same_path(self, left: &str, right: &str) -> bool {
+        match self {
+            Self::Github => left.eq_ignore_ascii_case(right),
+            Self::Gitlab => left == right,
+        }
+    }
+
     pub fn executable(self) -> &'static str {
         match self {
             Self::Github => "gh",
@@ -18,12 +25,19 @@ impl Provider {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Repository {
     pub provider: Provider,
     pub host: String,
     pub path: String,
+}
+impl PartialEq for Repository {
+    fn eq(&self, other: &Self) -> bool {
+        self.provider == other.provider
+            && self.host == other.host
+            && self.provider.same_path(&self.path, &other.path)
+    }
 }
 pub fn validate_host(host: &str) -> Result<String, Diagnostic> {
     if host.len() > 253
@@ -125,4 +139,25 @@ pub fn parse_remote(
 }
 pub fn valid_oid(s: &str) -> bool {
     [40, 64].contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Provider, Repository};
+
+    #[test]
+    fn repository_identity_uses_provider_path_case_rules() {
+        for provider in [Provider::Github, Provider::Gitlab] {
+            let original = Repository {
+                provider,
+                host: "example.com".into(),
+                path: "Owner/Project".into(),
+            };
+            let changed = Repository {
+                path: "owner/project".into(),
+                ..original.clone()
+            };
+            assert_eq!(original == changed, provider == Provider::Github);
+        }
+    }
 }

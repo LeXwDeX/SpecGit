@@ -30,6 +30,11 @@ After successful signature verification, the agent calculates the ZIP SHA-256 us
 filename's single row in the signed manifest. Stop on missing or mismatched
 signatures or hashes; do not disable verification.
 
+The Sigstore signature covers `SHA256SUMS` only. Because the manifest lists the
+ZIP hashes, it covers the ZIP bytes, but the release source commit, version,
+build run and internal `native-release.json` are not in the signed payload.
+Cross-check the tag's commit and the native build workflow run separately.
+
 The archive contains `specgit` (`specgit.exe` on Windows). The agent preserves any
 existing executable, installs the binary in a user-owned PATH directory, sets Unix
 execute permission, and confirms the installed executable hash matches the extracted
@@ -98,7 +103,11 @@ specgit doctor --offline --json
 
 For a new project, initialize its required declaration with `init` before setup.
 Init also installs the native Git guard on a new project, so every commit binds a
-selected Issue and pushed commits carry an `Issue: #N` trailer.
+selected Issue and pushed commits carry an `Issue: #N` trailer. This default
+requires hooks inside the common Git directory; an external `core.hooksPath` is
+not supported, so init does not select the default guard there. When the default
+guard is selected and an existing hook cannot be safely wrapped, init fails
+closed without writing files.
 Setup can write project agent assets without a declaration, but that alone does
 not fully initialize the project. The new-project setup default recommends the
 shared Skill and stable guidance entry point without installing agent hooks.
@@ -163,7 +172,11 @@ Preview and rollback include this file; damaged markers require reconciliation.
 `migrate --rollback` keep the shared file, and report it under `retained`, while
 another linked worktree still has a declaration or SpecGit private state.
 
-The JSON `local_exclusion` result reports exclusions and already tracked files.
+The JSON `local_exclusion` result reports exclusions and already tracked files;
+human output repeats the tracked paths with the `git rm --cached` remedy. The
+installed native pre-commit guard rejects staged additions or modifications of
+these generated files and allows a staged deletion, so `git add -f` cannot
+commit them.
 Ignore rules never untrack a file. Review project guidance changes under the
 repository's normal documentation policy; preserve manual content and owned
 markers. Do not hide or untrack guidance merely because SpecGit generated part
@@ -193,7 +206,10 @@ one project's owned local integration: it previews by default (`--dry-run`),
 changes the Git index (a tracked `.specgit.yaml` blocks removal) and preserves
 user edits, global assets, the shared executable and remote data; shared exclude
 and hook blocks remain while sibling initialized worktrees still consume them,
-and an unfinished native delivery blocks removal. Confirm
+and an unfinished native delivery blocks removal. An existing checkpoint is
+removable only when the native request is reported `merged` or `completed`,
+targets the recorded branch, every selected Issue is closed and no observation
+diagnostics remain; the evidence records the observed lifecycle state. Confirm
 `specgit remove --help` on the installed executable before offering the command.
 
 `init --rollback <transaction>` undoes only its recorded local transaction when

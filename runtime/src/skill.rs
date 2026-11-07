@@ -56,6 +56,7 @@ fn marker(bytes: &[u8]) -> Option<(&[u8], &str, bool)> {
     let mut found = None;
     for raw in bytes.split_inclusive(|b| *b == b'\n') {
         let line = raw.strip_suffix(b"\n").unwrap_or(raw);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
         if let Some(digest) = std::str::from_utf8(line)
             .ok()
             .and_then(|line| line.strip_prefix(MARKER))
@@ -300,6 +301,7 @@ fn apply(
             .as_secs();
         // create-new publication prevents overwriting a previous backup, including
         // same-second refreshes and dangling links with the same name.
+        let mut injected = false;
         for suffix in 0..1000 {
             let name = if suffix == 0 {
                 format!("SKILL.md.specgit-backup-{seconds}")
@@ -324,6 +326,11 @@ fn apply(
             staged.as_file().sync_all().map_err(io_error)?;
             recheck(&path, &before, lock.as_ref())?;
             let index = effects.begin("local", "backup_user_skill", json!({"path":backup}));
+            #[cfg(feature = "test-fixtures")]
+            if !injected && std::env::var_os("SPECGIT_FIXTURE_SKILL_BACKUP_COLLISION").is_some() {
+                fs::write(&backup, b"winner").map_err(io_error)?;
+                injected = true;
+            }
             match staged.persist_noclobber(&backup) {
                 Ok(_) => {
                     effects.applied(index);
@@ -335,7 +342,7 @@ fn apply(
                     break;
                 }
                 Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    effects.operations[index].outcome = "not_applied";
+                    effects.operations.truncate(index);
                 }
                 Err(e) => return Err(io_error(e.error)),
             }

@@ -700,13 +700,7 @@ impl UpdateLock {
             return Err(cancelled_update("update_install"));
         }
         let path = dir.join(LOCK_FILE);
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|error| lock_error(dir, &error))?;
+        let file = crate::assets::open_lock(&path).map_err(|error| lock_error(dir, &error))?;
         let timeout = lock_timeout();
         let started = Instant::now();
         #[cfg(feature = "test-fixtures")]
@@ -808,7 +802,12 @@ impl Baseline {
     }
 
     fn ensure_unchanged(&self, target: &Path) -> Result<(), Diagnostic> {
-        if Self::capture(target)?.sha256 == self.sha256 {
+        let bytes = fs::read(target).map_err(|_| baseline_unreadable())?;
+        self.ensure_bytes_unchanged(&bytes)
+    }
+
+    fn ensure_bytes_unchanged(&self, bytes: &[u8]) -> Result<(), Diagnostic> {
+        if sha256_hex(bytes) == self.sha256 {
             return Ok(());
         }
         Err(Diagnostic::new(
@@ -898,14 +897,19 @@ pub fn backup_path(target: &Path, previous: &str) -> Result<PathBuf, Diagnostic>
 /// Copy the previous executable into an exclusively created backup. A failed
 /// create never removes a file this operation did not create; a partial copy
 /// is retained as recovery evidence.
-fn copy_new(source: &Path, destination: &Path, created: &mut bool) -> std::io::Result<()> {
-    let mut input = fs::File::open(source)?;
+fn copy_new(
+    source: &Path,
+    bytes: &[u8],
+    destination: &Path,
+    created: &mut bool,
+) -> std::io::Result<()> {
+    let input = fs::File::open(source)?;
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(destination)?;
     *created = true;
-    std::io::copy(&mut input, &mut output)?;
+    output.write_all(bytes)?;
     output.set_permissions(input.metadata()?.permissions())?;
     output.sync_all()
 }
@@ -931,18 +935,23 @@ fn install_locked(
     bytes: &[u8],
     previous: &str,
     strategy: Strategy,
-    lock: &UpdateLock,
+    locked_baseline: (&UpdateLock, &Baseline),
     effects: &mut Effects,
     cancel: Option<&CancellationToken>,
 ) -> Result<PathBuf, Diagnostic> {
+    let (lock, baseline) = locked_baseline;
     let operation = "update_install";
     if cancel.is_some_and(|token| token.is_cancelled()) {
         return Err(cancelled_update(operation));
     }
     let dir = target.parent().ok_or_else(|| not_writable(target))?;
-    let previous_sha256 = fs::read(target)
-        .map(|bytes| sha256_hex(&bytes))
-        .map_err(|_| baseline_unreadable())?;
+    // #806 serializes cooperating updaters; a non-cooperating writer can still change the baseline.
+    #[cfg(feature = "test-fixtures")]
+    fixture_pause("before-install-read", operation, cancel)?;
+    baseline.ensure_unchanged(target)?;
+    let previous_bytes = fs::read(target).map_err(|_| baseline_unreadable())?;
+    baseline.ensure_bytes_unchanged(&previous_bytes)?;
+    let previous_sha256 = &baseline.sha256;
     let expected_sha256 = sha256_hex(bytes);
     let staged = stage(target, bytes)?;
     #[cfg(not(feature = "test-fixtures"))]
@@ -967,8 +976,17 @@ fn install_locked(
                 discard_effect(effects, index);
                 return Err(diagnostic);
             }
+            if let Err(diagnostic) = baseline.ensure_unchanged(target) {
+                discard_effect(effects, index);
+                return Err(diagnostic);
+            }
+            #[cfg(feature = "test-fixtures")]
+            if let Err(diagnostic) = fixture_pause("backup-copy", operation, cancel) {
+                discard_effect(effects, index);
+                return Err(diagnostic);
+            }
             let mut created = false;
-            match copy_new(target, &backup, &mut created) {
+            match copy_new(target, &previous_bytes, &backup, &mut created) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     discard_effect(effects, index);
@@ -1009,7 +1027,10 @@ fn install_locked(
                     ));
                 }
             }
+            effects.operations[index].recovery["backup_complete"] = json!(false);
+            baseline.ensure_unchanged(&backup)?;
             effects.operations[index].recovery["backup_complete"] = json!(true);
+            baseline.ensure_unchanged(target)?;
             if staged.persist(target).is_err() {
                 return Err(Diagnostic::new(
                     Code::IoFailed,
@@ -1053,6 +1074,10 @@ fn install_locked(
                 discard_effect(effects, index);
                 return Err(diagnostic);
             }
+            if let Err(diagnostic) = baseline.ensure_unchanged(target) {
+                discard_effect(effects, index);
+                return Err(diagnostic);
+            }
             if fs::rename(target, &backup).is_err() {
                 discard_effect(effects, index);
                 return Err(not_writable(dir));
@@ -1060,6 +1085,8 @@ fn install_locked(
             // Keep the transaction directory before any further failure so the
             // only previous bytes are never removed by RAII cleanup.
             let transaction = transaction.keep();
+            effects.operations[index].recovery["backup_complete"] = json!(false);
+            baseline.ensure_unchanged(&backup)?;
             effects.operations[index].recovery["backup_complete"] = json!(true);
             sync_dir(&transaction);
             sync_dir(dir);
@@ -1129,12 +1156,13 @@ pub fn install(
 ) -> Result<PathBuf, Diagnostic> {
     let dir = target.parent().ok_or_else(|| not_writable(target))?;
     let lock = UpdateLock::acquire(dir, None)?;
+    let baseline = Baseline::capture(target)?;
     install_locked(
         target,
         bytes,
         previous,
         strategy,
-        &lock,
+        (&lock, &baseline),
         &mut Effects::default(),
         None,
     )
@@ -1229,7 +1257,7 @@ pub async fn run(options: Options, process: Process) -> Report {
         }
         report.next_actions.push(json!({"kind":"user_skill_refresh","status":evidence.user_skill.as_ref().and_then(|v|v.get("status")),"command":"specgit skill --user","remedy":if report.diagnostics.is_empty() {"Only an already managed user Skill was eligible for automatic refresh. To explicitly install or refresh it, use specgit skill --user."} else {crate::skill::REMEDY}}));
         report.next_actions.push(json!({"kind":"rollback_available","executable":installation.executable,"backup":installation.backup,"remedy":"To roll back, stop running specgit processes and move the backup over the executable path. Project configuration is unchanged."}));
-        report.next_actions.push(json!({"kind":"refresh_project_skills","command":"specgit setup","remedy":"The CLI was replaced. Existing project Skills may need refreshing; run specgit setup in each relevant project (preview with specgit setup --dry-run). Setup refreshes only recorded, owned assets whose content is unchanged; manual edits are preserved and reported as conflicts. No project Skills were inspected or updated by this command."}));
+        report.next_actions.push(json!({"kind":"refresh_project_skills","command":"specgit setup","remedy":"The CLI was replaced. Existing project Skills may need refreshing; run specgit setup in each relevant project (preview with specgit setup --dry-run). Setup refreshes only recorded, owned assets whose content is unchanged; manual edits are preserved and reported as conflicts. Also check the setup report for `local_exclusion.already_tracked`: keep SpecGit-generated files (`.specgit.yaml`, the generated Skill) untracked and clean a legacy tracked copy only with an authorized `git rm --cached`. No project Skills were inspected or updated by this command."}));
     } else if report.exit == 0 && evidence.update_available {
         report.next_actions.push(json!({"kind":"apply_update","remedy":"Preview with specgit update --dry-run, then apply with specgit update (add the same --version selection)."}));
     }
@@ -1508,9 +1536,8 @@ async fn update(
     if process.cancellation.is_cancelled() {
         return Err(cancelled_update("update_install"));
     }
-    baseline
-        .expect("apply captures a baseline")
-        .ensure_unchanged(&target)?;
+    let baseline = baseline.expect("apply captures a baseline");
+    baseline.ensure_unchanged(&target)?;
     let mut journal = Effects::default();
     let backup = match blocking(|| {
         install_locked(
@@ -1518,7 +1545,7 @@ async fn update(
             &executable,
             &current.to_string(),
             Strategy::native(),
-            &lock,
+            (&lock, &baseline),
             &mut journal,
             Some(&process.cancellation),
         )
@@ -1839,11 +1866,28 @@ mod tests {
         fs::write(&backup, b"winner").unwrap();
         let mut created = false;
         assert_eq!(
-            copy_new(&source, &backup, &mut created).unwrap_err().kind(),
+            copy_new(&source, b"old", &backup, &mut created)
+                .unwrap_err()
+                .kind(),
             std::io::ErrorKind::AlreadyExists
         );
         assert!(!created);
         assert_eq!(fs::read(&backup).unwrap(), b"winner");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_rejects_symlink_lock() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("specgit");
+        let foreign = temp.path().join("foreign");
+        fs::write(&target, b"old").unwrap();
+        fs::write(&foreign, b"foreign").unwrap();
+        symlink(&foreign, temp.path().join(LOCK_FILE)).unwrap();
+        assert!(install(&target, b"new", "1.0.0", Strategy::AtomicReplace).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+        assert_eq!(fs::read(&foreign).unwrap(), b"foreign");
     }
 
     #[cfg(unix)]

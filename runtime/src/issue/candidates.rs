@@ -70,7 +70,7 @@ pub(super) async fn inspect(options: &Options, p: &Prepared) -> Result<Option<Re
             w.process.mark_inspection_incomplete();
             let mut report = Report::success("issue", "candidate_review_required", evidence);
             report.exit = 3;
-            report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open issues require a WHY comparison before creation.", "Read the candidates and adopt the exact existing ID for the same WHY. For a distinct WHY, pass --reviewed-candidates with this exact review_digest; changed evidence requires a new review. Uncertain writes still require exact adoption."));
+            report.diagnostics.push(Diagnostic::new(Code::AmbiguousRequest, "issue", "Similar open or recently closed issues require a WHY comparison before creation.", "Read the candidates and adopt the exact existing ID for the same WHY. For a distinct WHY, pass --reviewed-candidates with this exact review_digest; changed evidence requires a new review. Uncertain writes still require exact adoption."));
             return Ok(Some(report));
         }
     }
@@ -167,6 +167,8 @@ async fn review(
         &intent.title,
     )
     .await?;
+    let recent =
+        native_delivery::recent_issues(&w.reader, &w.context.repository, w.facts.id).await?;
     w.process.ensure_inspection_budget("issue_preflight")?;
     let elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
     let requests_executed = w
@@ -174,6 +176,21 @@ async fn review(
         .inspection_requests_executed()
         .saturating_sub(requests_before);
     let mut candidates = candidate_read.read.issues;
+    let normalize = |title: &str| {
+        title
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let title = normalize(&intent.title);
+    for issue in recent {
+        if normalize(&issue.title) == title
+            && !candidates.iter().any(|candidate| candidate.id == issue.id)
+        {
+            candidates.push(issue);
+        }
+    }
     candidates.sort_by_key(|issue| issue.id);
     let review_digest = candidate_review_digest(
         &w.context.repository,
@@ -183,7 +200,7 @@ async fn review(
         intent,
         &candidates,
     );
-    let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"history":candidate_read.history,"history_diagnostics":candidate_read.history_diagnostics,"review_digest":review_digest,"elapsed_ms":elapsed_ms,"requests_executed":requests_executed,"pagination":candidate_read.read.pagination});
+    let evidence = serde_json::json!({"title":intent.title,"issues":candidates,"history":candidate_read.history,"history_diagnostics":candidate_read.history_diagnostics,"review_digest":review_digest,"elapsed_ms":elapsed_ms,"requests_executed":requests_executed,"pagination":candidate_read.read.pagination,"recent_window":"The latest 100 issues per state narrow but cannot eliminate duplicate races."});
     Ok(CandidateReview {
         evidence,
         review_digest,

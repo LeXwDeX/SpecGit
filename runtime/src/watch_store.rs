@@ -278,6 +278,34 @@ impl Store {
         })
         .map(|_| ())
     }
+
+    /// Clear a lease only when it is past its deadline and no process holds the
+    /// stable OS lease lock. Returns the current state when no cleanup applies.
+    pub fn expire_lease(&self) -> Result<Option<State>, Diagnostic> {
+        let Some(state) = read(&self.identity)? else {
+            return Ok(None);
+        };
+        let Some(lease) = state.lease.as_ref() else {
+            return Ok(Some(state));
+        };
+        if lease.deadline >= now() {
+            return Ok(Some(state));
+        }
+        let lock = match AssetStore::lock(&self.root.join("lease"), &[], Duration::from_millis(1)) {
+            Ok(lock) => lock,
+            Err(d) if d.code == Code::LockBusy => return Ok(Some(state)),
+            Err(d) => return Err(d),
+        };
+        let updated = self.update(|s| {
+            if s.lease.as_ref().is_none_or(|l| l.deadline >= now()) {
+                return Ok(());
+            }
+            s.lease = None;
+            Ok(())
+        })?;
+        drop(lock);
+        Ok(Some(updated))
+    }
     fn update(
         &self,
         mutate: impl FnOnce(&mut State) -> Result<(), Diagnostic>,

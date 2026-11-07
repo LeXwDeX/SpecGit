@@ -23,12 +23,32 @@ pub(super) fn emit(report: Report, json: bool) {
                 serde_json::to_string_pretty(&report.evidence).unwrap_or_default()
             );
         }
+        if let Some(notice) = tracked_notice(&report.evidence) {
+            println!("{}", terminal_safe(&notice));
+        }
         for action in &report.next_actions {
             if let Some(remedy) = action.get("remedy").and_then(serde_json::Value::as_str) {
                 println!("{}", terminal_safe(remedy));
             }
         }
     }
+}
+
+/// Human warning for generated files already in the Git index. JSON keeps the
+/// structured `local_exclusion` evidence instead of this sentence.
+fn tracked_notice(evidence: &serde_json::Value) -> Option<String> {
+    let tracked = evidence
+        .pointer("/local_exclusion/already_tracked")
+        .and_then(serde_json::Value::as_array)
+        .filter(|paths| !paths.is_empty())?;
+    let names = tracked
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Tracked SpecGit-generated files: {names}. Keep them untracked; a legacy tracked copy needs an authorized `git rm --cached <path>`."
+    ))
 }
 
 fn terminal_safe(text: &str) -> String {
@@ -121,7 +141,23 @@ fn doctor_summary(report: &Report) {
 
 #[cfg(test)]
 mod tests {
-    use super::terminal_safe;
+    use super::{terminal_safe, tracked_notice};
+
+    #[test]
+    fn tracked_notice_names_indexed_generated_files_only() {
+        let tracked = serde_json::json!({
+            "local_exclusion": {"already_tracked": [".specgit.yaml", ".agents/skills/specgit-native/SKILL.md"]}
+        });
+        let notice = tracked_notice(&tracked).unwrap();
+        assert!(notice.contains(".specgit.yaml"));
+        assert!(notice.contains("SKILL.md"));
+        assert!(notice.contains("git rm --cached"));
+        assert!(
+            tracked_notice(&serde_json::json!({"local_exclusion": {"already_tracked": []}}))
+                .is_none()
+        );
+        assert!(tracked_notice(&serde_json::json!({})).is_none());
+    }
 
     #[test]
     fn action_remedy_keeps_plain_text_and_quotes_terminal_controls() {

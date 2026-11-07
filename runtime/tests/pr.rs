@@ -169,6 +169,34 @@ fn clear_request_binding(f: &Fixture) {
 }
 
 #[test]
+fn explicitly_selected_terminal_request_is_not_bound() {
+    for provider in ["github", "gitlab"] {
+        for merged in [false, true] {
+            let f = fixture(provider, 1);
+            assert_eq!(f.run(&["pr"])["exit"], 0);
+            clear_request_binding(&f);
+            f.edit(|s| {
+                s["requests"][0]["state"] = json!(if provider == "gitlab" && merged {
+                    "merged"
+                } else {
+                    "closed"
+                });
+                s["requests"][0]["merged"] = json!(merged);
+            });
+            let result = f.run(&["pr", "--request", "41"]);
+            assert_ne!(result["status"], "bound", "{provider}: {result}");
+            assert_ne!(result["exit"], 0, "{provider}: {result}");
+            assert!(
+                result["diagnostics"][0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("already merged or closed")
+            );
+        }
+    }
+}
+
+#[test]
 fn gitlab_locked_candidate_blocks_mutations_but_previews_unknown_identity() {
     let f = fixture("gitlab", 1);
     assert_eq!(f.run(&["pr"])["exit"], 0);
@@ -307,6 +335,66 @@ fn no_diff_or_unpushed_head_leaves_request_pending_without_remote_writes() {
     let r = f.run(&["pr"]);
     assert_eq!(r["evidence"]["reason"], "source_head_not_pushed", "{r}");
     assert_eq!(f.writes(), writes);
+}
+#[test]
+fn multiple_request_labels_use_one_pool_read_and_one_refresh() {
+    for provider in ["github", "gitlab"] {
+        for existing in [false, true] {
+            let f = fixture(provider, 1);
+            fs::write(f.root.join(".specgit.yaml"), format!("version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: off\ntags:\n  - name: alpha\n    color: 112233\n  - name: beta\n    color: 445566\n")).unwrap();
+            f.edit(|s| {
+                s["calls"] = json!([]);
+                if existing {
+                    s["labels"] = json!([{"name":"alpha"},{"name":"beta"}]);
+                }
+            });
+            let result = f.run(&["pr", "--tags", "alpha,beta", "--create-labels"]);
+            assert_eq!(result["exit"], 0, "{provider}: {result}");
+            let calls = f.state()["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| {
+                    c["method"] == "GET"
+                        && c["endpoint"]
+                            .as_str()
+                            .unwrap()
+                            .split('?')
+                            .next()
+                            .unwrap()
+                            .ends_with("/labels")
+                })
+                .count();
+            assert_eq!(calls, if existing { 2 } else { 3 }, "{provider}: {result}");
+        }
+    }
+}
+
+#[test]
+fn missing_source_branch_is_pending_but_forbidden_is_not() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        let writes = f.writes();
+        f.edit(|s| s["branch_heads"]["feature"] = json!(null));
+        let missing = f.run(&["pr"]);
+        assert_eq!(
+            missing["status"], "pending_request",
+            "{provider}: {missing}"
+        );
+        assert_eq!(missing["evidence"]["reason"], "source_head_not_pushed");
+        let remedy = missing.to_string().to_lowercase();
+        assert!(
+            remedy.contains("push") && remedy.contains("access"),
+            "{missing}"
+        );
+        f.edit(|s| s["branch_forbidden"] = json!("feature"));
+        let denied = f.run(&["pr"]);
+        assert_eq!(
+            denied["diagnostics"][0]["code"], "permission_denied",
+            "{provider}: {denied}"
+        );
+        assert_eq!(f.writes(), writes);
+    }
 }
 #[test]
 fn newly_supplied_association_is_resolved_before_creation_or_body_update() {
@@ -819,5 +907,93 @@ fn kind_mode_request_tags_must_match_the_title_type() {
             "--dry-run",
         ]);
         assert_eq!(matching["exit"], 0, "{matching}");
+    }
+}
+
+#[test]
+fn discard_uncertain_request_previews_then_clears_without_creating() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        f.edit(|s| s["request_create_status"] = json!(500));
+        assert_eq!(f.run(&["pr"])["exit"], 3);
+        let path = f.root.join(".git/specgit-v2/selection.json");
+        let before = fs::read(&path).unwrap();
+        let preview = f.run(&["pr", "--discard-uncertain", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{preview}");
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let writes = f.writes();
+        let applied = f.run(&["pr", "--discard-uncertain"]);
+        assert_eq!(applied["exit"], 0, "{applied}");
+        assert_eq!(f.writes(), writes);
+        let selection: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(selection["request_write_started"], false);
+        assert!(selection["request"].is_null());
+    }
+}
+
+#[test]
+fn discard_uncertain_request_rejects_unfiltered_open_and_terminal_candidates() {
+    for provider in ["github", "gitlab"] {
+        for terminal in [false, true] {
+            let f = fixture(provider, 1);
+            f.edit(|s| s["lose_request_response"] = json!(true));
+            assert_eq!(f.run(&["pr"])["exit"], 3);
+            if terminal {
+                f.edit(|s| {
+                    s["requests"][0]["state"] = json!("closed");
+                    s["requests"][0]["head"]["sha"] = json!("b".repeat(40));
+                    s["requests"][0]["sha"] = json!("b".repeat(40));
+                });
+            }
+            let path = f.root.join(".git/specgit-v2/selection.json");
+            let before = fs::read(&path).unwrap();
+            let result = f.run(&["pr", "--discard-uncertain"]);
+            assert_eq!(result["exit"], 3, "{provider} {terminal}: {result}");
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn discard_uncertain_request_timeout_preserves_checkpoint() {
+    let f = fixture("github", 1);
+    f.edit(|s| s["request_create_status"] = json!(500));
+    assert_eq!(f.run(&["pr"])["exit"], 3);
+    let path = f.root.join(".git/specgit-v2/selection.json");
+    let before = fs::read(&path).unwrap();
+    f.edit(|s| s["api_delay_ms"] = json!(100));
+    let output = f
+        .feature_command(&["pr", "--discard-uncertain"])
+        .env("SPECGIT_TEST_INSPECTION_BUDGET_MS", "20")
+        .output()
+        .unwrap();
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["diagnostics"][0]["code"], "timeout", "{result}");
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn rejected_request_creation_clears_only_proven_non_creation() {
+    for provider in ["github", "gitlab"] {
+        for (status, uncertain) in [
+            (400, false),
+            (401, false),
+            (403, false),
+            (422, false),
+            (404, true),
+            (409, true),
+            (500, true),
+        ] {
+            let f = fixture(provider, 1);
+            f.edit(|s| s["request_create_status"] = json!(status));
+            let result = f.run(&["pr"]);
+            assert_eq!(result["exit"], 3, "{result}");
+            let selection: Value = serde_json::from_slice(
+                &fs::read(f.root.join(".git/specgit-v2/selection.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(selection["request_write_started"], uncertain, "{result}");
+            assert!(f.state()["requests"].as_array().unwrap().is_empty());
+        }
     }
 }

@@ -293,18 +293,20 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
         let completed = async {
             let w = crate::delivery_context::Workspace::load(process.clone(), &layout.root).await?;
             let s = selection::read(&w.context)?.ok_or_else(|| conflict(&selection_path, "The checkpoint disappeared."))?;
-            if s.project_id != w.facts.id || !s.checkpoint_valid(Some(&w.target)) || s.intents.iter().any(|i| i.issue.is_none()) {
+            let mut active = s.clone();
+            active.delivered_request = None;
+            if s.project_id != w.facts.id || s.pending_write() || (s.delivered_request.is_some() && (!s.replaceable() || s.delivered_request != s.request)) || !active.checkpoint_valid(Some(&w.target)) || s.intents.iter().any(|i| i.issue.is_none()) {
                 return Err(conflict(&selection_path, "The checkpoint is incomplete or belongs to another native project."));
             }
             let request = s.request.ok_or_else(|| conflict(&selection_path, "The checkpoint has no delivered request."))?;
             let observed = observation::observe(Some(request), process.clone(), &layout.root).await;
-            if observed.status != Status::Completed || !observed.diagnostics.is_empty()
+            if !matches!(observed.status, Status::Completed | Status::Merged) || !observed.diagnostics.is_empty()
                 || observed.evidence.issues.as_ref().is_none_or(|issues| s.issues.iter().any(|id| !issues.iter().any(|i| i.id == *id && i.state == "closed"))) {
                 return Err(conflict(&selection_path, "Finish the native target merge and every selected Issue closure before removal."));
             }
             let native = observed.evidence.request.as_ref().ok_or_else(|| conflict(&selection_path, "Native request evidence is unavailable."))?;
             if native.target != s.target { return Err(conflict(&selection_path, "The delivered request targets another branch.")); }
-            Ok(json!({"request":request,"head":native.head,"target":native.target,"issues":s.issues,"state":"completed"}))
+            Ok(json!({"request":request,"head":native.head,"target":native.target,"issues":s.issues,"state":observed.status.as_str()}))
         }.await;
         match completed {
             Ok(evidence) => {

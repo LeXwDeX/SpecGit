@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { buildNative, targets, verifyArchitecture } from '../distribution/native-build.mjs';
+import { libtestThreads } from './libtest-threads.mjs';
 import { expectedSuites } from './profile-inventory.mjs';
 import { PhaseCache, digest, fileDigest, readCompiledTests } from './native-cache.mjs';
 import { installNative } from '../distribution/install-native.mjs';
@@ -89,8 +90,14 @@ export async function main(args) {
         delete env.SPECGIT_TEST_BINARY;
         const failures = [];
         for (const [index, artifact] of manifest.artifacts.entries()) {
+          // Windows process startup and teardown are slower; keep libtest from
+          // running every fixture-heavy binary at full CPU parallelism. The hook
+          // suite starts one native CLI per case, so give it a single worker.
+          const sourcePath = path.relative(runtime, artifact.target.src_path).split(path.sep).join('/');
+          const threads = libtestThreads(process.platform, sourcePath);
+          const suiteEnv = threads ? { ...env, RUST_TEST_THREADS: threads } : env;
           const log = path.join(directory, `${index}.log`);
-          try { command(artifact.executable, ['--color', 'never'], { env, log }); }
+          try { command(artifact.executable, ['--color', 'never'], { env: suiteEnv, log }); }
           catch (error) {
             const output = readFileSync(log, 'utf8');
             failures.push(`${artifact.target.src_path}: ${error.message}\n${output.slice(-64 * 1024)}`);

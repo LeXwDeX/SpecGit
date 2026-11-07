@@ -42,6 +42,19 @@ pub(super) async fn prepare(
         mut issues,
         pool,
     } = discover(o, &w).await?;
+    if !o.inspect
+        && !o.dry_run
+        && request
+            .as_ref()
+            .is_some_and(|r| matches!(r.state.as_str(), "merged" | "closed"))
+    {
+        return Err(Diagnostic::new(
+            Code::InvalidInput,
+            "pr",
+            "The selected native request is already merged or closed.",
+            "Inspect the native request with pr --status before starting follow-up work.",
+        ));
+    }
     let transient_state = request
         .as_ref()
         .filter(|r| r.is_locked())
@@ -243,7 +256,17 @@ async fn native_heads(
     let branch = w.branch()?;
     // Inspect/adoption of a terminal request does not require a deleted source branch.
     if request.is_none() || replacing_body || o.ready {
-        let source = native_delivery::branch_head(&w.reader, repo, branch).await?;
+        let source = match native_delivery::branch_head(&w.reader, repo, branch).await {
+            Ok(source) => source,
+            Err(d) if d.code == Code::AmbiguousNotFound => {
+                return Ok(Some(Report::success(
+                    "pr",
+                    "pending_request",
+                    serde_json::json!({"reason":"source_head_not_pushed","local_head":w.context.head,"remedy":"Push the source branch, or check repository and branch access before retrying."}),
+                )));
+            }
+            Err(d) => return Err(d),
+        };
         if source != w.context.head {
             return Ok(Some(Report::success(
                 "pr",

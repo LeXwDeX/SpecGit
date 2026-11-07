@@ -44,7 +44,15 @@ jobs:
 
       - name: Classify verification scope
         id: scope
-        run: node scripts/ci-change-scope.mjs --verification-only
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
+        run: |
+          if [[ "$BASE_SHA" =~ ^0+$ ]]; then
+            printf 'build=true\nmetadata=false\ndependencies=true\n' >> "$GITHUB_OUTPUT"
+          else
+            git show "$BASE_SHA:scripts/ci-change-scope.mjs" > "$RUNNER_TEMP/ci-change-scope.mjs"
+            node "$RUNNER_TEMP/ci-change-scope.mjs" --verification-only
+          fi
 
       - name: Verify classification outputs
         env:
@@ -72,9 +80,11 @@ jobs:
     name: Rust (${{ matrix.label }})
     needs: changes
     if: needs.changes.outputs.build == 'true'
-    runs-on: ${{ matrix.os }}
-    # Allow the Windows VM to finish both source and installed regressions.
-    timeout-minutes: ${{ matrix.label == 'windows' && 60 || 45 }}
+    # 可信事件用 Azure；fork PR 用 GitHub 托管 runner，不能让 fork 的代码上自托管机器。
+    runs-on: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runs_on) || fromJSON(matrix.hosted_runs_on) }}
+    # Allow the Windows VM to finish both source and installed regressions,
+    # including a slower shared runner, within one job budget.
+    timeout-minutes: ${{ matrix.label == 'windows' && 120 || 45 }}
     strategy:
       fail-fast: false
       matrix:
@@ -82,12 +92,18 @@ jobs:
           - os: ubuntu-24.04
             label: linux
             target: x86_64-unknown-linux-gnu
+            runs_on: '["self-hosted","Linux","X64","azure-f16"]'
+            hosted_runs_on: '["ubuntu-24.04"]'
           - os: macos-15
             label: macos
             target: aarch64-apple-darwin
+            runs_on: '["macos-15"]'
+            hosted_runs_on: '["macos-15"]'
           - os: windows-2025
             label: windows
             target: x86_64-pc-windows-msvc
+            runs_on: '["self-hosted","Windows","X64","azure-win"]'
+            hosted_runs_on: '["windows-2025"]'
     defaults:
       run:
         shell: bash
@@ -151,15 +167,15 @@ jobs:
           node-version: '20.19.0'
           package-manager-cache: false
       - name: Rust formatting and lint
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase lint --target '${{ matrix.target }}'
       - name: Compile native test executables
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase compile-tests --target '${{ matrix.target }}'
       - name: Rust public interface and real subprocess regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase source-tests --target '${{ matrix.target }}'
-      - uses: actions/setup-python@ec52d0af729a7c50ced4261d17a07916f43f5b8e
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         if: runner.os != 'macOS'
         with:
           python-version: '3.13'
@@ -167,16 +183,16 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 -c 'import sys, zipfile; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
       - name: Native distribution regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase distribution-tests --target '${{ matrix.target }}'
       - name: Compile remapped release executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase compile-release --target '${{ matrix.target }}'
       - name: Install native executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase install --target '${{ matrix.target }}'
       - name: Repeat public journeys through the installed native executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 60 || 15 }}
+        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
         run: node scripts/native-resume.mjs --phase profile --target '${{ matrix.target }}'
       - name: Retain installed artifacts and complete test accounting
         if: always()

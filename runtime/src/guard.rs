@@ -43,7 +43,7 @@ struct Receipt {
 fn hook_block(stage: &str, executable: &str) -> String {
     if stage == "pre-push" {
         return format!(
-            "# >>> specgit-v2:{stage}:start >>>\nspecgit_input=$(mktemp \"${{TMPDIR:-/tmp}}/specgit-pre-push.XXXXXX\") || exit 1\ntrap 'rm -f \"$specgit_input\"' EXIT HUP INT TERM\ncat > \"$specgit_input\"\n{executable} guard --stage pre-push < \"$specgit_input\" || exit $?\nexec < \"$specgit_input\"\nrm -f \"$specgit_input\"\ntrap - EXIT HUP INT TERM\n# <<< specgit-v2:{stage}:end <<<"
+            "# >>> specgit-v2:{stage}:start >>>\nspecgit_input=$(mktemp \"${{TMPDIR:-/tmp}}/specgit-pre-push.XXXXXX\") || exit 1\ntrap 'rm -f \"$specgit_input\"' EXIT HUP INT TERM\ncat > \"$specgit_input\" || exit 1\n{executable} guard --stage pre-push < \"$specgit_input\" || exit $?\nexec < \"$specgit_input\"\nrm -f \"$specgit_input\"\ntrap - EXIT HUP INT TERM\n# <<< specgit-v2:{stage}:end <<<"
         );
     }
     format!(
@@ -179,6 +179,87 @@ fn executable_binding(changes: &[Change]) -> &'static str {
     }
 }
 
+fn hook_shebang(before: &str) -> Result<(), Diagnostic> {
+    let first = before.lines().next().unwrap_or("");
+    if !first.starts_with("#!") {
+        return Err(rejected(
+            "The existing Git hook has no shell shebang and was preserved.",
+        ));
+    }
+    let raw = &first[2..];
+    if raw.contains(['\'', '"', '\\']) {
+        return Err(rejected(
+            "The existing Git hook has an ambiguous shell shebang and was preserved.",
+        ));
+    }
+    let words: Vec<&str> = raw.split_whitespace().collect();
+    let interpreter = words.first().and_then(|word| word.rsplit('/').next());
+    let shell_index = if interpreter == Some("env") {
+        if words.get(1) == Some(&"-S") { 2 } else { 1 }
+    } else {
+        0
+    };
+    let shell = words
+        .get(shell_index)
+        .and_then(|word| word.rsplit('/').next());
+    if !matches!(shell, Some("sh" | "bash" | "zsh")) {
+        return Err(rejected(
+            "The existing Git hook is not a supported shell script and was preserved.",
+        ));
+    }
+    for word in &words[shell_index + 1..] {
+        if *word == "--" {
+            return Err(rejected(
+                "The existing Git hook separates the shell from a script operand and was preserved.",
+            ));
+        }
+        if !word.starts_with('-') {
+            return Err(rejected(
+                "The existing Git hook invokes a script other than itself and was preserved.",
+            ));
+        }
+        if *word == "-" {
+            return Err(rejected(
+                "The existing Git hook reads its script from stdin and was preserved.",
+            ));
+        }
+        if matches!(*word, "--command" | "--stdin")
+            || word.starts_with("--command=")
+            || word.starts_with("--stdin=")
+            || (word.starts_with('-') && !word.starts_with("--") && word[1..].contains(['c', 's']))
+        {
+            return Err(rejected(
+                "The existing Git hook invokes an inline shell command and was preserved.",
+            ));
+        }
+        if matches!(
+            *word,
+            "--help"
+                | "--version"
+                | "--dump-strings"
+                | "--dump-po-strings"
+                | "--pretty-print"
+                | "--rcfile"
+                | "--init-file"
+        ) || word.starts_with("--rcfile=")
+            || word.starts_with("--init-file=")
+        {
+            return Err(rejected(
+                "The existing Git hook suppresses execution or consumes trailing arguments and was preserved.",
+            ));
+        }
+        if word.starts_with('-')
+            && !word.starts_with("--")
+            && word[1..].contains(['n', 'D', 't', 'o', 'O'])
+        {
+            return Err(rejected(
+                "The existing Git hook uses a shell option that suppresses or changes the script and was preserved.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic> {
     if before.contains("specgit-v2:pre-") {
         return Err(rejected(
@@ -188,26 +269,18 @@ fn insert_after_shebang(before: &str, block: &str) -> Result<String, Diagnostic>
     if before.is_empty() {
         return Ok(format!("#!/bin/sh\n{block}"));
     }
-    let first = before.lines().next().unwrap_or("");
-    if !first.starts_with("#!") {
-        return Err(rejected(
-            "The existing Git hook has no shell shebang and was preserved.",
-        ));
-    }
-    if first.starts_with("#!")
-        && !["sh", "bash", "zsh"]
-            .iter()
-            .any(|shell| first.contains(shell))
-    {
-        return Err(rejected(
-            "The existing Git hook is not a supported shell script and was preserved.",
-        ));
-    }
-    if first.starts_with("#!") {
-        let split = before.find('\n').map_or(before.len(), |index| index + 1);
-        return Ok(format!("{}{block}{}", &before[..split], &before[split..]));
-    }
-    Ok(format!("#!/bin/sh\n{block}{before}"))
+    hook_shebang(before)?;
+    let split = before.find('\n').map_or(before.len(), |index| index + 1);
+    let newline = if before[..split].ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    Ok(format!(
+        "{}{newline}{block}{}",
+        &before[..split],
+        &before[split..]
+    ))
 }
 
 pub(crate) async fn plan(
@@ -261,6 +334,24 @@ pub(crate) async fn plan_named_with_executable(
         return Err(rejected(
             "The effective Git hooks path is external to this repository and its common Git directory.",
         ));
+    }
+    if !uninstall
+        && hook_root.starts_with(&common_dir)
+        && let Some(source) = source
+    {
+        let executable = source
+            .canonicalize()
+            .map_err(|_| rejected("The shared CLI executable cannot be resolved."))?;
+        let project = root
+            .canonicalize()
+            .map_err(|_| rejected("The project root cannot be resolved."))?;
+        if executable.starts_with(project)
+            || config::worktree::source_in_same_repository_checkout(&executable, &root)?
+        {
+            return Err(rejected(
+                "Git hooks require an installed shared CLI outside this project checkout; do not use a project-local executable.",
+            ));
+        }
     }
     assets::safe_path(&hook_root)?;
     let legacy_pending = AssetStore::pending_at(&git_dir.join("specgit-v2/transactions"))?;
@@ -369,6 +460,9 @@ pub(crate) async fn plan_named_with_executable(
         let original_empty = old.map_or(before.is_empty(), |old| old.original_empty);
         let exact_generated = old.is_some_and(|old| before == format!("#!/bin/sh\n{}", old.block));
         let (after, created) = if let Some(old) = old {
+            if !uninstall {
+                hook_shebang(before)?;
+            }
             if before.matches(&old.block).count() != 1 {
                 return Err(rejected(
                     "An owned SpecGit Git-hook block was edited, removed, or duplicated.",
@@ -401,9 +495,16 @@ pub(crate) async fn plan_named_with_executable(
             Some(after.into_bytes())
         };
         #[cfg(unix)]
-        if change.before.bytes.is_none() && change.after.is_some() {
+        {
             use std::os::unix::fs::PermissionsExt;
-            change.permissions = Some(std::fs::Permissions::from_mode(0o755));
+            if !uninstall
+                && change
+                    .permissions
+                    .as_ref()
+                    .is_none_or(|permissions| permissions.mode() & 0o111 == 0)
+            {
+                change.permissions = Some(std::fs::Permissions::from_mode(0o755));
+            }
         }
         if !uninstall {
             recorded.insert(
@@ -763,16 +864,7 @@ pub async fn health_plan(
         let snapshot = Snapshot::read(&hook.path)?;
         let script = std::str::from_utf8(snapshot.bytes.as_deref().unwrap_or_default())
             .map_err(|_| rejected("The recorded Git hook is not UTF-8."))?;
-        let first = script.lines().next().unwrap_or("");
-        if !first.starts_with("#!")
-            || !["sh", "bash", "zsh"]
-                .iter()
-                .any(|shell| first.contains(shell))
-        {
-            return Err(rejected(
-                "The recorded Git hook has no supported shell shebang.",
-            ));
-        }
+        hook_shebang(script)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1171,6 +1263,7 @@ fn zero_oid(value: &str) -> bool {
 /// A pushed branch and the exact local object Git is about to send.
 struct PushedBranch {
     branch: String,
+    remote_branch: String,
     oid: String,
 }
 
@@ -1202,12 +1295,16 @@ fn pushed_branches(bytes: &[u8]) -> Result<Vec<PushedBranch>, Diagnostic> {
                 "A non-branch, non-tag ref update cannot be matched to an Issue checkpoint.",
             ));
         };
-        if !remote_ref.starts_with("refs/heads/") {
+        let Some(remote_branch) = remote_ref.strip_prefix("refs/heads/") else {
             return Err(rejected(
                 "A local branch may only be guarded when it updates a remote branch ref.",
             ));
-        }
-        if branch.is_empty() || branch.len() > 1024 {
+        };
+        if branch.is_empty()
+            || remote_branch.is_empty()
+            || branch.len() > 1024
+            || remote_branch.len() > 1024
+        {
             return Err(Diagnostic::input("pre-push branch identity is invalid."));
         }
         if ![40, 64].contains(&local_oid.len()) || !local_oid.bytes().all(|b| b.is_ascii_hexdigit())
@@ -1216,6 +1313,7 @@ fn pushed_branches(bytes: &[u8]) -> Result<Vec<PushedBranch>, Diagnostic> {
         }
         branches.push(PushedBranch {
             branch: branch.to_owned(),
+            remote_branch: remote_branch.to_owned(),
             oid: (*local_oid).to_owned(),
         });
         if branches.len() > 100 {
@@ -1273,14 +1371,26 @@ pub async fn check(
     if matches!(stage, Stage::PrePush) && pushed.is_empty() {
         return Ok(());
     }
-    if matches!(stage, Stage::PreCommit)
-        && project::git(process, &root, &["diff", "--cached", "--name-only", "-z"])
-            .await?
-            .is_empty()
-    {
+    let staged = if matches!(stage, Stage::PreCommit) {
+        staged_entries(process, &root).await?
+    } else {
+        vec![]
+    };
+    if matches!(stage, Stage::PreCommit) && staged.is_empty() {
         return Ok(());
     }
     let declaration = declaration?;
+    if matches!(stage, Stage::PreCommit) {
+        let managed = crate::local_exclude::managed_paths(process, &root).await?;
+        if let Some(entry) = staged.iter().find(|entry| {
+            generated_status(entry.status)
+                && managed
+                    .iter()
+                    .any(|name| name.as_bytes() == entry.path.as_slice())
+        }) {
+            return Err(generated_tracked(&entry.path));
+        }
+    }
     let context = config::resolve(
         process,
         &root,
@@ -1292,10 +1402,10 @@ pub async fn check(
     let selected = checkpoint_valid(&context, declaration.target.as_deref())?;
     if matches!(stage, Stage::PrePush) {
         for pushed in &pushed {
-            if pushed.branch != selected.branch {
+            if pushed.branch != selected.branch || pushed.remote_branch != selected.branch {
                 return Err(rejected(&format!(
-                    "Ref refs/heads/{} is not covered by the checkpoint for refs/heads/{}.",
-                    pushed.branch, selected.branch
+                    "Ref refs/heads/{} pushes to refs/heads/{} but the checkpoint covers refs/heads/{}.",
+                    pushed.branch, pushed.remote_branch, selected.branch
                 )));
             }
         }
@@ -1304,6 +1414,59 @@ pub async fn check(
         }
     }
     Ok(())
+}
+
+struct StagedEntry {
+    status: char,
+    path: Vec<u8>,
+}
+
+/// Parse `git diff --cached --name-status -z`. Rename and copy entries keep the
+/// destination path because that is the path the commit records. Paths stay as
+/// bytes so a legal non-UTF-8 ordinary filename never fails the check.
+async fn staged_entries(process: &Process, root: &Path) -> Result<Vec<StagedEntry>, Diagnostic> {
+    let output = project::git(process, root, &["diff", "--cached", "--name-status", "-z"]).await?;
+    let mut fields = output
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    let mut entries = Vec::new();
+    while let Some(status) = fields.next() {
+        let status = std::str::from_utf8(status)
+            .map_err(|_| Diagnostic::input("Git returned a non-UTF-8 staged status."))?
+            .chars()
+            .next()
+            .ok_or_else(|| Diagnostic::input("Git returned an empty staged status."))?;
+        let mut path = fields
+            .next()
+            .ok_or_else(|| Diagnostic::input("Git returned a staged entry without a path."))?;
+        if matches!(status, 'R' | 'C') {
+            path = fields
+                .next()
+                .ok_or_else(|| Diagnostic::input("Git returned a rename without a destination."))?;
+        }
+        entries.push(StagedEntry {
+            status,
+            path: path.to_vec(),
+        });
+    }
+    Ok(entries)
+}
+
+/// A staged generated asset is rejected unless the commit removes it.
+fn generated_status(status: char) -> bool {
+    matches!(status, 'A' | 'M' | 'T' | 'R' | 'C')
+}
+
+fn generated_tracked(path: &[u8]) -> Diagnostic {
+    let path = String::from_utf8_lossy(path);
+    Diagnostic::new(
+        Code::EvidenceRejected,
+        "git_guard",
+        &format!("{path} is a SpecGit-generated local asset and must stay untracked."),
+        &format!(
+            "Unstage it with `git restore --staged -- {path}`. If a legacy commit tracks a copy, clean that copy with an authorized `git rm --cached -- {path}`; the generated file stays in the worktree. Do not use `git add -f`."
+        ),
+    )
 }
 
 /// The most new commits one push may carry before the binding check fails closed.

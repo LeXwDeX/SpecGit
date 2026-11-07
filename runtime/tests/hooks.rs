@@ -533,7 +533,11 @@ fn hook_reuses_the_target_probe_instead_of_resolving_toplevel_again() {
     );
     let state: Value = serde_json::from_slice(&fs::read(state_path).unwrap()).unwrap();
     let queries = state["git_proxy_cache"].as_object().unwrap();
-    assert_eq!(queries.len(), 4, "{state}");
+    assert_eq!(queries.len(), 3, "{state}");
+    assert!(
+        !queries.keys().any(|key| key.contains("status")),
+        "the hook status probe must not run: {state}"
+    );
     assert_eq!(
         queries
             .keys()

@@ -1,6 +1,168 @@
 #[path = "support/executable.rs"]
 mod executable;
 use std::process::Command;
+
+#[test]
+fn discovery_precedes_explicit_input_and_preserves_input_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let valid = root.path().join("request.json");
+    std::fs::write(&valid, r#"{"command":"setup","options":{"catalog":true}}"#).unwrap();
+    for path in [root.path().join("missing.json"), valid.clone()] {
+        let output = executable::command()
+            .args(["--help", "--input-file"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["operation"], "help");
+    }
+    let output = executable::command()
+        .arg("--input-file")
+        .arg(valid)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["operation"], "setup");
+}
+
+#[test]
+fn discovery_and_input_diagnostics_follow_cli_boundaries() {
+    let output = executable::command()
+        .args(["--version", "--json"])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["operation"], "version");
+
+    let output = executable::command()
+        .args(["--cwd", "issue", "--schema"])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["evidence"]["command"]["name"], "specgit");
+
+    let output = executable::command()
+        .args(["--human", "--input-file", "/missing-specgit-input.json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert!(serde_json::from_slice::<serde_json::Value>(&output.stdout).is_err());
+
+    let output = executable::command()
+        .args(["--human", "issue", "--", "--json"])
+        .output()
+        .unwrap();
+    assert!(serde_json::from_slice::<serde_json::Value>(&output.stdout).is_err());
+
+    let output = executable::command()
+        .args(["issue", "accept", "--bad", "--json"])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_ne!(report["diagnostics"][0]["operation"], "major_version");
+}
+
+#[test]
+fn schema_discovery_accepts_unknown_operands() {
+    for args in [
+        ["--schema", "frobnicate", "--json"],
+        ["--schema", "issue", "--bogus"],
+    ] {
+        let output = executable::command().args(args).output().unwrap();
+        assert!(output.status.success());
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["operation"], "schema");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_inline_input_file_is_not_ignored() {
+    use std::os::unix::ffi::OsStringExt;
+    let arg = std::ffi::OsString::from_vec(b"--input-file=\xff".to_vec());
+    let output = executable::command()
+        .args(["setup", "--catalog", "--json"])
+        .arg(arg)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_preserves_newline_in_repository_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("repo\n");
+    std::fs::create_dir(&root).unwrap();
+    assert!(
+        Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let output = executable::command()
+        .args(["setup", "--dry-run", "--json"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn guard_reads_ownership_receipt_from_git_directory_ending_in_newline() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("repo");
+    let git_dir = temp.path().join("git-dir\n");
+    std::fs::create_dir(&root).unwrap();
+    assert!(
+        Command::new("git")
+            .args(["init", "--quiet", "--separate-git-dir"])
+            .arg(&git_dir)
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::remove_file(root.join(".git")).unwrap();
+    std::os::unix::fs::symlink(&git_dir, root.join(".git")).unwrap();
+    std::fs::write(root.join(".specgit.yaml"), "version: 2\nremote: origin\n").unwrap();
+    std::fs::write(root.join("staged"), "content").unwrap();
+    assert!(
+        Command::new("git")
+            .args(["add", "staged"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let private = git_dir.join("specgit-v2/agent-assets");
+    std::fs::create_dir_all(&private).unwrap();
+    std::fs::write(private.join("ownership.json"), "invalid").unwrap();
+    let output = executable::command()
+        .args(["guard", "--stage", "pre-commit"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("ownership receipt"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 #[cfg(all(windows, feature = "test-fixtures"))]
 #[test]
 fn console_interrupt_preserves_native_cancellation_json_through_the_installed_entrypoint() {
@@ -302,6 +464,42 @@ fn successful_help_never_substitutes_for_account_api_evidence() {
 
 /// `--schema` must publish every option dependency, including one on a group,
 /// so a machine client never builds an input that clap is certain to reject.
+#[test]
+fn schema_lists_init_and_setup_write_boundaries() {
+    for (command, expected) in [
+        (
+            "init",
+            &[
+                "guard", "guidance", "routing", "receipt", "inspect", "dry_run",
+            ][..],
+        ),
+        (
+            "setup",
+            &[
+                "guard",
+                "guidance",
+                "routing",
+                "receipt",
+                "uninstall",
+                "rollback",
+                "dry_run",
+            ][..],
+        ),
+    ] {
+        let out = executable::command()
+            .args([command, "--schema", "--json"])
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let writes = report["evidence"]["command"]["effects"]["local_writes"]
+            .as_str()
+            .unwrap();
+        for item in expected {
+            assert!(writes.contains(item), "{command}: missing {item}: {writes}");
+        }
+    }
+}
+
 #[test]
 fn schema_publishes_option_requirements_and_the_groups_they_name() {
     let out = executable::command()

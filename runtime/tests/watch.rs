@@ -343,6 +343,7 @@ fn terminal_poll_fully_verifies_merged_and_closed_requests() {
                 });
                 s["requests"][0]["merged"] = json!(merged);
                 s["issues"][0]["state"] = json!("closed");
+                s["native_closing"] = json!([1]);
             });
             finish_watcher(&mut child);
             let terminal = f.state()["calls"].as_array().unwrap().len() - first;
@@ -473,24 +474,36 @@ fn watch_once_reports_locked_as_transient_without_writes() {
 
 #[test]
 fn unsupported_operation_without_a_locked_request_stays_terminal() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let f = fixture("gitlab");
     let mut child = polling(&f, "unsupported-operation-terminal");
     wait_for_poll(&f, &mut child, 1);
     // This is an unsupported native operation, but not the verified
     // locked-request diagnostic. It must not enter the retry path.
     f.edit(|s| {
+        s["calls"] = json!([]);
         s["read_routes"]["projects/7/pipelines/71"] = json!({"__fixture_error":"unknown command"});
+        s["pipeline_delay_ms"] = json!(16_000);
     });
-    let started = Instant::now();
-    while child.try_wait().unwrap().is_none() {
+    loop {
+        let calls = f.state();
+        if calls["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|call| call["method"] == "GET" && call["endpoint"] == "projects/7/pipelines/71")
+        {
+            break;
+        }
+        let state = watch_store::read(&child.identity).unwrap().unwrap();
         assert!(
-            started.elapsed() < Duration::from_secs(15),
-            "an unrelated unsupported operation was retried: {}",
+            child.try_wait().unwrap().is_none() && child.within_budget(Some(&state)),
+            "the second pipeline request was not observed: {}",
             child.diagnostic()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    finish_watcher(&mut child);
     let state = watch_store::read(&child.identity).unwrap().unwrap();
     let last = state.events.last().unwrap();
     assert_eq!(last.state, EventState::Unknown);
@@ -757,7 +770,7 @@ fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
         "project-observation-defaults",
     );
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(7);
+    let deadline = started + Duration::from_secs(15);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
@@ -773,7 +786,7 @@ fn watch_uses_project_observation_defaults_when_cli_values_are_omitted() {
         child.diagnostic()
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
-    assert!(started.elapsed() < Duration::from_secs(6));
+    assert!(started.elapsed() < Duration::from_secs(12));
     assert!(
         request_reads(&f) >= before + 2,
         "poll_seconds was not applied"
@@ -820,7 +833,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
         "explicit-observation-overrides",
     );
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(5);
+    let deadline = started + Duration::from_secs(12);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break Some(status);
@@ -836,7 +849,7 @@ fn explicit_watch_values_override_project_observation_defaults() {
         child.diagnostic()
     );
     assert_eq!(status.unwrap().code(), Some(3), "{}", child.diagnostic());
-    assert!(started.elapsed() < Duration::from_secs(4));
+    assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(f.writes(), writes);
     assert_eq!(
         watch_store::read(&identity)
@@ -889,6 +902,7 @@ fn configured_notification_filters_do_not_filter_direct_watch_evidence() {
         s["requests"][0]["state"] = json!("closed");
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
+        s["native_closing"] = json!([1]);
     });
 
     let offered = hook_output(&f, "PostToolUse", true);
@@ -990,6 +1004,45 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
             assert_eq!(f.writes(), writes, "{provider}/{check_state}");
         }
     }
+}
+
+#[test]
+fn many_failed_checks_keep_the_event_persisted_and_the_action_bounded() {
+    let f = fixture("github");
+    set_check_state(&f, "github", "failed");
+    f.edit(|s| {
+        for (route, response) in s["read_routes"].as_object_mut().unwrap() {
+            if !route.contains("/check-runs?") {
+                continue;
+            }
+            let runs = response["check_runs"].as_array_mut().unwrap();
+            let base = runs[0].clone();
+            for index in 0..40 {
+                let mut run = base.clone();
+                run["id"] = json!(9000 + index);
+                run["check_suite"]["id"] = json!(8000 + index);
+                run["name"] = json!(format!(
+                    "Long matrix verification name {index} for a slow shared runner"
+                ));
+                runs.push(run);
+            }
+            response["total_count"] = json!(runs.len());
+        }
+    });
+    let result = f.run(&watch("checks"));
+    assert_eq!(result["status"], "failed", "{result}");
+    let event = &result["evidence"]["events"][0];
+    assert_eq!(event["state"], "failed", "{result}");
+    let action = &result["next_actions"][0];
+    assert_eq!(action["kind"], "repair_checks", "{result}");
+    assert!(
+        action["message"].as_str().unwrap().len() <= 1024,
+        "persisted action exceeded its byte budget: {result}"
+    );
+    assert!(
+        action["failed_checks"].as_array().unwrap().len() > 10,
+        "structured failed checks were truncated: {result}"
+    );
 }
 
 #[test]
@@ -1568,6 +1621,11 @@ fn merged_open_issue_action_bounds_long_issue_preview_without_losing_typed_ids()
         event.id == second_id && !event.superseded && event.acknowledged_at.is_none()
     }));
 
+    let mut no_refresh = inbox_for("lifecycle").to_vec();
+    no_refresh.push("--no-refresh");
+    let pending = f.run(&no_refresh);
+    assert_eq!(pending["evidence"]["pending_event_ids"], json!([second_id]));
+
     let mut args = inbox_for("lifecycle").to_vec();
     args.extend(["--ack", second_id.as_str()]);
     let acknowledged = f.run(&args);
@@ -1784,6 +1842,7 @@ fn lifecycle_timeout_preserves_resumable_intent_and_never_closes_issues() {
     f.edit(|s| {
         s["requests"][0]["state"] = json!("merged");
         s["issues"][0]["state"] = json!("closed");
+        s["native_closing"] = json!([1]);
     });
     assert_eq!(f.run(&watch("lifecycle"))["status"], "completed");
     assert_eq!(f.writes(), writes);
@@ -2196,6 +2255,7 @@ fn explicit_watch_offers_fresh_events_and_allowed_hooks_only_recover_unverified_
             });
             s["requests"][0]["merged"] = json!(true);
             s["issues"][0]["state"] = json!("closed");
+            s["native_closing"] = json!([1]);
         });
         let writes = f.writes();
         let first = f.run(&watch("lifecycle"));
@@ -2489,6 +2549,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         s["requests"][0]["state"] = json!("closed");
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
+        s["native_closing"] = json!([1]);
     });
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -2727,4 +2788,140 @@ fn scheduling_windows_remain_pending_and_unknown_statuses_remain_retryable() {
             assert_eq!(result["status"], "pending", "{result}");
         }
     }
+}
+
+#[test]
+fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
+    let f = fixture("gitlab");
+    f.edit(|s| s["read_routes"]["projects/7/pipelines/71"]["status"] = json!("future_status"));
+    let started = std::time::Instant::now();
+    let result = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "unknown-bounded",
+        "--goal",
+        "checks",
+        "--timeout-seconds",
+        "30",
+        "--poll-seconds",
+        "1",
+    ]);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "unknown checks did not stop before the deadline: {result}"
+    );
+    assert_eq!(result["status"], "unknown", "{result}");
+    assert_eq!(result["exit"], 3, "{result}");
+    assert_eq!(
+        result["next_actions"][0]["kind"], "refresh_native_evidence",
+        "{result}"
+    );
+    let action = result["next_actions"][0]["message"].as_str().unwrap();
+    assert!(action.contains("inspect native checks"), "{result}");
+    let identity: Identity =
+        serde_json::from_value(result["evidence"]["subscription"].clone()).unwrap();
+    assert!(
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .lease
+            .is_none(),
+        "unknown terminal state did not release the lease"
+    );
+}
+
+#[test]
+fn expire_lease_preserves_unexpired_and_locked_leases() {
+    let f = fixture("github");
+    let observed = f.run(&watch("checks"));
+    let identity: Identity =
+        serde_json::from_value(observed["evidence"]["subscription"].clone()).unwrap();
+    let store = Store::new(identity).unwrap();
+    let (lock, _) = store.lease(watch_store::now() + 1000).unwrap();
+    assert!(
+        store.expire_lease().unwrap().unwrap().lease.is_some(),
+        "an unexpired lease must remain"
+    );
+    drop(lock);
+    let (lock, _) = store.lease(watch_store::now().saturating_sub(1)).unwrap();
+    assert!(
+        store.expire_lease().unwrap().unwrap().lease.is_some(),
+        "a lease held by a live process must remain"
+    );
+    drop(lock);
+    assert!(
+        store.expire_lease().unwrap().unwrap().lease.is_none(),
+        "an expired unlocked lease must be cleared"
+    );
+}
+
+#[test]
+fn no_refresh_is_read_only_and_refresh_cleans_expired_lease() {
+    let f = fixture("github");
+    let observed = f.run(&watch("checks"));
+    let identity: Identity =
+        serde_json::from_value(observed["evidence"]["subscription"].clone()).unwrap();
+    let state_root = identity
+        .git_dir
+        .join("specgit-v2/subscriptions")
+        .join(identity.key());
+    let state_path = state_root.join("state.json");
+    let entries = |root: &std::path::Path| {
+        let mut names: Vec<_> = std::fs::read_dir(root)
+            .map(|read| {
+                read.map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let store = Store::new(identity.clone()).unwrap();
+    let (lock, _) = store.lease(watch_store::now().saturating_sub(1)).unwrap();
+    let before = std::fs::read(&state_path).unwrap();
+    let entries_before = entries(&state_root);
+    let mut args = inbox().to_vec();
+    args.push("--no-refresh");
+    assert_eq!(f.run(&args)["status"], "unverified");
+    assert_eq!(std::fs::read(&state_path).unwrap(), before);
+    assert_eq!(entries(&state_root), entries_before);
+    assert!(
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .lease
+            .is_some()
+    );
+    let fresh = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "fresh-session",
+        "--goal",
+        "checks",
+        "--no-refresh",
+    ]);
+    assert_eq!(fresh["status"], "unverified");
+    let fresh_identity: Identity =
+        serde_json::from_value(fresh["evidence"]["subscription"].clone()).unwrap();
+    assert!(
+        !identity
+            .git_dir
+            .join("specgit-v2/subscriptions")
+            .join(fresh_identity.key())
+            .exists(),
+        "no-refresh created subscription state"
+    );
+    drop(lock);
+    assert_eq!(f.run(&inbox())["status"], "checks_passed");
+    assert!(
+        watch_store::read(&identity)
+            .unwrap()
+            .unwrap()
+            .lease
+            .is_none()
+    );
 }

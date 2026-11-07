@@ -78,6 +78,10 @@ visible long aliases for argv, conflicts, required options (`requires`, with any
 group listed under the command's `groups`) and side-effect classification. Engineering qualification generates
 `schemas/` from this contract and compares them with the installed executable.
 Public ZIPs contain only the executable; use its embedded offline `--schema`.
+Help takes precedence over version, then schema; these discovery options do not
+read `--input-file`. Schema discovery does not validate other operands or options:
+an unknown command returns the root contract, and a known command selects its
+contract even when other arguments are invalid. Tokens after `--` are positional.
 
 Global options are `--cwd <path>`, `--json`, `--human`, `--schema` and
 `--input-file <path>`. Ordinary non-TTY stdout defaults to a single JSON report;
@@ -138,13 +142,13 @@ commands use the global input/output contract above.
 | Command | Purpose and options |
 | --- | --- |
 | `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; naming a new host selects its guidance and Skill only. Hooks require explicit `--hook-purpose guard|context`; an existing installation retains recorded choices when purposes are omitted. `--remove-hook-purpose guard|context` removes a purpose from the hosts named by `--agent`, or all recorded hosts if `--agent` is omitted; it cannot select a host not already recorded. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update, purpose removal or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
-| `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. A new project without a setup receipt also installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, so every commit binds an Issue; `--dry-run` lists its hook paths. Tracked hook directories such as Husky, external `core.hooksPath` locations and linked worktrees need explicit `setup --hook-purpose guard`. A recorded installation keeps its purposes, including an explicit `setup --remove-hook-purpose guard`. |
-| `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. A checkpoint recorded as delivered admits no new Issues on its branch; `--branch <name>` replaces it when it has no pending write. |
-| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. When a verified read shows the current branch checkpoint's recorded request merged, `--status` records it as delivered in Git-private state and reports the `record_delivered_checkpoint` local effect. A failure while preparing the local record (Git, declaration or context) reports `delivered_checkpoint_prepare` and adds no write effect. A failed record attempt keeps the verified native request and Issue evidence but reports a non-success result, with `not_applied` or `unknown` effects and a `delivered_checkpoint` retry diagnostic; rerun `pr --status` after fixing the lock or permission problem. |
-| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. A verified merged request retires the current checkpoint as described under commit binding. A failed local record keeps the published event and adds the `delivered_checkpoint` retry diagnostic without changing the event state or transport receipt. The CLI and refreshing `inbox` keep that evidence and report `not_applied` or `unknown` effects; library `observe_subscription` and `observe_until_attention` keep the published event and return the same diagnostic as `Err`. |
+| `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. A new project without a setup receipt also installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, so every commit binds an Issue; `--dry-run` lists its hook paths. Tracked hook directories such as Husky and linked worktrees need explicit `setup --hook-purpose guard`. An external `core.hooksPath` outside the worktree and its common Git directory is not supported. When the default guard is selected and an existing hook cannot be safely wrapped, init fails closed and writes no files. A recorded installation keeps its purposes, including an explicit `setup --remove-hook-purpose guard`. |
+| `issue` | Adopt positive Issue IDs or create complete specification titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. A checkpoint recorded as delivered admits no new Issues on its branch; `--branch <name>` replaces it when it has no pending write. `--discard-uncertain` clears write-started intents only after complete native reads prove that no matching Issue candidate exists; it preserves the checkpoint and every native object. |
+| `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title`, `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. When a verified read shows the current branch checkpoint's recorded request merged, `--status` records it as delivered in Git-private state and reports the `record_delivered_checkpoint` local effect. A failure while preparing the local record (Git, declaration or context) reports `delivered_checkpoint_prepare` and adds no write effect. A failed record attempt keeps the verified native request and Issue evidence but reports a non-success result, with `not_applied` or `unknown` effects and a `delivered_checkpoint` retry diagnostic; rerun `pr --status` after fixing the lock or permission problem. `--discard-uncertain` clears an uncertain request creation only when the native read proves no matching request exists; it preserves the checkpoint and native objects. |
+| `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. A verified merged request retires the current checkpoint as described under commit binding. A failed local record keeps the published event and adds the `delivered_checkpoint` retry diagnostic without changing the event state or transport receipt. The CLI and refreshing `inbox` keep that evidence and report `not_applied` or `unknown` effects; library `observe_subscription` and `observe_until_attention` keep the published event and return the same diagnostic as `Err`. A failed lease release keeps the published event and adds a `release_watch_lease` diagnostic; the CLI stays successful unless the event state itself is non-success. |
 | `hook` | Advisory host context with `--event SessionStart\|PreToolUse`. SessionStart briefly states rules and points to the project Skill; PreToolUse adds pending context and recovery guidance without tool denial. Retired PostToolUse/Stop callbacks return quietly before input is read. `--observe` does not launch automatic observation; use bounded watch/inbox. State is Git-private; `--state-root` is rejected. See [hook input and decisions](#hook-input-and-decisions). |
-| `guard` | Local Git-hook entrypoint. `--install --dry-run` and `--uninstall --dry-run` preview the same plans without creating hooks, state, directories or locks; use `--json` for machine output. Dry-run requires an install/uninstall operation and conflicts with `--stage`. Management, health planning and repair reject `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` overrides before creating any lock, directory or transaction; `--stage` keeps Git's hook environment. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while an active setup or sibling hook consumer needs the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Existing non-shell hooks are preserved with a diagnostic. `--stage pre-commit` rejects staged changes without a current checkpoint. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref, and requires every new non-merge commit to carry an `Issue: #N` trailer naming a selected Issue; deletions and tag-only updates are outside this checkpoint rule. |
-| `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` lists unverified IDs only. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
+| `guard` | Local Git-hook entrypoint. `--install --dry-run` and `--uninstall --dry-run` preview the same plans without creating hooks, state, directories or locks; use `--json` for machine output. Dry-run requires an install/uninstall operation and conflicts with `--stage`. Management, health planning and repair reject `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` overrides before creating any lock, directory or transaction; `--stage` keeps Git's hook environment. `--install` merges owned blocks into the effective native/custom hook path and uses Husky's user scripts when `core.hooksPath=.husky/_`; the hook path must be inside the worktree or its common Git directory, and an external `core.hooksPath` is rejected before any write. `--uninstall` removes only recorded blocks, and keeps them (reported under `retained`) while an active setup or sibling hook consumer needs the hook directory; `--install` names the owning worktree when shared hooks are owned elsewhere. Installation and refresh preserve an existing hook unchanged and fail closed when it is missing a supported shell shebang, invokes inline commands or scripts, or otherwise cannot be safely wrapped. `--stage pre-commit` rejects staged changes without a current checkpoint, and rejects staged additions or modifications of `.specgit.yaml` and generated Skills identified by the managed `info/exclude` block or the init/setup ownership receipt; same-named manual files are not protected, and staged deletions stay allowed for `git rm --cached`. `--stage pre-push` reads and replays Git's ref-update stdin, validating every branch ref, requires both the local and remote branch of each update to match the selected checkpoint branch, and requires every new non-merge commit to carry an `Issue: #N` trailer naming a selected Issue; deletions and tag-only updates are outside this checkpoint rule. |
+| `inbox` | Read/refresh pending events with `--request`, `--session`, `--goal`. `--no-refresh` is read-only and lists unverified IDs only; it does not create state or clear a lease. A refreshing inbox expires a stale lease before observation and then keeps only the current ref evidence. `--ack <event-id>` records explicit transport receipt and conflicts with no-refresh. State is always Git-private; `--state-root` is rejected. |
 | `status` | Offline Git identity and local selection. Optional `--remote`, `--provider`; no forge child is invoked. |
 | `doctor` | Check local project health and, unless offline, read tool/account/project capability and derive basic Issue/request role permissions from the project response. `--provider` is optional when it can be derived from the selected remote/declaration; `--remote` and `--api-host` are optional overrides. `--offline` skips authentication, APIs, and provider CLI execution. `--fix` repairs only selected, recorded project integrations; repair operations reject `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` overrides. `--dry-run` requires `--fix` and previews local changes. `--account-only` requires `--provider` and conflicts with offline/fix/dry-run. Help success does not prove API access, mutation permission, or host behavior. |
 | `migrate` | Preview owned v1 retirement using `--config-file <v2.yaml>` and optional `--api-host`. `--apply --expect <digest>` applies the exact reviewed preview. `--retire-only` runs offline with Git only: it records the selected `gh`/`glab` probes as `not_checked`, makes no forge request and retains the old declaration for staged cutover. Its `remote_retirement: null` means remote retirement was not checked or proven. `--rollback <transaction>` restores proven local assets. |
@@ -173,7 +177,7 @@ verify the installed executable's signature.
 
 Without `--account-only`, doctor uses explicit provider/remote first, then the local repository identity and declaration as available; stored API routing is used as a fallback, and explicit `--api-host` takes precedence. Account-only mode skips local configuration and checkpoint reads and reports local state as `not_checked`. Local context inspection adds no API calls, fetches or writes.
 
-Project-mode doctor also reports `evidence.health`, `evidence.repair` and `evidence.agent_guidance`. Health checks cover the declaration, selected setup assets, generated guidance, recorded Git-local exclusions, Git guard and static executable paths. Any unknown health check blocks all repair writes; the report keeps independently prepared plans as preview evidence until inspection is complete. Skipped repairs remain in repair results but are not recorded as attempted effects. An unselected integration is `not_selected`; doctor does not guess a host or hook purpose. Recognizable SpecGit host registrations without an ownership receipt are conflicts. An initialized project whose effective hooks lack the native Git guard reports guard `not_installed` with `attention`, because commits can bypass Issue binding; doctor does not install it, and the remedy is `setup --hook-purpose guard`. A project hook executable must be outside every checkout of the same repository, including linked worktrees. `health.status` is `healthy`, `attention`, or `unknown`; `host_behavior` is always `not_verified`. File presence or a registered hook does not prove that an Agent loaded a Skill or that a host event ran.
+Project-mode doctor also reports `evidence.health`, `evidence.repair` and `evidence.agent_guidance`. Health checks cover the declaration, selected setup assets, generated guidance, recorded Git-local exclusions, Git guard and static executable paths. Any unknown health check blocks all repair writes; the report keeps independently prepared plans as preview evidence until inspection is complete. Skipped repairs remain in repair results but are not recorded as attempted effects. An unselected integration is `not_selected`; doctor does not guess a host or hook purpose. Recognizable SpecGit host registrations without an ownership receipt are conflicts. An initialized project whose effective hooks lack the native Git guard reports guard `not_installed` with `attention`, because commits can bypass Issue binding; doctor does not install it, and the remedy is `setup --hook-purpose guard`. That remedy does not apply to an external `core.hooksPath`, which guard installation rejects. A project hook executable must be outside every checkout of the same repository, including linked worktrees. `health.status` is `healthy`, `attention`, or `unknown`; `host_behavior` is always `not_verified`. File presence or a registered hook does not prove that an Agent loaded a Skill or that a host event ran.
 
 `--offline` performs local checks without authentication, network/API requests, or launching the provider CLI. The existing probe fields remain present as `not_checked`. `--fix --dry-run` reports typed project-asset plans and writes no files, locks, receipts, or transaction state. `--fix` applies only repair plans backed by a valid declaration and recorded ownership, then rechecks the project. Unknown ownership, damaged receipts/markers, permission or path conflicts remain in place with diagnostics. A missing declaration with initialized private state fails closed and must be restored from its original source. Manually edited content inside a valid owned guidance block follows the refresh contract; arbitrary manual content in a missing whole file cannot be reconstructed, so the repair is refused. A missing owned exclusion block can be restored from proven native integration records, including shared worktree Skill rules; a missing whole exclude file, damaged markers or permission drift remain conflicts. Library-only setup that never selected native exclusions does not acquire them through doctor.
 
@@ -496,7 +500,14 @@ or discard unresolved write intent to get past these checks.
 ### Commit binding and delivered checkpoints
 
 Every commit binds an Issue. The installed pre-commit guard requires a current,
-complete checkpoint. The pre-push guard also requires each new non-merge commit to
+complete checkpoint and rejects staged additions or modifications of
+`.specgit.yaml` and generated Skills. A generated Skill is identified by the
+managed `info/exclude` block or the init/setup ownership receipt; a same-named
+manual file is not protected when neither source records it, and a missing
+worktree copy does not remove protection. Damaged ownership or exclusion
+evidence makes pre-commit fail closed until the project integration is repaired.
+A staged deletion is allowed so an authorized `git rm --cached` can clean a
+legacy tracked copy. The pre-push guard also requires each new non-merge commit to
 carry an `Issue: #N` trailer for a selected Issue, for example
 `git commit --trailer "Issue: #12"`. New commits are those not reachable from any
 remote-tracking ref or the local target branch. Merge commits, deletions and
@@ -543,6 +554,17 @@ request with open linked Issues produces attention. Agent supplementary closure
 is optional, defaults off, and requires existing authorization plus native
 readback of merge, intended associations and resulting Issue closure.
 
+`completed` requires the request's own verified merge plus all of the following:
+an available, non-empty `native_closing` set; every associated Issue closed;
+every locally selected Issue also present in the native closing set; no
+association discrepancies; and, on GitHub, no `state_reason` other than
+`completed` for an Issue in that set. A missing or null `state_reason` is allowed.
+A body-only `Closes` reference, a local selection alone, or a `not_planned` or
+`duplicate` closure therefore keeps the status `merged`. GitLab exposes no
+`state_reason` and relies on its native `closes_issues` set. The optional
+`evidence.issue_state_reasons` list reports each Issue's provider close reason
+without changing the public six-field `Issue` object.
+
 GitLab may report a short-lived `locked` merge-request state. It is valid
 protocol evidence, not malformed input and not proof of merge, closure or
 `discussion_locked`. Such a request is reported as `unknown` with an
@@ -579,7 +601,9 @@ mismatches; `evidence.request.target` is the native target and `evidence.target`
 is the local configured target. A native `completed` status does not certify the current checkout.
 Without an explicit ID, status remains local-checkpoint/branch scoped. `watch`
 also stays bound to the current worktree; use `pr --status --request <id>` for
-cross-branch reads. Fork and cross-project reads are unsupported.
+cross-branch reads. Fork and cross-project reads are unsupported. With no local
+selection, a merged request still needs at least one native closing association
+before it is reported as `completed`.
 
 A GitHub workflow without visible check runs contributes its own status: queued
 or running remains pending, and a completed workflow succeeds only with native
@@ -592,10 +616,14 @@ within the watch budget; they never prove passing checks.
 Issue associations retain per-Issue sources: `native_closing`, `body_reference`
 and `local_selection`. The native source comes from the platform's closing-Issue
 query; unavailable queries remain diagnostic evidence, never an empty successful
-result. Unsupported body-reference syntax adds a diagnostic while retaining the
-request and any separately read native association/Issue facts; mutation commands
-still reject that syntax. Local selections apply only to their exact request ID. Explicitly observing
-a different request does not inherit the previous request's selected Issues.
+result. A body-only `Closes` reference is a reference, not native closure, and
+cannot complete a delivery alone. Unsupported body-reference syntax adds a
+diagnostic while retaining the request and any separately read native
+association/Issue facts; mutation commands still reject that syntax. Local
+selections apply only to their exact request ID. Explicitly observing a different
+request does not inherit the previous request's selected Issues.
+`evidence.issue_state_reasons` lists the provider close reason for each read
+Issue; it is additive evidence and does not change the public `Issue` fields.
 Association changes participate in watch event revisions, including source changes
 that leave the set of Issue IDs unchanged.
 
@@ -633,14 +661,17 @@ open Issues keep the unresolved inspection text and issue IDs; the same
 local-divergence guidance is recorded in the event reason, so the action message
 stays within its 1024-byte storage limit. The message previews whole Issue IDs in
 order and counts omitted display entries when the complete list exceeds that
-limit; the typed `issue_ids` still carries the complete deduplicated set. Unknown
-closure keeps its verification step and records in the reason that current
-request and issue facts must be verified first; that guidance covers only
-additional local work. Closed-unmerged requests keep the explicit reopen or
-follow-up choice and state that a push cannot reopen them. These notes never
-claim a checkpoint was saved. Open requests keep the existing local-ahead and
-dirty pending behavior. Watch, inbox and Hook actions are advisory and never
-ready, merge or close anything automatically.
+limit; the typed `issue_ids` still carries the complete deduplicated set. A
+Failed action applies the same limit to check names: its message previews whole
+names and counts omitted entries, while structured `failed_checks` retains every
+name. Large failed-check collections are persisted instead of failing event
+publication as an ownership conflict. Unknown closure keeps its verification
+step and records in the reason that current request and issue facts must be
+verified first; that guidance covers only additional local work. Closed-unmerged requests
+keep the explicit reopen or follow-up choice and state that a push cannot reopen
+them. These notes never claim a checkpoint was saved. Open requests keep the
+existing local-ahead and dirty pending behavior. Watch, inbox and Hook actions
+are advisory and never ready, merge or close anything automatically.
 
 Project setup-managed host hooks use only SessionStart and PreToolUse. Context
 purpose registers both. Guard purpose installs native Git pre-commit/pre-push
@@ -850,16 +881,18 @@ relative or unavailable home is invalid input with no writes. Symbolic links
 anywhere below the resolved home are refused, including a dangling file link.
 No Git repository or declaration is required.
 
-Installation uses the same embedded Skill as project setup. Its final line is
+Installation uses the same embedded Skill as project setup. Its marker line is
 `<!-- specgit:managed sha256=<64 lowercase hex digits> -->`; the digest covers
 every byte before that line, including the preceding newline. A valid marker
-line establishes ownership. A foreign file (no valid marker) is a conflict and
+line establishes ownership wherever it appears. A foreign file (no valid marker) is a conflict and
 is never adopted. A managed file is refreshed to the current embedded content.
 If its body hash differs, or content was appended after the marker, refresh first
 preserves the exact old bytes and permissions in a sibling
 `SKILL.md.specgit-backup-<unix-seconds>` file, with a unique numeric suffix when
 needed. The backup path is in `evidence.backup` and `effects`. Backups are never
-silently replaced or removed.
+silently replaced or removed. Up to 1,000 candidate backup names are tried;
+when no unused name is available, the operation reports `ownership_conflict`,
+`effects.outcome` is `not_applied`, and `SKILL.md` keeps its current bytes.
 
 Writes are staged and synced in the same directory, then atomically published.
 New-file publication never clobbers a concurrently created file. Existing-file
@@ -1079,11 +1112,12 @@ when a committed init or migration journal proves their exact bytes and
 permissions; a tracked `.specgit.yaml` blocks removal because removal never
 changes the Git index. Init guidance blocks and recorded project agent skills,
 guidance, settings (#652) and receipt-owned guard hooks join the same transaction.
-An existing delivery checkpoint permits removal only after the native request is verified merged into
-the recorded target with every selected Issue closed. The shared
-`info/exclude` block is removed only when no sibling initialized worktree
-still consumes it. A sibling with a declaration, or with SpecGit private state
-whose declaration is missing, counts as a consumer.
+An existing delivery checkpoint permits removal only after the native request is
+reported `merged` or `completed` with the recorded target, with every selected
+Issue closed and no observation diagnostics; the evidence's `lifecycle.state`
+records the observed status. The shared `info/exclude` block is removed only when
+no sibling initialized worktree still consumes it. A sibling with a declaration,
+or with SpecGit private state whose declaration is missing, counts as a consumer.
 
 An edited or damaged owned asset, a pending transaction, and an undelivered or
 foreign checkpoint block the preview: its evidence lists the conflicts and
@@ -1206,6 +1240,26 @@ Unknown ancestry, stale source/target results and merge-train ancestry that cann
 meet this proof are rejected; no SHA comparison is simply disabled.
 
 ### Git guard executable binding
+
+For hooks in Git metadata, `guard --install` rejects a running CLI inside the
+project checkout or another checkout of the same repository. Run the installed
+shared CLI outside those checkouts. Existing hooks must use `sh`, `bash` or
+`zsh` shebangs, including `env -S` forms. The guard preserves the hook unchanged
+and fails closed when the shebang cannot be safely wrapped: inline commands
+(`-c`, `-s`, `--command`, `--stdin`, and combined short options containing `c`
+or `s`), script input from stdin (`-`), a positional script operand, `--` or
+any token after it, execution-suppressing options
+(`-n`, `-D`, `-t`, `--help`, `--version`, `--dump-strings`,
+`--dump-po-strings`, `--pretty-print`), trailing-argument options (`--rcfile`,
+`--init-file`, including their `=` forms, `-o` and `-O`), short or combined
+short options containing `n`, `D`, `t`, `o` or `O`, and ambiguous quoting. The
+check is conservative: `-euo pipefail` and `-O extglob` are also rejected; use a
+simpler shebang or put `set -o` in the managed body after the guard block.
+Refresh and health planning apply the same validation to an already recorded
+hook. Installation makes a non-executable hook executable. A pre-push input read
+failure blocks the push; clean EOF is accepted as an empty update list. The
+local and remote branch of every guarded update must both match the selected
+checkpoint branch.
 
 New guard blocks in Git metadata pin the absolute shared CLI path and quote it for
 POSIX/Git Bash. `guard --install` (or the recorded setup refresh) migrates owned
