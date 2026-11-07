@@ -13,8 +13,9 @@ use std::{
 };
 
 pub use crate::observation_model::{
-    AssociationSource, AutoMerge, CheckOutcome, Evidence, IssueAssociation, LocalApplicability,
-    LocalApplicabilityReason, LocalApplicabilityStatus, Observation, Status, describe,
+    AssociationSource, AutoMerge, CheckOutcome, Evidence, IssueAssociation, IssueStateReason,
+    LocalApplicability, LocalApplicabilityReason, LocalApplicabilityStatus, Observation, Status,
+    describe,
 };
 
 fn changed() -> Diagnostic {
@@ -85,6 +86,7 @@ pub(crate) struct Collected {
     request: forge::RequestObservation,
     native_ids: Option<Vec<u64>>,
     issues: Option<Vec<crate::delivery_model::Issue>>,
+    issue_state_reasons: Vec<(u64, Option<String>)>,
     checks: Option<Vec<crate::delivery_model::Check>>,
     pub(crate) assessment: Observation,
 }
@@ -116,7 +118,14 @@ impl Collected {
         let w = &self.workspace;
         let repo = &w.context.repository;
         for issue in self.issues.iter().flatten() {
-            if native_delivery::issue(&w.reader, repo, w.facts.id, issue.id).await? != *issue {
+            let (fresh, reason) =
+                native_delivery::issue_with_reason(&w.reader, repo, w.facts.id, issue.id).await?;
+            if fresh != *issue
+                || !self
+                    .issue_state_reasons
+                    .iter()
+                    .any(|(id, known)| *id == issue.id && *known == reason)
+            {
                 return Err(changed());
             }
         }
@@ -282,13 +291,26 @@ async fn collect_in_scope(
         ));
     }
     let mut issues = Vec::new();
+    let mut issue_state_reasons = Vec::new();
     for id in associations.keys() {
-        issues.push(native_delivery::issue(&w.reader, repo, w.facts.id, *id).await?);
+        let (issue, state_reason) =
+            native_delivery::issue_with_reason(&w.reader, repo, w.facts.id, *id).await?;
+        issues.push(issue);
+        issue_state_reasons.push((*id, state_reason));
     }
     evidence.associations = Some(
         associations
             .into_iter()
             .map(|(issue, sources)| IssueAssociation { issue, sources })
+            .collect(),
+    );
+    evidence.issue_state_reasons = Some(
+        issue_state_reasons
+            .iter()
+            .map(|(issue, state_reason)| IssueStateReason {
+                issue: *issue,
+                state_reason: state_reason.clone(),
+            })
             .collect(),
     );
     evidence.issues = Some(issues);
@@ -314,6 +336,7 @@ async fn collect_in_scope(
         request: observed,
         native_ids,
         issues,
+        issue_state_reasons,
         checks,
         assessment: result,
     })

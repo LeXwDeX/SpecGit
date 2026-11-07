@@ -86,6 +86,7 @@ pub(super) async fn prepare(event: &str, bytes: &[u8]) -> Result<Option<Prepared
         marker.remote.as_deref(),
         marker.provider,
         None,
+        false,
     )
     .await
     {
@@ -146,11 +147,26 @@ fn offer_at(
     // Waiting up to one second covers fsync latency on a busy disk while
     // leaving most of the host's five-second callback budget; a longer hold
     // still returns LockBusy and the context is offered again next callback.
-    let store = AssetStore::lock(
+    let store = match AssetStore::lock(
         &directory,
         std::slice::from_ref(&directory),
         Duration::from_secs(1),
-    )?;
+    ) {
+        Ok(store) => store,
+        // The offer cache is advisory; a peer holding the lock must not fail
+        // the hook or suppress the context delivered to this session.
+        Err(d) if d.code == Code::LockBusy => {
+            // A peer owns the advisory cache. Deliver the candidates without
+            // recording them; suppressing SessionStart context is worse than
+            // offering the same text again next callback.
+            return Ok(candidates
+                .iter()
+                .map(|(_, text)| *text)
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+        Err(d) => return Err(d),
+    };
     let current = Snapshot::read(&path)?;
     let mut offers = if let Some(bytes) = current.bytes.as_deref() {
         let offers: Offers = serde_json::from_value(crate::input::json(bytes, 32_768, 6)?)

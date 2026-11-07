@@ -42,7 +42,10 @@ other agents can use the CLI and project guidance directly.
 
 SpecGit is distributed **only through GitHub Releases** as native macOS arm64,
 Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and its
-Sigstore signature bundle. End-user installation needs no Node.js,
+Sigstore signature bundle. The signature covers `SHA256SUMS` only; because that
+manifest lists the ZIP hashes, it covers the ZIP bytes, but not the source commit,
+version, build run or internal `native-release.json`. Verify the tag commit and
+the native build workflow run separately. End-user installation needs no Node.js,
 npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `glab`.
 `specgit update` upgrades the shared executable from GitHub Releases with signature
 and checksum verification and keeps a backup. One user-level executable serves all
@@ -123,8 +126,10 @@ An authorized agent can use the native `gh` / `glab` operations for those action
 
 A successful read can report failed CI. Exit zero means the requested operation
 succeeded; it does not mean a delivery is accepted or merged. Missing evidence
-stays unknown. A merged request with open or uncertain Issues is not complete.
-Auto-merge preferences do not grant permission to change native protections.
+stays unknown. A merged request with open or uncertain Issues, without native
+closing evidence, or whose native closing set does not cover every selected
+Issue, is not complete. Auto-merge preferences do not grant permission to change
+native protections.
 
 ## Agent integration and upgrades
 
@@ -167,14 +172,18 @@ Host integration uses SessionStart for brief rules and the Skill entry, and
 PreToolUse for relevant context or recovery. It does not gate ordinary edits.
 `specgit guard --install` adds owned pre-commit and pre-push blocks
 to the effective native/custom hook path, including Husky user scripts, and
-`--uninstall` removes only those blocks. The installed pre-push block buffers
-and replays Git's standard ref stdin for the existing user hook.
+`--uninstall` removes only those blocks. Hooks must be inside the worktree or its
+common Git directory; an external `core.hooksPath` is not supported and is
+rejected before any hook is written. If an existing hook cannot be safely
+wrapped, installation fails closed and leaves the hook unchanged. The installed
+pre-push block buffers and replays Git's standard ref stdin for the existing user
+hook.
 
 After CLI upgrades, use the [project maintenance guide](docs/agent-project-refresh.md)
 to verify the executable selected by PATH and refresh each project integration.
 Omit hook purposes to preserve recorded modes; review all hosts whose assets will
 refresh. Only SessionStart and PreToolUse are supported; `observe` is declined and
-bounded `watch`/`inbox` is the fallback. The current runtime is 2.17.1. After project updates, run status and doctor, read back
+bounded `watch`/`inbox` is the fallback. The current runtime is 2.19.0. After project updates, run status and doctor, read back
 the generated Skill/guidance, then repeat dry-runs to check convergence.
 
 For a v1 project, follow the [v1 → v2 migration guide](docs/migration-v2.md) before
@@ -215,10 +224,13 @@ cargo test --locked --all-targets --features test-fixtures
 
 The [Release workflow](.github/workflows/release-prepare.yml) runs from `main` after
 an explicit dispatch with a stable version. GitHub-hosted standard Linux/Windows x64
-and macOS ARM64 runners compile and smoke-test the native binaries. The final job creates ZIPs and signs `SHA256SUMS`
-using the main Release workflow identity. Publication verifies source identity, signature, SHA-256 and
-uploaded bytes, and preserves existing immutable releases. Full source and
-installed-binary regressions run in ordinary CI.
+and macOS ARM64 runners compile and smoke-test the native binaries. The final job creates ZIPs and signs only `SHA256SUMS`
+using the main Release workflow identity, which covers the ZIP bytes but not the
+source commit, version, build run or internal `native-release.json`. Publication
+verifies source identity, signature, SHA-256 and uploaded bytes, and preserves
+existing immutable releases; cross-check the tag commit and the native build
+workflow run separately. Full source and installed-binary regressions run in
+ordinary CI.
 
 See [CI scope](docs/ci-scope.md) for current checks. The installed CLI help/schema
 and [native command reference](runtime/REFERENCE.md) define current behavior;

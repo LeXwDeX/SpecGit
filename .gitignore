@@ -158,6 +158,10 @@ opencode.json
 # Serena
 .serena/
 
+# SpecGit
+/.specgit.yaml
+/.agents/skills/specgit-native/SKILL.md
+
 # Codex
 .codex/
 

@@ -711,6 +711,8 @@ fn successful_replacement_reminds_each_project_in_json_and_human_output() {
             };
             assert!(notice.contains("specgit setup"), "{notice}");
             assert!(notice.contains("may need"), "not confirmed stale: {notice}");
+            assert!(notice.contains("already_tracked"), "{notice}");
+            assert!(notice.contains("git rm --cached"), "{notice}");
             for (path, content) in files {
                 assert_eq!(fs::read_to_string(project.join(path)).unwrap(), content);
             }
@@ -937,6 +939,73 @@ fn backup_create_race_preserves_the_winner() {
                 .file_name()
                 .to_string_lossy()
                 .starts_with(".specgit-update-"))
+    );
+}
+
+#[test]
+fn changed_target_after_baseline_is_not_replaced_or_backed_up_as_baseline() {
+    for (strategy, point) in [
+        ("atomic_replace", "before-install-read"),
+        ("atomic_replace", "backup-selected"),
+        ("rename_aside", "before-install-read"),
+        ("rename_aside", "backup-selected"),
+    ] {
+        let fixture = Fixture::new();
+        fixture.publish(NEXT, Tamper::None);
+        let (parked, release) = fixture.gate("baseline-backup-race");
+        let running = fixture.spawn(
+            &["update"],
+            &[
+                ("SPECGIT_TEST_UPDATE_STRATEGY", strategy),
+                ("SPECGIT_TEST_UPDATE_PAUSE", point),
+                ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+                (
+                    "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                    release.to_str().unwrap(),
+                ),
+            ],
+        );
+        wait_for(&parked);
+        fs::write(&fixture.target, b"concurrent writer").unwrap();
+        fs::write(&release, b"").unwrap();
+        let report = fixture.finish(running);
+        assert_eq!(
+            report["diagnostics"][0]["code"], "concurrent_edit",
+            "{report}"
+        );
+        assert_eq!(fs::read(&fixture.target).unwrap(), b"concurrent writer");
+    }
+}
+
+#[test]
+fn atomic_backup_keeps_baseline_when_target_changes_during_backup() {
+    let fixture = Fixture::new();
+    fixture.publish(NEXT, Tamper::None);
+    let (parked, release) = fixture.gate("baseline-copy-race");
+    let running = fixture.spawn(
+        &["update"],
+        &[
+            ("SPECGIT_TEST_UPDATE_STRATEGY", "atomic_replace"),
+            ("SPECGIT_TEST_UPDATE_PAUSE", "backup-copy"),
+            ("SPECGIT_TEST_UPDATE_PAUSE_PARKED", parked.to_str().unwrap()),
+            (
+                "SPECGIT_TEST_UPDATE_PAUSE_RELEASE",
+                release.to_str().unwrap(),
+            ),
+        ],
+    );
+    wait_for(&parked);
+    fs::write(&fixture.target, b"concurrent writer").unwrap();
+    fs::write(&release, b"").unwrap();
+    let report = fixture.finish(running);
+    assert_eq!(
+        report["diagnostics"][0]["code"], "concurrent_edit",
+        "{report}"
+    );
+    assert_eq!(fs::read(&fixture.target).unwrap(), b"concurrent writer");
+    assert_eq!(
+        fs::read(backup_name(&fixture.target, CURRENT, 0)).unwrap(),
+        OLD_BINARY
     );
 }
 

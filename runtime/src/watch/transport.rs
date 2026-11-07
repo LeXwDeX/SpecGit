@@ -118,7 +118,7 @@ pub(super) async fn subscribe(
     process: Process,
     cwd: &Path,
     stop_on_attention: bool,
-) -> Result<(ObservedEvents, Option<Diagnostic>), Diagnostic> {
+) -> Result<(ObservedEvents, Option<Diagnostic>, Option<Diagnostic>), Diagnostic> {
     let (initial, mut declaration, mut digest) = local_snapshot(&process, cwd).await?;
     let configured = declaration.observation.clone();
     let timing = timing(&o, &configured)?;
@@ -134,6 +134,7 @@ pub(super) async fn subscribe(
         deadline,
     };
     let mut failures = 0_u32;
+    let mut unknown_checks = 0_u32;
     let mut context = initial;
     let mut verified = None;
     let mut previous_digest = digest.clone();
@@ -198,6 +199,21 @@ pub(super) async fn subscribe(
         if observation.revision.local_head != context.head || observation.terminal {
             verified = None;
         }
+        unknown_checks = if observation.state == EventState::Unknown && observation.unknown_checks {
+            unknown_checks.saturating_add(1)
+        } else {
+            0
+        };
+        if unknown_checks >= 3 {
+            observation.reason =
+                "Native checks reported an unrecognized state in three observations.".into();
+            override_next_step(
+                &mut observation,
+                ActionKind::RefreshNativeEvidence,
+                "Repeated observations could not interpret the check state; inspect native checks and refresh the exact request before acting.",
+            );
+            observation.terminal = true;
+        }
         finish_poll(&process, deadline, &mut observation);
         let state = store.publish_next_action(
             observation.revision,
@@ -229,10 +245,24 @@ pub(super) async fn subscribe(
             0
         };
         let delay = backoff_delay(timing, failures, &lease.owner, deadline);
+        let delay = if unknown_checks > 0 {
+            delay.min(Duration::from_secs(2))
+        } else {
+            delay
+        };
         tokio::select! { _ = tokio::time::sleep(delay) => {}, _ = process.cancellation.cancelled() => {} }
     };
-    store.release(&lease)?;
-    Ok(result)
+    let release = store.release(&lease).err().map(release_diagnostic);
+    Ok((result.0, result.1, release))
+}
+
+fn release_diagnostic(error: crate::diagnostic::Diagnostic) -> crate::diagnostic::Diagnostic {
+    crate::diagnostic::Diagnostic::new(
+        error.code,
+        "release_watch_lease",
+        &error.message,
+        &error.remedy,
+    )
 }
 
 fn append_bounded(text: &mut String, suffix: &str, limit: usize) {
@@ -418,6 +448,7 @@ async fn current_observation(
                 ),
                 terminal: true,
                 retryable: false,
+                unknown_checks: false,
                 same_source_mismatch: false,
             },
             None,
@@ -473,4 +504,20 @@ fn backoff_delay(timing: Timing, failures: u32, owner: &str, deadline: Instant) 
             .min(300),
     )
     .min(deadline.saturating_duration_since(Instant::now()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_diagnostic;
+    use crate::diagnostic::{Code, Diagnostic};
+
+    #[test]
+    fn release_failure_keeps_the_cause_and_names_the_operation() {
+        let error = Diagnostic::new(Code::LockBusy, "watch_state", "busy", "retry later");
+        let diagnostic = release_diagnostic(error);
+        assert_eq!(diagnostic.code, Code::LockBusy);
+        assert_eq!(diagnostic.operation, "release_watch_lease");
+        assert_eq!(diagnostic.message, "busy");
+        assert_eq!(diagnostic.remedy, "retry later");
+    }
 }

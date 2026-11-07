@@ -7,6 +7,13 @@ use crate::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
+pub(crate) fn git_path_line(text: &str) -> &str {
+    let text = text.strip_suffix('\n').unwrap_or(text);
+    #[cfg(windows)]
+    let text = text.strip_suffix('\r').unwrap_or(text);
+    text
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Context {
     pub root: PathBuf,
@@ -50,6 +57,30 @@ pub fn require_local_repository_environment() -> Result<(), Diagnostic> {
         ));
     }
     Ok(())
+}
+
+/// Compare recorded and current project roots after resolving platform path spellings.
+pub(crate) fn same_root(recorded: &Path, current: &Path) -> Result<bool, Diagnostic> {
+    #[cfg(windows)]
+    {
+        let recorded = recorded.canonicalize().map_err(|_| root_conflict())?;
+        let current = current.canonicalize().map_err(|_| root_conflict())?;
+        Ok(recorded == current)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(recorded == current)
+    }
+}
+
+#[cfg(windows)]
+fn root_conflict() -> Diagnostic {
+    Diagnostic::new(
+        Code::OwnershipConflict,
+        "project_root",
+        "A recorded project root cannot be resolved safely.",
+        "Inspect the recorded integration root and refresh it in the current checkout.",
+    )
 }
 
 pub async fn git(process: &Process, cwd: &Path, args: &[&str]) -> Result<Vec<u8>, Diagnostic> {
@@ -184,7 +215,7 @@ pub async fn resolve(
     api_host: Option<&str>,
 ) -> Result<Context, Diagnostic> {
     let state = git_state(process, cwd).await?;
-    resolve_git_state(process, state, remote, provider, api_host).await
+    resolve_git_state(process, state, remote, provider, api_host, true).await
 }
 pub(crate) async fn resolve_git_state(
     process: &Process,
@@ -192,6 +223,7 @@ pub(crate) async fn resolve_git_state(
     remote: Option<&str>,
     provider: Option<Provider>,
     api_host: Option<&str>,
+    include_status: bool,
 ) -> Result<Context, Diagnostic> {
     let GitState { root, fields } = state;
     let remotes = trim_line(git(process, &root, &["remote"]).await?)?;
@@ -225,13 +257,16 @@ pub(crate) async fn resolve_git_state(
             "Inspect the repository object database.",
         ));
     }
-    let dirty = !git(
-        process,
-        &root,
-        &["--no-optional-locks", "status", "--porcelain=v1", "-z"],
-    )
-    .await?
-    .is_empty();
+    // Hook callbacks do not read `dirty`; skipping the status probe keeps the
+    // bounded host callback below its deadline on slow platforms.
+    let dirty = include_status
+        && !git(
+            process,
+            &root,
+            &["--no-optional-locks", "status", "--porcelain=v1", "-z"],
+        )
+        .await?
+        .is_empty();
     Ok(Context {
         root,
         git_dir,

@@ -9,7 +9,7 @@ publication still has the recovery procedure below.
 After the intended changes are merged, dispatch the workflow on `main`:
 
 ```sh
-gh workflow run release-prepare.yml --ref main -f release_version=2.17.1
+gh workflow run release-prepare.yml --ref main -f release_version=2.19.0
 ```
 
 The version must match Cargo and the private development workspace. Before dispatch,
@@ -54,15 +54,21 @@ incomplete checks stop the release. The main CI run supplies both checks. It the
 verifies the signature against the exact main Release workflow identity, creates a
 draft, uploads missing assets, verifies downloaded bytes, then makes the Release
 stable/latest. Checksums, the source commit and the build run appear in the rendered Release notes.
-The internal `native-release.json` and smoke reports remain Actions artifacts,
-not Release attachments. A branch dispatch cannot publish.
+The Sigstore signature covers only `SHA256SUMS`, and therefore the three ZIP bytes
+listed there. The source commit, version, build run and internal
+`native-release.json` are outside the signed payload; cross-check the tag commit
+and the build run separately. Re-signing creates different signature bytes and
+cannot overwrite an existing immutable signature asset. The internal
+`native-release.json` and smoke reports remain Actions artifacts, not Release
+attachments. The five published assets are unchanged. A branch dispatch cannot
+publish.
 
 ## Resume an interrupted publication
 
 For failed publication, reuse the retained signed bundle from the original attempt.
 Re-signing creates different signature bytes and cannot overwrite an existing
-immutable signature asset. Before any upload, retrying the job with the original
-successful build artifacts is safe.
+immutable signature asset. Do not rerun the assembly job: it signs again. Retry
+only the publisher with the original retained signed bundle, even after a partial upload.
 For a failed run, manual recovery requires all three native build jobs and every
 assembly step before publication, including signing, to have succeeded. A build
 or signing failure is not recoverable publication evidence. The retained signature
@@ -76,7 +82,7 @@ through the existing authenticated `gh` session:
 ```sh
 node runtime/distribution/publish.mjs \
   --directory /absolute/native-bundle \
-  --version 2.17.1 --source <current-main-sha> --build-run <qualified-run-id> \
+  --version 2.19.0 --source <current-main-sha> --build-run <qualified-run-id> \
   --github
 ```
 

@@ -3576,7 +3576,8 @@ fn library_setup_guard_without_path_cli_child() {
             "https://github.com/fixture/project.git",
         ],
     );
-    git(&f.root, &["add", ".specgit.yaml"]);
+    fs::write(f.root.join("source.rs"), "change").unwrap();
+    git(&f.root, &["add", "source.rs"]);
     let commit = Command::new("git")
         .current_dir(&f.root)
         .args([
