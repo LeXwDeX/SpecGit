@@ -1237,6 +1237,17 @@ fn checkpoint_valid(
 ) -> Result<selection::Selection, Diagnostic> {
     let selected = selection::read(context)?
         .ok_or_else(|| rejected("No Issue checkpoint is selected for this project and branch."))?;
+    if selected.branch == selected.target {
+        return Err(Diagnostic::new(
+            Code::EvidenceRejected,
+            "git_guard",
+            &format!(
+                "The checkpoint for refs/heads/{} records its delivery target as its own branch.",
+                selected.branch
+            ),
+            "Start a new delivery on a branch distinct from the target in a separate worktree: `specgit issue <spec> --branch <name>`.",
+        ));
+    }
     if let Some(request) = selected.delivered_request {
         return Err(Diagnostic::new(
             Code::EvidenceRejected,
