@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
+import { libtestThreads } from './libtest-threads.mjs';
 import { assertProfileInventory } from './profile-inventory.mjs';
 import { readCompiledTests } from './native-cache.mjs';
 
@@ -17,10 +18,10 @@ const output = path.resolve(values.output);
 assert(!existsSync(output), 'Select a fresh evidence directory.');
 mkdirSync(output, { recursive: true });
 const started = performance.now();
-const deadline = started + (process.platform === 'win32' ? 60 : 15) * 60 * 1000;
-function run(executable, args) {
+const deadline = started + (process.platform === 'win32' ? 90 : 15) * 60 * 1000;
+function run(executable, args, env = process.env) {
   const start = performance.now();
-  const result = spawnSync(executable, args, { encoding: 'utf8', timeout: Math.max(1, Math.floor(deadline - start)), maxBuffer: 32 * 1024 * 1024 });
+  const result = spawnSync(executable, args, { encoding: 'utf8', env, timeout: Math.max(1, Math.floor(deadline - start)), maxBuffer: 32 * 1024 * 1024 });
   return { ...result, milliseconds: performance.now() - start };
 }
 let buildMilliseconds = 0;
@@ -47,7 +48,9 @@ for (const artifact of artifacts.sort((a, b) => a.target.src_path.localeCompare(
   assert.equal(list.status, 0, 'Test enumeration failed: ' + source);
   const names = list.stdout.split(/\r?\n/).filter(line => line.endsWith(': test')).map(line => line.slice(0, -6)).sort();
   assert.equal(new Set(names).size, names.length, 'Duplicate test name in ' + source);
-  const result = run(artifact.executable, ['--color', 'never']);
+  const threads = libtestThreads(process.platform, source);
+  const env = threads ? { ...process.env, RUST_TEST_THREADS: threads } : process.env;
+  const result = run(artifact.executable, ['--color', 'never'], env);
   const text = (result.stdout ?? '') + (result.stderr ?? '');
   writeFileSync(path.join(output, `${suites.length}.log`), text);
   const outcomes = [...(result.stdout ?? '').matchAll(/^test (.+) \.\.\. (ok|FAILED|ignored)(?:,.*)?$/gm)].map(match => ({ name: match[1], outcome: match[2] })).sort((a, b) => a.name.localeCompare(b.name));
