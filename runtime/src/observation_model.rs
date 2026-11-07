@@ -73,6 +73,14 @@ pub struct IssueAssociation {
     pub issue: u64,
     pub sources: Vec<AssociationSource>,
 }
+/// Additive provider evidence. The public `Issue` construction contract stays
+/// unchanged; the close reason is reported separately.
+#[derive(Debug, Clone, Serialize)]
+pub struct IssueStateReason {
+    pub issue: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_reason: Option<String>,
+}
 #[derive(Debug, Default, Serialize)]
 pub struct Evidence {
     pub repository: Option<Repository>,
@@ -84,6 +92,8 @@ pub struct Evidence {
     pub local_applicability: Option<LocalApplicability>,
     pub issues: Option<Vec<Issue>>,
     pub associations: Option<Vec<IssueAssociation>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_state_reasons: Option<Vec<IssueStateReason>>,
     pub native_closing_available: bool,
     pub association_discrepancies: Vec<u64>,
     pub checks: Option<Vec<Check>>,
@@ -137,6 +147,52 @@ impl Observation {
         }
     }
 }
+/// A delivery is complete only when the request's own native closing set covers
+/// every selected Issue and the provider's close reasons allow completion.
+fn native_completion(evidence: &Evidence) -> bool {
+    let Some(associations) = evidence.associations.as_deref() else {
+        return false;
+    };
+    let native: std::collections::BTreeSet<u64> = associations
+        .iter()
+        .filter(|association| {
+            association
+                .sources
+                .contains(&AssociationSource::NativeClosing)
+        })
+        .map(|association| association.issue)
+        .collect();
+    if !evidence.native_closing_available
+        || !evidence.association_discrepancies.is_empty()
+        || native.is_empty()
+    {
+        return false;
+    }
+    if !associations
+        .iter()
+        .filter(|association| {
+            association
+                .sources
+                .contains(&AssociationSource::LocalSelection)
+        })
+        .all(|association| {
+            association
+                .sources
+                .contains(&AssociationSource::NativeClosing)
+        })
+    {
+        return false;
+    }
+    evidence
+        .issue_state_reasons
+        .as_deref()
+        .is_none_or(|reasons| {
+            reasons
+                .iter()
+                .filter(|reason| native.contains(&reason.issue))
+                .all(|reason| matches!(reason.state_reason.as_deref(), None | Some("completed")))
+        })
+}
 /// Describe only supplied native lifecycle facts; this cannot authorize merging.
 pub fn describe(evidence: Evidence) -> Observation {
     let invalid = || {
@@ -182,13 +238,7 @@ pub fn describe(evidence: Evidence) -> Observation {
         Some("closed") => Status::ClosedUnmerged,
         Some("merged") => match evidence.issues.as_deref() {
             Some(issues) if issues.iter().any(|i| i.state != "closed") => Status::MergedIssuesOpen,
-            Some(issues)
-                if !issues.is_empty()
-                    && evidence.native_closing_available
-                    && evidence.association_discrepancies.is_empty() =>
-            {
-                Status::Completed
-            }
+            Some(issues) if !issues.is_empty() && native_completion(&evidence) => Status::Completed,
             _ => Status::Merged,
         },
         _ => Status::Unknown,

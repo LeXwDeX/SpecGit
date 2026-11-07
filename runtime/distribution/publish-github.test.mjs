@@ -10,7 +10,7 @@ import { githubFiles, publishGithub, releaseNotes, verifySignature } from './pub
 
 const source = 'a'.repeat(40);
 const changelog = '# Changelog\n\n# 2.0.0\n\n- Fixture change. (#1)\n\n# 1.9.0\n\n- Older change.\n';
-function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload } = {}) {
+function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload, missingTag } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'specgit-github-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const packages = ['specgit-2.0.0-darwin-arm64.zip', 'specgit-2.0.0-linux-x64-gnu.zip', 'specgit-2.0.0-win32-x64.zip'];
@@ -22,9 +22,10 @@ function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUploa
   const remote = { exists: draft !== undefined, draft: draft ?? true, latest: false, tag: true, assets: new Map(existing.map(name => [name, name === corrupt ? Buffer.from('different') : readFileSync(path.join(directory, name))])) };
   const calls = [];
   let interrupted = false;
-  const request = (route, args = []) => {
-    calls.push(['api', route, ...args]);
-    if (route.includes('matching-refs')) return [{ ref: 'refs/tags/v2.0.0' }];
+  const request = (route, args = [], options = {}) => {
+    calls.push(['api', route, ...args, options]);
+    if (route.includes('matching-refs')) return missingTag ? [] : [{ ref: 'refs/tags/v2.0.0' }];
+    if (route.endsWith('/git/refs')) return { ref: 'refs/tags/v2.0.0' };
     if (route.includes('/commits/')) return { sha: otherSource ?? source };
     if (route.endsWith('/releases/latest')) return { tag_name: remote.latest ? 'v2.0.0' : 'old' };
     if (route.includes('/releases?')) return [remote.exists ? [{ tag_name: 'v2.0.0', draft: remote.draft }] : []];
@@ -49,6 +50,21 @@ function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUploa
   };
   return { directory, release, names, remote, calls, io: { request, cli, verify: () => {}, buildRun: '123', notesSource: { changelog } } };
 }
+test('a missing tag is created from the verified source before publication', t => {
+  const f = fixture(t, { missingTag: true });
+  const result = publishGithub(f.release, f.directory, f.io);
+  assert.deepEqual(result.assets_verified, f.names);
+  const create = f.calls.find(
+    call => call[0] === 'api' && call[1] === 'repos/LeXwDeX/SpecGit/git/refs',
+  );
+  assert(create, 'the missing tag must be created');
+  assert.deepEqual(JSON.parse(create.at(-1).input), {
+    ref: 'refs/tags/v2.0.0',
+    sha: source,
+  });
+  assert.equal(f.remote.draft, false);
+});
+
 test('new release is created as draft and only published after all byte readbacks', t => {
   const f = fixture(t);
   const result = publishGithub(f.release, f.directory, f.io);

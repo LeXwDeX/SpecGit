@@ -54,8 +54,14 @@ incomplete checks stop the release. The main CI run supplies both checks. It the
 verifies the signature against the exact main Release workflow identity, creates a
 draft, uploads missing assets, verifies downloaded bytes, then makes the Release
 stable/latest. Checksums, the source commit and the build run appear in the rendered Release notes.
-The internal `native-release.json` and smoke reports remain Actions artifacts,
-not Release attachments. A branch dispatch cannot publish.
+The Sigstore signature covers only `SHA256SUMS`, and therefore the three ZIP bytes
+listed there. The source commit, version, build run and internal
+`native-release.json` are outside the signed payload; cross-check the tag commit
+and the build run separately. Re-signing creates different signature bytes and
+cannot overwrite an existing immutable signature asset. The internal
+`native-release.json` and smoke reports remain Actions artifacts, not Release
+attachments. The five published assets are unchanged. A branch dispatch cannot
+publish.
 
 ## Resume an interrupted publication
 

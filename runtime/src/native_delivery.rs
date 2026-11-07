@@ -28,6 +28,18 @@ pub async fn issue(
         Provider::Gitlab => gitlab::issue(reader, repo, project_id, number).await,
     }
 }
+/// Read an exact issue together with its optional provider close reason.
+pub async fn issue_with_reason(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<(Issue, Option<String>), Diagnostic> {
+    match repo.provider {
+        Provider::Github => github::issue_with_reason(reader, repo, project_id, number).await,
+        Provider::Gitlab => gitlab::issue_with_reason(reader, repo, project_id, number).await,
+    }
+}
 /// Read an exact issue and its optional native goal context in one request.
 pub async fn issue_read(
     reader: &ForgeRead,
