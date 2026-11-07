@@ -92,6 +92,22 @@ pub(super) async fn prepare(
             (None, Some(checkpoint))
         }
     };
+    if options.branch.is_none()
+        && !(options.inspect || options.dry_run)
+        && current_branch == w.target
+    {
+        let remedy = if previous.is_some() {
+            "This checkpoint is recorded on its target branch and cannot open a PR or be reused. Start a new delivery in a separate worktree with `specgit issue <spec> --branch <name>`; the existing checkpoint is preserved."
+        } else {
+            "Start the delivery on a branch distinct from the target: `specgit issue <spec> --branch <name>` from this clean worktree."
+        };
+        return Err(Diagnostic::new(
+            crate::diagnostic::Code::InvalidInput,
+            "issue_target_branch",
+            "A delivery checkpoint cannot be recorded on its target branch.",
+            remedy,
+        ));
+    }
     let mut selection = previous.clone().unwrap_or(Selection {
         version: 2,
         repository: w.context.repository.clone(),

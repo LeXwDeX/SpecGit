@@ -211,6 +211,51 @@ fn github_body_limit_is_checked_before_issue_creation_and_checkpoint() {
 }
 
 #[test]
+fn issue_refuses_a_checkpoint_on_the_delivery_target() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        git(&f.root, &["switch", "-c", "main"]);
+        let writes = f.writes();
+        let rejected = f.run(&["issue", "--create-labels", "fix: target branch"]);
+        assert_eq!(rejected["exit"], 2, "{provider}: {rejected}");
+        assert_eq!(
+            rejected["diagnostics"][0]["code"], "invalid_input",
+            "{provider}: {rejected}"
+        );
+        assert_eq!(
+            rejected["diagnostics"][0]["operation"], "issue_target_branch",
+            "{provider}: {rejected}"
+        );
+        assert!(!checkpoint_path(&f).exists(), "{provider}: {rejected}");
+        assert_eq!(f.writes(), writes, "{provider}");
+        for preview in [
+            f.run(&["issue", "--dry-run", "fix: preview"]),
+            f.run(&["issue", "--inspect", "fix: preview"]),
+        ] {
+            assert_eq!(preview["exit"], 0, "{provider}: {preview}");
+            assert!(!checkpoint_path(&f).exists(), "{provider}: {preview}");
+        }
+        let created = f.run(&[
+            "issue",
+            "--create-labels",
+            "--branch",
+            "next",
+            "fix: target branch",
+        ]);
+        assert_eq!(created["exit"], 0, "{provider}: {created}");
+        let selection: serde_json::Value =
+            serde_json::from_slice(&fs::read(checkpoint_path(&f)).unwrap()).unwrap();
+        assert_eq!(selection["branch"], "next", "{provider}: {selection}");
+        assert_eq!(selection["target"], "main", "{provider}: {selection}");
+        assert_eq!(
+            selection["issues"].as_array().unwrap().len(),
+            1,
+            "{provider}: {selection}"
+        );
+    }
+}
+
+#[test]
 fn checkpoint_repository_case_follows_provider_path_rules() {
     for provider in ["github", "gitlab"] {
         let f = Fixture::new(provider);
