@@ -3436,6 +3436,42 @@ fn cli_last_uninstall_retires_exclusions_and_only_empty_created_directories() {
 }
 
 #[test]
+fn cli_uninstall_succeeds_with_a_journal_less_transaction_directory() {
+    let (f, _) = fixture(vec![]);
+    assert_eq!(
+        cli(&f.root, &["--agent", "generic", "--hook-purpose", "none"])["ok"],
+        true
+    );
+    let transactions = f.private.parent().unwrap().join("assets/transactions");
+    let orphan = transactions.join("tx-crashed-before-journal");
+    fs::create_dir_all(&orphan).unwrap();
+    fs::write(orphan.join("0.before"), b"partial backup").unwrap();
+    let preview = cli(&f.root, &["--uninstall", "--dry-run"]);
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_eq!(preview["status"], "dry_run", "{preview}");
+    assert_eq!(preview["exit"], 0, "{preview}");
+    assert!(orphan.is_dir(), "{preview}");
+    assert!(f.private.join("ownership.json").exists(), "{preview}");
+    let report = cli(&f.root, &["--uninstall"]);
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(report["status"], "uninstalled", "{report}");
+    assert_eq!(report["exit"], 0, "{report}");
+    let id = report["evidence"]["transaction"]["transaction"]
+        .as_str()
+        .expect("committed transaction id");
+    assert!(!id.is_empty(), "{report}");
+    assert!(!f.private.join("ownership.json").exists(), "{report}");
+    assert!(
+        orphan.is_dir(),
+        "journal-less transaction evidence is retained"
+    );
+    let journal: Value =
+        serde_json::from_slice(&fs::read(transactions.join(id).join("journal.json")).unwrap())
+            .unwrap();
+    assert_eq!(journal["state"], "committed", "{journal}");
+}
+
+#[test]
 fn cli_instruction_blocks_preserve_crlf_and_restore_original_bytes() {
     for newline in ["\n", "\r\n"] {
         let (f, _) = fixture(vec![]);
