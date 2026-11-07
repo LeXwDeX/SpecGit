@@ -1594,7 +1594,9 @@ fn merged_open_issue_action_bounds_long_issue_preview_without_losing_typed_ids()
             .unwrap()
             .iter()
             .any(|action| {
-                action["kind"] == "inspect_open_issues" && action["agent_close_preference"] == false
+                action["kind"] == "inspect_open_issues"
+                    && action["close_issues_after_merge"] == false
+                    && action["command"].is_null()
             })
     );
 

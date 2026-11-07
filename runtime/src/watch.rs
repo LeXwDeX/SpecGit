@@ -133,6 +133,7 @@ fn report(
     event_state: &EventState,
     persistence_failure: Option<Diagnostic>,
     release_failure: Option<Diagnostic>,
+    retired: bool,
 ) -> Report {
     let events: Vec<_> = state
         .events
@@ -149,6 +150,16 @@ fn report(
         &status,
         json!({"subscription":state.identity,"events":events,"expired_unacknowledged":state.expired_unacknowledged,"transport":"offered_not_acknowledged","native_observation":true}),
     );
+    if retired {
+        let mut effects = crate::report::Effects::default();
+        let index = effects.begin(
+            "local",
+            "record_delivered_checkpoint",
+            json!({"request":state.identity.request}),
+        );
+        effects.applied(index);
+        result.effects = Some(effects);
+    }
     result.next_actions = events
         .iter()
         .map(|event| {
@@ -185,11 +196,12 @@ fn report(
 }
 pub async fn run(o: Options, process: Process, cwd: &Path) -> Report {
     match Box::pin(transport::subscribe(o, process, cwd, false)).await {
-        Ok((r, persistence_failure, release_failure)) => report(
+        Ok((r, persistence_failure, release_failure, retired)) => report(
             &r.state,
             &r.event_state,
             persistence_failure,
             release_failure,
+            retired,
         ),
         Err(d) => Report::failure("watch", d),
     }
@@ -200,9 +212,9 @@ pub async fn observe_subscription(
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
     match transport::subscribe(o, process, cwd, false).await? {
-        (_, Some(d), _) => Err(d),
-        (_, None, Some(d)) => Err(d),
-        (events, None, None) => Ok(events),
+        (_, Some(d), _, _) => Err(d),
+        (_, None, Some(d), _) => Err(d),
+        (events, None, None, _) => Ok(events),
     }
 }
 pub async fn observe_until_attention(
@@ -211,9 +223,9 @@ pub async fn observe_until_attention(
     cwd: &Path,
 ) -> Result<ObservedEvents, Diagnostic> {
     match transport::subscribe(o, process, cwd, true).await? {
-        (_, Some(d), _) => Err(d),
-        (_, None, Some(d)) => Err(d),
-        (events, None, None) => Ok(events),
+        (_, Some(d), _, _) => Err(d),
+        (_, None, Some(d), _) => Err(d),
+        (events, None, None, _) => Ok(events),
     }
 }
 pub async fn inbox(o: InboxOptions, process: Process, cwd: &Path) -> Report {

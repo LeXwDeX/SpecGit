@@ -465,7 +465,7 @@ fn successful_help_never_substitutes_for_account_api_evidence() {
 /// `--schema` must publish every option dependency, including one on a group,
 /// so a machine client never builds an input that clap is certain to reject.
 #[test]
-fn schema_lists_init_and_setup_write_boundaries() {
+fn schema_lists_command_write_boundaries() {
     for (command, expected) in [
         (
             "init",
@@ -484,6 +484,12 @@ fn schema_lists_init_and_setup_write_boundaries() {
                 "rollback",
                 "dry_run",
             ][..],
+        ),
+        ("pr", &["status_records", "delivered", "dry_run"][..]),
+        ("watch", &["lease", "events", "outbox", "retires"][..]),
+        (
+            "inbox",
+            &["lease", "retires", "ack", "receipt", "no_refresh"][..],
         ),
     ] {
         let out = executable::command()
