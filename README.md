@@ -106,7 +106,9 @@ specgit watch --request 42 --session task-42 --goal lifecycle --json
 specgit pr --status --request 42 --json
 ```
 
-Replace the example IDs with real Issues and the resulting request number.
+Replace the example IDs with real Issues and the resulting request number. Create
+the delivery branch before `specgit issue`: a checkpoint recorded on the target is
+not deliverable, and a mutation without `--branch` on the target branch is rejected.
 Previews do not authorize later writes by themselves; task enablement delegates the
 required workflow within its scope. A branch without pushed changes remains pending;
 SpecGit does not create an empty delivery just to attach a PR. Marking ready, review

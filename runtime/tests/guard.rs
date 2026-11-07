@@ -911,6 +911,23 @@ fn published_base_with_bound_commit(root: &Path) -> String {
 }
 
 #[test]
+fn pre_push_rejects_a_checkpoint_recorded_on_its_target() {
+    let temp = fixture();
+    git(temp.path(), &["switch", "-c", "main"]);
+    checkpoint(temp.path(), "main");
+    let oid = &published_base_with_bound_commit(temp.path());
+    let zero = "0000000000000000000000000000000000000000";
+    let result = guard(
+        temp.path(),
+        "pre-push",
+        &format!("refs/heads/main {oid} refs/heads/main {zero}\n"),
+    );
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success(), "{stderr}");
+    assert!(stderr.contains("target"), "{stderr}");
+}
+
+#[test]
 fn pre_push_checks_each_branch_but_allows_deletions_and_tags() {
     let temp = fixture();
     checkpoint(temp.path(), "feature");
