@@ -169,6 +169,31 @@ fn clear_request_binding(f: &Fixture) {
 }
 
 #[test]
+fn delivered_checkpoint_cannot_adopt_another_request() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider, 1);
+        assert_eq!(f.run(&["pr"])["exit"], 0);
+        let path = f.root.join(".git/specgit-v2/selection.json");
+        let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        saved["delivered_request"] = json!(41);
+        fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let before = fs::read(&path).unwrap();
+        for args in [&["pr", "--request", "41"][..], &["pr"][..]] {
+            let rejected = f.run(args);
+            assert_eq!(rejected["exit"], 2, "{provider} {args:?}: {rejected}");
+            assert_eq!(
+                rejected["diagnostics"][0]["code"], "invalid_input",
+                "{provider} {args:?}: {rejected}"
+            );
+            assert_eq!(fs::read(&path).unwrap(), before, "{provider} {args:?}");
+        }
+        let preview = f.run(&["pr", "--request", "41", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{provider}: {preview}");
+        assert_eq!(fs::read(&path).unwrap(), before, "{provider}");
+    }
+}
+
+#[test]
 fn explicitly_selected_terminal_request_is_not_bound() {
     for provider in ["github", "gitlab"] {
         for merged in [false, true] {

@@ -477,6 +477,47 @@ fn complete_requires_native_merge_and_every_referenced_issue_closed() {
     }
 }
 #[test]
+fn pr_status_offers_terminal_next_actions_without_a_status_loop() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!("closed");
+            s["requests"][0]["merged"] = json!(false);
+        });
+        let closed = f.run(&["pr", "--status"]);
+        assert_eq!(closed["status"], "closed_unmerged", "{provider}: {closed}");
+        assert_eq!(
+            closed["next_actions"][0]["kind"], "reopen_or_choose_followup",
+            "{provider}: {closed}"
+        );
+        assert!(
+            closed["next_actions"][0]["command"].is_null(),
+            "{provider}: {closed}"
+        );
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing"] = json!([]);
+        });
+        let merged = f.run(&["pr", "--status"]);
+        assert_eq!(merged["status"], "merged", "{provider}: {merged}");
+        assert_eq!(
+            merged["next_actions"][0]["kind"], "verify_issue_closure",
+            "{provider}: {merged}"
+        );
+        assert!(
+            merged["next_actions"][0]["command"].is_null(),
+            "{provider}: {merged}"
+        );
+    }
+}
+
+#[test]
 fn completed_requires_the_request_itself_to_close_an_issue() {
     for provider in ["github", "gitlab"] {
         let f = fixture(provider);
@@ -1386,6 +1427,11 @@ fn a_merged_lifecycle_watch_also_retires_the_checkpoint() {
         "--once",
     ]);
     assert_eq!(watched["exit"], 0, "{watched}");
+    assert_eq!(
+        watched["effects"]["operations"][0]["action"], "record_delivered_checkpoint",
+        "{watched}"
+    );
+    assert_eq!(watched["effects"]["outcome"], "applied", "{watched}");
     assert_eq!(f.writes(), writes);
     assert_eq!(checkpoint(&f)["delivered_request"], 41, "{watched}");
 }

@@ -119,6 +119,18 @@ async fn discover(o: &Options, w: &Workspace) -> Result<Discovery, Diagnostic> {
     let repo = &w.context.repository;
     let branch = w.branch()?;
     let previous = selection::read(&w.context)?;
+    if let Some(delivered) = previous.as_ref().and_then(|s| s.delivered_request)
+        && !(o.inspect || o.dry_run)
+    {
+        return Err(Diagnostic::new(
+            Code::InvalidInput,
+            "pr",
+            &format!(
+                "This branch's checkpoint was delivered by merged request #{delivered}; it cannot adopt another request."
+            ),
+            "Switch to the updated target branch and start the next delivery with `specgit issue <spec> --branch <name>`; the delivered checkpoint is preserved.",
+        ));
+    }
     let number = o.request.or(previous.as_ref().and_then(|s| s.request));
     let request = if let Some(number) = number {
         Some(native_delivery::pull_request(&w.reader, repo, number).await?)

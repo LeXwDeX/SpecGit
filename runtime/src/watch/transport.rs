@@ -21,7 +21,7 @@ async fn observe(
     budget: Duration,
     cycle: &Cycle<'_>,
     verified: &mut Option<String>,
-) -> (Observation, Option<Diagnostic>) {
+) -> (Observation, Option<Diagnostic>, bool) {
     let read = async {
         let collected =
             observation::collect(identity.request, process.clone(), &context.root).await?;
@@ -51,15 +51,15 @@ async fn observe(
         Ok::<_, Diagnostic>((assessment, (complete && !terminal).then_some(fingerprint)))
     };
     let result = tokio::time::timeout(budget, Box::pin(read)).await;
-    let (assessment, persistence_failure) = match result {
+    let (assessment, persistence_failure, retired) = match result {
         Ok(Ok((assessment, fingerprint))) => {
             *verified = fingerprint;
-            let persistence_failure = retire_delivered(context, &assessment);
-            (assessment, persistence_failure)
+            let (persistence_failure, retired) = retire_delivered(context, &assessment);
+            (assessment, persistence_failure, retired)
         }
         Ok(Err(d)) => {
             *verified = None;
-            (NativeObservation::unavailable(d), None)
+            (NativeObservation::unavailable(d), None, false)
         }
         Err(_) => {
             *verified = None;
@@ -71,6 +71,7 @@ async fn observe(
                     "Resume; partial evidence is not acceptance.",
                 )),
                 None,
+                false,
             )
         }
     };
@@ -83,12 +84,16 @@ async fn observe(
             cycle.digest.as_deref(),
         ),
         persistence_failure,
+        retired,
     )
 }
 
 /// A verified merged read of this checkpoint's own request retires it. A failed
 /// write leaves the checkpoint unchanged and stays visible to the caller.
-fn retire_delivered(context: &Context, assessment: &NativeObservation) -> Option<Diagnostic> {
+fn retire_delivered(
+    context: &Context,
+    assessment: &NativeObservation,
+) -> (Option<Diagnostic>, bool) {
     use crate::observation::Status;
     if !matches!(
         assessment.status,
@@ -96,15 +101,22 @@ fn retire_delivered(context: &Context, assessment: &NativeObservation) -> Option
     ) || !assessment.diagnostics.is_empty()
         || assessment.evidence.repository.as_ref() != Some(&context.repository)
     {
-        return None;
+        return (None, false);
     }
-    let (request, project_id) = (
-        assessment.evidence.request.as_ref()?,
-        assessment.evidence.project_id?,
-    );
-    crate::selection::record_delivery(context, project_id, request)
-        .err()
-        .map(|d| crate::selection::delivered_persistence_failure(d, true))
+    let (Some(request), Some(project_id)) = (
+        assessment.evidence.request.as_ref(),
+        assessment.evidence.project_id,
+    ) else {
+        return (None, false);
+    };
+    match crate::selection::record_delivery(context, project_id, request) {
+        Ok(Some(_)) => (None, true),
+        Ok(None) => (None, false),
+        Err(d) => (
+            Some(crate::selection::delivered_persistence_failure(d, true)),
+            false,
+        ),
+    }
 }
 
 struct Cycle<'a> {
@@ -118,7 +130,7 @@ pub(super) async fn subscribe(
     process: Process,
     cwd: &Path,
     stop_on_attention: bool,
-) -> Result<(ObservedEvents, Option<Diagnostic>, Option<Diagnostic>), Diagnostic> {
+) -> Result<(ObservedEvents, Option<Diagnostic>, Option<Diagnostic>, bool), Diagnostic> {
     let (initial, mut declaration, mut digest) = local_snapshot(&process, cwd).await?;
     let configured = declaration.observation.clone();
     let timing = timing(&o, &configured)?;
@@ -163,7 +175,7 @@ pub(super) async fn subscribe(
             once: o.once,
         };
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let (mut observation, persistence_failure) = if let Some(d) = declaration_error {
+        let (mut observation, persistence_failure, retired) = if let Some(d) = declaration_error {
             verified = None;
             (
                 normalized(
@@ -174,6 +186,7 @@ pub(super) async fn subscribe(
                     digest.as_deref(),
                 ),
                 None,
+                false,
             )
         } else {
             current_observation(
@@ -237,6 +250,7 @@ pub(super) async fn subscribe(
                     event_state: observation.state,
                 },
                 persistence_failure,
+                retired,
             );
         }
         failures = if observation.retryable {
@@ -253,7 +267,7 @@ pub(super) async fn subscribe(
         tokio::select! { _ = tokio::time::sleep(delay) => {}, _ = process.cancellation.cancelled() => {} }
     };
     let release = store.release(&lease).err().map(release_diagnostic);
-    Ok((result.0, result.1, release))
+    Ok((result.0, result.1, release, result.2))
 }
 
 fn release_diagnostic(error: crate::diagnostic::Diagnostic) -> crate::diagnostic::Diagnostic {
@@ -424,7 +438,7 @@ async fn current_observation(
     remaining: Duration,
     cycle: &Cycle<'_>,
     verified: &mut Option<String>,
-) -> (Observation, Option<Diagnostic>) {
+) -> (Observation, Option<Diagnostic>, bool) {
     if remaining.is_zero() || process.cancellation.is_cancelled() {
         (
             Observation {
@@ -452,6 +466,7 @@ async fn current_observation(
                 same_source_mismatch: false,
             },
             None,
+            false,
         )
     } else {
         observe(

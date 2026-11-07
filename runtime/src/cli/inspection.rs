@@ -437,7 +437,8 @@ impl LocalInspection {
             specgit::selection::ReadOutcome::Absent => serde_json::json!({"status":"absent"}),
             specgit::selection::ReadOutcome::Current(selection) => serde_json::json!({
                 "status":"current", "recorded_branch":selection.branch,
-                "recorded_target":selection.target, "issues":selection.issues, "request":selection.request
+                "recorded_target":selection.target, "issues":selection.issues, "request":selection.request,
+                "delivered_request":selection.delivered_request
             }),
             specgit::selection::ReadOutcome::BranchMismatch { checkpoint, .. } => {
                 serde_json::to_value(checkpoint).expect("checkpoint metadata serializes")
