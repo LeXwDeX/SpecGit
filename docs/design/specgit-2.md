@@ -354,10 +354,11 @@ re-execution of unchanged product tests.
 
 A lifecycle result distinguishes `checks_passed`, `merged`, `merged_issues_open`,
 `completed`, `closed_unmerged`, `failed` and `unknown`. Completion of the selected
-delivery goal requires platform-confirmed merge and closure of every bound issue.
-Source-branch cleanup is reported separately. Non-default targets may reach a
-terminal attention state without reaching completed; observers must not wait
-forever for a native action that cannot happen there.
+delivery goal requires platform-confirmed merge, a native closing set that covers
+every selected issue, and closure of every bound issue. Source-branch cleanup is
+reported separately. Non-default targets may reach a terminal attention state
+without reaching completed; observers must not wait forever for a native action
+that cannot happen there.
 
 ## CLI direction
 

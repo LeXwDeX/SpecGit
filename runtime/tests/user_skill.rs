@@ -160,8 +160,13 @@ fn backup_publication_collision_is_schema_valid_and_preserves_backup() {
     assert_eq!(report["exit"], 0, "{report}");
     let backup = PathBuf::from(report["evidence"]["backup"].as_str().unwrap());
     assert_eq!(fs::read(&backup).unwrap(), edited);
-    // The collision injection is verified by the unit-level skill fixture; this
-    // end-to-end check keeps the schema and preserved backup bytes portable.
+    let winner = fs::read_dir(backup.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| fs::read(path).is_ok_and(|bytes| bytes == b"winner"))
+        .expect("the injected backup collision must remain");
+    assert_ne!(winner, backup);
+    assert_eq!(fs::read(&winner).unwrap(), b"winner");
 }
 #[test]
 fn foreign_content_conflicts_but_refresh_only_skips_it() {

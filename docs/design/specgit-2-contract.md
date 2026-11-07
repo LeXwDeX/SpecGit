@@ -384,8 +384,13 @@ protected source. Never substitute local checkout deletion for remote cleanup.
 Separate spec validity, check applicability, current check/review result,
 mergeability, merged state, each issue state and source-branch cleanup. Checks
 passing does not mean the request is ready or merged. Merged does not mean all
-issues closed. Unknown is never success. `completed` requires confirmed merge
-and all bound issues closed; cleanup is an independently displayed result.
+issues closed. Unknown is never success. `completed` requires a confirmed merge,
+an available and non-empty native closing set, every locally selected issue in
+that set, every associated issue closed, no association discrepancies, and no
+provider close reason that disallows completion for an issue in that set (for
+GitHub, any `state_reason` other than `completed`). A body-only `Closes`
+reference does not establish native closure. Cleanup is an independently
+displayed result.
 
 For each required check, preserve repository/head/workflow-or-pipeline/attempt/job
 identity, full relevant pagination, timestamps and terminal result. Re-observe

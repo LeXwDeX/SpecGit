@@ -1,7 +1,10 @@
 use specgit::{
     delivery_model::{Check, Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
-    observation::{self, AutoMerge, CheckOutcome, Evidence, Observation, Status},
+    observation::{
+        self, AssociationSource, AutoMerge, CheckOutcome, Evidence, IssueAssociation,
+        IssueStateReason, Observation, Status,
+    },
 };
 
 fn evidence() -> Evidence {
@@ -29,7 +32,10 @@ fn evidence() -> Evidence {
             state: "open".into(),
             updated_at: "2026-09-09T00:00:00Z".into(),
         }]),
-        associations: Some(vec![]),
+        associations: Some(vec![IssueAssociation {
+            issue: 1,
+            sources: vec![AssociationSource::NativeClosing],
+        }]),
         native_closing_available: true,
         checks: Some(vec![Check {
             name: "Build".into(),
@@ -220,6 +226,45 @@ fn completion_requires_merge_and_nonempty_known_closed_associations() {
     closed.state = "closed".into();
     issues.push(closed);
     assert_eq!(observation::describe(e).status, Status::MergedIssuesOpen);
+}
+
+#[test]
+fn completion_requires_the_request_itself_to_close_the_issue() {
+    let mut e = evidence();
+    e.request.as_mut().unwrap().state = "merged".into();
+    e.issues.as_mut().unwrap()[0].state = "closed".into();
+    e.associations = Some(vec![IssueAssociation {
+        issue: 1,
+        sources: vec![AssociationSource::BodyReference],
+    }]);
+    assert_eq!(observation::describe(e).status, Status::Merged);
+    let mut e = evidence();
+    e.request.as_mut().unwrap().state = "merged".into();
+    e.issues.as_mut().unwrap()[0].state = "closed".into();
+    e.associations = Some(vec![IssueAssociation {
+        issue: 1,
+        sources: vec![AssociationSource::LocalSelection],
+    }]);
+    assert_eq!(observation::describe(e).status, Status::Merged);
+}
+#[test]
+fn completion_rejects_a_non_completed_github_state_reason() {
+    let mut e = evidence();
+    e.request.as_mut().unwrap().state = "merged".into();
+    e.issues.as_mut().unwrap()[0].state = "closed".into();
+    e.issue_state_reasons = Some(vec![IssueStateReason {
+        issue: 1,
+        state_reason: Some("not_planned".into()),
+    }]);
+    assert_eq!(observation::describe(e).status, Status::Merged);
+    let mut e = evidence();
+    e.request.as_mut().unwrap().state = "merged".into();
+    e.issues.as_mut().unwrap()[0].state = "closed".into();
+    e.issue_state_reasons = Some(vec![IssueStateReason {
+        issue: 1,
+        state_reason: Some("completed".into()),
+    }]);
+    assert_eq!(observation::describe(e).status, Status::Completed);
 }
 
 #[test]
