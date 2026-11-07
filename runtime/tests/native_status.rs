@@ -465,13 +465,49 @@ fn complete_requires_native_merge_and_every_referenced_issue_closed() {
         });
         let r = f.run(&["pr", "--status"]);
         assert_eq!(r["status"], "merged_issues_open", "{r}");
-        f.edit(|s| s["issues"][0]["state"] = json!("closed"));
+        f.edit(|s| {
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing"] = json!([1]);
+        });
         let writes = f.writes();
         let r = f.run(&["pr", "--status"]);
         assert_eq!(r["status"], "completed", "{r}");
         assert_eq!(r["exit"], 0, "{r}");
         assert_eq!(f.writes(), writes);
     }
+}
+#[test]
+fn completed_requires_the_request_itself_to_close_an_issue() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing"] = json!([]);
+        });
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["status"], "merged", "{r}");
+        assert_ne!(r["status"], "completed", "{r}");
+    }
+}
+#[test]
+fn github_not_planned_closure_does_not_complete_a_delivery() {
+    let f = fixture("github");
+    f.edit(|s| {
+        s["requests"][0]["state"] = json!("closed");
+        s["requests"][0]["merged"] = json!(true);
+        s["issues"][0]["state"] = json!("closed");
+        s["issues"][0]["state_reason"] = json!("not_planned");
+        s["native_closing"] = json!([1]);
+    });
+    let r = f.run(&["pr", "--status"]);
+    assert_eq!(r["status"], "merged", "{r}");
+    assert_ne!(r["status"], "completed", "{r}");
 }
 #[test]
 fn native_edits_and_stale_head_pipeline_remain_unavailable() {

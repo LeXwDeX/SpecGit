@@ -65,15 +65,20 @@ pending or failed.
 
 Use native SpecGit 2 Issue and PR operations with the installed schema and existing
 user authorization. Verify current PR head checks before an authorized merge and
-read back the merged request plus every associated Issue. A successful observation
-is not delivery completion.
+read back the merged request, its native closing set and every associated Issue. A
+successful observation is not delivery completion; `completed` also requires each
+selected Issue to appear in that request's native closing set and every associated
+Issue to be closed.
 
 Merging does not authorize publication. The explicitly dispatched Release workflow
 builds all three platforms from main, requires successful `Required verification` and
 `SpecGit Acceptance` checks on that exact source SHA before signing and again before
 publication, then signs SHA256SUMS with the trusted workflow
 identity, verifies the signature and uploaded bytes, and preserves immutable
-releases. See the [native release procedure](../runtime/distribution/README.md).
+releases. The signature covers only `SHA256SUMS`, and therefore the ZIP bytes; the
+source commit, version, build run and internal `native-release.json` are not in the
+signed payload, so cross-check the tag commit and the native build workflow run
+separately. See the [native release procedure](../runtime/distribution/README.md).
 
 Local CLI installation or init/setup refresh needs no product delivery when no
 shared tracked changes are intended. Inspect the resulting diff before sharing it.

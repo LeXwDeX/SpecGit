@@ -70,6 +70,11 @@ cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity 'htt
 
 Require successful signature, certificate identity, issuer and transparency-log
 verification. Do not disable verification or accept another workflow identity.
+The signature covers `SHA256SUMS` only; because the manifest lists the ZIP hashes,
+it covers those ZIP bytes. The release source commit, version, build run and
+internal `native-release.json` are not in the signed payload. Cross-check the
+tag's commit and the native build workflow run before treating provenance as
+verified.
 Match exactly one SHA-256 row for the selected ZIP in the verified manifest.
 Compare it with `shasum -a 256`, `sha256sum` or PowerShell
 `Get-FileHash -Algorithm SHA256`. If GitHub's asset digest is present it must agree.
@@ -138,11 +143,14 @@ specgit init --provider <provider> --json
 ```
 
 On a new project, init also installs the native Git guard (pre-commit/pre-push) in
-the main worktree when Git uses hooks inside the Git directory; Husky, external
-hook paths and linked worktrees need `setup --hook-purpose guard`. With the guard,
-every commit needs a selected Issue checkpoint, and pushed commits carry an
-`Issue: #N` trailer. The dry-run lists the hook paths. An existing installation
-keeps its recorded choices; `doctor` reports a missing guard.
+the main worktree when Git uses hooks inside the Git directory; Husky and linked
+worktrees need `setup --hook-purpose guard`. An external `core.hooksPath` is not
+supported and is rejected before any hook is written. When the default guard is
+selected and an existing hook cannot be safely wrapped, init fails closed and
+writes no files. With the guard, every commit needs a selected Issue checkpoint,
+and pushed commits carry an `Issue: #N` trailer. The dry-run lists the hook paths.
+An existing installation keeps its recorded choices; `doctor` reports a missing
+guard.
 
 Include `--remote`, `--target`, `--language` or `--api-host` only when selected or
 needed by the actual repository and supported by the installed schema. Existing
@@ -271,9 +279,10 @@ specgit remove --rollback <transaction>
 Declaration and local-routing removal requires exact bytes and permissions proven
 by a committed init or migration journal; an unowned or edited declaration, a
 tracked `.specgit.yaml`, a pending transaction or an unfinished delivery blocks
-the preview. An existing delivery checkpoint also requires the verified native
-target merge and every selected Issue closed. Sibling worktrees retain shared
-exclude and hook blocks they still consume.
+the preview. An existing delivery checkpoint also requires the native request to
+be reported `merged` or `completed`, target the recorded branch, and have every
+selected Issue closed with no observation diagnostics. Sibling worktrees retain
+shared exclude and hook blocks they still consume.
 
 ### Optional user Skill
 

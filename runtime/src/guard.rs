@@ -207,13 +207,13 @@ fn hook_shebang(before: &str) -> Result<(), Diagnostic> {
             "The existing Git hook is not a supported shell script and was preserved.",
         ));
     }
-    let mut after_separator = false;
     for word in &words[shell_index + 1..] {
         if *word == "--" {
-            after_separator = true;
-            continue;
+            return Err(rejected(
+                "The existing Git hook separates the shell from a script operand and was preserved.",
+            ));
         }
-        if after_separator && word.starts_with('-') {
+        if !word.starts_with('-') {
             return Err(rejected(
                 "The existing Git hook invokes a script other than itself and was preserved.",
             ));
@@ -223,13 +223,37 @@ fn hook_shebang(before: &str) -> Result<(), Diagnostic> {
                 "The existing Git hook reads its script from stdin and was preserved.",
             ));
         }
-        if matches!(*word, "-c" | "-s" | "--command" | "--stdin")
+        if matches!(*word, "--command" | "--stdin")
             || word.starts_with("--command=")
             || word.starts_with("--stdin=")
-            || (word.starts_with('-') && !word.starts_with("--") && (*word).contains(['c', 's']))
+            || (word.starts_with('-') && !word.starts_with("--") && word[1..].contains(['c', 's']))
         {
             return Err(rejected(
                 "The existing Git hook invokes an inline shell command and was preserved.",
+            ));
+        }
+        if matches!(
+            *word,
+            "--help"
+                | "--version"
+                | "--dump-strings"
+                | "--dump-po-strings"
+                | "--pretty-print"
+                | "--rcfile"
+                | "--init-file"
+        ) || word.starts_with("--rcfile=")
+            || word.starts_with("--init-file=")
+        {
+            return Err(rejected(
+                "The existing Git hook suppresses execution or consumes trailing arguments and was preserved.",
+            ));
+        }
+        if word.starts_with('-')
+            && !word.starts_with("--")
+            && word[1..].contains(['n', 'D', 't', 'o', 'O'])
+        {
+            return Err(rejected(
+                "The existing Git hook uses a shell option that suppresses or changes the script and was preserved.",
             ));
         }
     }

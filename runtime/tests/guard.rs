@@ -468,6 +468,18 @@ fn install_validates_shebang_and_preserves_unsupported_hooks() {
         "#!/usr/bin/env -S bash -- -cfoo",
         "#!/usr/bin/env -S bash -",
         "#!/bin/bash \"\\\\-c\"",
+        "#!/bin/sh /path/script",
+        "#!/usr/bin/env -S bash /path/script",
+        "#!/bin/sh -- /path/script",
+        "#!/bin/sh -n",
+        "#!/bin/sh -D",
+        "#!/bin/sh -t",
+        "#!/bin/sh --help",
+        "#!/bin/sh --version",
+        "#!/bin/sh --rcfile /tmp/rc",
+        "#!/bin/sh -o pipefail",
+        "#!/bin/sh -O extglob",
+        "#!/bin/sh -euo pipefail",
     ] {
         let temp = fixture();
         let hook = hook_path(temp.path(), "pre-commit");
