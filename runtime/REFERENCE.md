@@ -1221,9 +1221,14 @@ meet this proof are rejected; no SHA comparison is simply disabled.
 For hooks in Git metadata, `guard --install` rejects a running CLI inside the
 project checkout or another checkout of the same repository. Run the installed
 shared CLI outside those checkouts. Existing hooks must use `sh`, `bash` or
-`zsh` shebangs, including `env -S` forms. Installation makes a non-executable
+`zsh` shebangs, including `env -S` forms. Shebangs that pass an inline command
+or a combined option containing `c` or `s`, read the script from stdin, select
+another script, or use ambiguous quoting are preserved with a diagnostic
+because the managed block would not run. Refresh and health planning apply the
+same validation to an already recorded hook. Installation makes a non-executable
 hook executable. A pre-push input read failure blocks the push; clean EOF is
-accepted as an empty update list.
+accepted as an empty update list. The local and remote branch of every guarded
+update must both match the selected checkpoint branch.
 
 New guard blocks in Git metadata pin the absolute shared CLI path and quote it for
 POSIX/Git Bash. `guard --install` (or the recorded setup refresh) migrates owned

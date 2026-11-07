@@ -456,10 +456,64 @@ fn install_validates_shebang_and_preserves_unsupported_hooks() {
         assert!(!result.status.success(), "accepted {shell}: {result:?}");
         assert_eq!(fs::read_to_string(&hook).unwrap(), original);
     }
+    for shebang in [
+        "#!/usr/bin/env -S bash -c",
+        "#!/bin/bash -c",
+        "#!/bin/sh -s",
+        "#!/usr/bin/env -S bash \"-c\" \":\"",
+        "#!/bin/bash '-c' ':'",
+        "#!/usr/bin/env -S bash -cfoo",
+        "#!/usr/bin/env -S bash -ec",
+        "#!/usr/bin/env -S bash -sfoo",
+        "#!/usr/bin/env -S bash -- -cfoo",
+        "#!/usr/bin/env -S bash -",
+        "#!/bin/bash \"\\\\-c\"",
+    ] {
+        let temp = fixture();
+        let hook = hook_path(temp.path(), "pre-commit");
+        let original = format!("{shebang}\n# user content\n");
+        fs::write(&hook, &original).unwrap();
+        let result = manage(temp.path(), "--install");
+        assert!(!result.status.success(), "accepted {shebang}: {result:?}");
+        assert_eq!(fs::read_to_string(&hook).unwrap(), original);
+    }
+    for shebang in [
+        "#!/usr/bin/env -S bash",
+        "#!/usr/bin/env -S bash -eu",
+        "#!/usr/bin/env bash",
+        "#!/bin/bash -e",
+        "#!/bin/sh",
+        "#!/usr/bin/env -S sh -eu",
+    ] {
+        let temp = fixture();
+        let hook = hook_path(temp.path(), "pre-commit");
+        let original = format!("{shebang}\n# user content\n");
+        fs::write(&hook, &original).unwrap();
+        let result = manage(temp.path(), "--install");
+        assert!(result.status.success(), "rejected {shebang}: {result:?}");
+        assert!(
+            fs::read_to_string(&hook)
+                .unwrap()
+                .starts_with(&format!("{shebang}\n# >>>"))
+        );
+    }
+}
+
+#[test]
+fn refresh_rejects_a_recorded_hook_with_an_inline_shebang() {
     let temp = fixture();
     let hook = hook_path(temp.path(), "pre-commit");
-    fs::write(&hook, "#!/usr/bin/env -S bash\n# user content\n").unwrap();
     assert!(manage(temp.path(), "--install").status.success());
+    let installed = fs::read_to_string(&hook).unwrap();
+    let changed = installed.replacen("#!/bin/sh", "#!/bin/bash -c", 1);
+    fs::write(&hook, &changed).unwrap();
+    let result = manage(temp.path(), "--install");
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("inline shell command"),
+        "{result:?}"
+    );
+    assert_eq!(fs::read_to_string(&hook).unwrap(), changed);
 }
 
 #[test]
@@ -1055,6 +1109,17 @@ fn installed_guard_rejects_a_real_push_of_unbound_commits() {
         "{}",
         String::from_utf8_lossy(&push.stderr)
     );
+    let renamed = hooked_git_env(
+        &root,
+        &environment,
+        &["push", "-q", "local", "feature:main"],
+    );
+    assert!(!renamed.status.success());
+    assert!(
+        String::from_utf8_lossy(&renamed.stderr).contains("refs/heads/main"),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
 }
 
 #[test]
@@ -1073,6 +1138,25 @@ fn pre_push_rejects_malformed_and_unmatched_mirror_refs() {
         &format!("refs/remotes/origin/x {oid} refs/heads/x {zero}\n"),
     );
     assert_eq!(denied.status.code(), Some(1));
+}
+
+#[test]
+fn pre_push_rejects_updating_a_remote_branch_other_than_the_checkpoint() {
+    let temp = fixture();
+    checkpoint(temp.path(), "feature");
+    let oid = "1111111111111111111111111111111111111111";
+    let zero = "0000000000000000000000000000000000000000";
+    let result = guard(
+        temp.path(),
+        "pre-push",
+        &format!("refs/heads/feature {oid} refs/heads/main {zero}\n"),
+    );
+    assert_eq!(result.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&result.stderr).contains("refs/heads/main"),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 #[test]
