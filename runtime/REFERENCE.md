@@ -488,11 +488,13 @@ checkpoint remains the current `selection`, and `status` reports its
 
 A checkpoint must record a branch distinct from the delivery target. A mutation
 without `--branch` on the target is rejected, and a checkpoint already recorded
-there is not deliverable: `pr` cannot use it, `issue --branch` cannot replace it
-and `remove` does not clear it. The guard rejects its commits, and no CLI cleanup
-path is provided, so an existing checkpoint needs manual handling. Start the new
-delivery with `specgit issue <spec> --branch <name>` in a separate clean
-worktree; the existing checkpoint stays in place.
+there is not deliverable: `pr` cannot use it and `issue --branch` cannot replace
+it. The guard rejects its commits. A requestless checkpoint recorded on the
+target (for example, one created before this rule) can be retired explicitly
+with `specgit remove`; a checkpoint that records a request follows the normal
+request-verification rules. To start a new delivery without retiring the
+existing checkpoint, use `specgit issue <spec> --branch <name>` in a separate
+clean worktree.
 
 On another branch, `issue --inspect` and `issue --dry-run` prepare only the current
 invocation's specifications and read duplicate candidates. They return
@@ -567,11 +569,13 @@ request with open linked Issues produces attention. Agent supplementary closure
 is optional, defaults off, and requires existing authorization plus native
 readback of merge, intended associations and resulting Issue closure.
 
-For `closed_unmerged`, `next_actions` includes `reopen_or_choose_followup`; for
-`merged`, it includes `verify_issue_closure`. Both carry `command: null`, so they
-do not loop back to `pr --status`; reopen the request or choose follow-up on the
-platform, or verify native Issue closure before selecting the next Issues with
-`specgit issue <spec> --branch <name>`.
+For `pr --status` (not `watch` or `inbox`), `next_actions` includes
+`reopen_or_choose_followup` for `closed_unmerged` and `verify_issue_closure` for
+`merged`. Both carry `command: null`, so they do not loop back to `pr --status`.
+Reopen the request on the platform, or start follow-up work in a separate clean
+worktree with `specgit issue <spec> --branch <name>`; once the checkpoint is
+complete, `specgit remove` can retire it. The guarded `issue --branch` command
+does not work in the same worktree while this checkpoint is present.
 
 `completed` requires the request's own verified merge plus all of the following:
 an available, non-empty `native_closing` set; every associated Issue closed;
@@ -1137,14 +1141,15 @@ request, or a checkpoint that never recorded a native request (for example, a
 PR/MR created outside SpecGit), reported as `no_request`. A `closed_unmerged`
 request was closed without merging and remains undelivered, so its selected
 Issues may stay open. Every state also requires a complete checkpoint for the
-recorded project and target, no pending write or unresolved intent, and no
-observation diagnostics where a request was observed; any other
-observed status, including `open`, still blocks removal. The checkpoint
-evidence's `state` records the observed status, including `no_request` or
-`closed_unmerged`. The shared `info/exclude` block is removed only when no
-sibling initialized worktree still consumes it. A sibling
-with a declaration, or with SpecGit private state whose declaration is missing,
-counts as a consumer.
+recorded project and target, no pending write or unresolved Issue-creation
+intent, and no observation diagnostics where a request was observed; any other
+observed status, including `open`, still blocks removal. A `request_intent`
+without a started write is a regenerable proposal, not an unresolved native
+write. The checkpoint evidence's `state` records the observed status, including
+`no_request` or `closed_unmerged`; `no_request` is a local fact with no native
+observation. The shared `info/exclude` block is removed only when no sibling
+initialized worktree still consumes it. A sibling with a declaration, or with
+SpecGit private state whose declaration is missing, counts as a consumer.
 
 An edited or damaged owned asset, a pending transaction, and an unfinished or
 foreign checkpoint block the preview: its evidence lists the conflicts and

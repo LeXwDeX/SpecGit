@@ -14,23 +14,48 @@ pub struct Report {
     pub effects: Option<Effects>,
     pub next_actions: Vec<Value>,
 }
-fn terminal_next_action(
-    a: &crate::observation_model::Observation,
-    kind: &str,
-    message: &str,
-) -> Option<Value> {
-    let request = a.evidence.request.as_ref()?;
-    let issue_ids: Vec<u64> = a
-        .evidence
+fn association_issue_ids(a: &crate::observation_model::Observation) -> Vec<u64> {
+    a.evidence
         .associations
         .as_deref()
         .unwrap_or_default()
         .iter()
         .map(|association| association.issue)
+        .collect()
+}
+/// Build a complete typed action. The report schema accepts either a typed
+/// `next_action` or a diagnostic guidance object whose kind is outside the
+/// watch action enum; anything else invalidates the whole report.
+fn typed_next_action(
+    a: &crate::observation_model::Observation,
+    kind: &str,
+    goal: &str,
+    message: String,
+    issue_ids: Vec<u64>,
+    requires_user_authorization: bool,
+) -> Option<Value> {
+    let request = a.evidence.request.as_ref()?;
+    let failed_checks: Vec<String> = a
+        .evidence
+        .checks
+        .iter()
+        .flatten()
+        .filter(|check| check.failed())
+        .map(|check| check.name.clone())
+        .collect();
+    let diagnostics: Vec<String> = a
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            serde_json::to_value(&diagnostic.code)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "unknown".into())
+        })
         .collect();
     Some(serde_json::json!({
         "kind": kind,
-        "goal": "lifecycle",
+        "goal": goal,
         "request_id": request.id,
         "request_state": request.state.clone(),
         "check_outcome": a.checks_outcome(),
@@ -38,11 +63,11 @@ fn terminal_next_action(
         "auto_merge": a.evidence.auto_merge,
         "close_issues_after_merge": a.evidence.close_issues_after_merge,
         "issue_ids": issue_ids,
-        "failed_checks": [],
-        "diagnostics": [],
+        "failed_checks": failed_checks,
+        "diagnostics": diagnostics,
         "message": message,
         "command": Value::Null,
-        "requires_user_authorization": false
+        "requires_user_authorization": requires_user_authorization
     }))
 }
 impl Report {
@@ -52,23 +77,38 @@ impl Report {
         if a.checks_outcome() == crate::observation_model::CheckOutcome::Failed {
             next_actions.push(serde_json::json!({"kind":"inspect_native_failure","remedy":"Inspect the native failure and repair within existing authorization; observe again after push."}));
         }
-        if a.status == crate::observation_model::Status::MergedIssuesOpen {
-            next_actions.push(serde_json::json!({"kind":"inspect_open_issues","agent_close_preference":a.evidence.close_issues_after_merge,"remedy":"Check native closing eligibility and issue identity. Agent closure requires explicit session authorization, confirmed merge and native readback; this command never closes issues."}));
+        if a.status == crate::observation_model::Status::MergedIssuesOpen
+            && let Some(action) = typed_next_action(
+                &a,
+                "inspect_open_issues",
+                "lifecycle",
+                "Check native closing eligibility and issue identity. Agent closure requires explicit session authorization, confirmed merge and native readback; this command never closes issues.".into(),
+                association_issue_ids(&a),
+                false,
+            )
+        {
+            next_actions.push(action);
         }
         if a.status == crate::observation_model::Status::ClosedUnmerged
-            && let Some(action) = terminal_next_action(
+            && let Some(action) = typed_next_action(
                 &a,
                 "reopen_or_choose_followup",
-                "The request is closed without native merge evidence. Reopen it on the platform or start follow-up work with `specgit issue <spec> --branch <name>`; local pushes cannot reopen it.",
+                "lifecycle",
+                "The request is closed without native merge evidence. Reopen it on the platform, or start follow-up work in a separate clean worktree with `specgit issue <spec> --branch <name>`; once this checkpoint is complete, `specgit remove` can retire it. Local pushes cannot reopen it.".into(),
+                association_issue_ids(&a),
+                false,
             )
         {
             next_actions.push(action);
         }
         if a.status == crate::observation_model::Status::Merged
-            && let Some(action) = terminal_next_action(
+            && let Some(action) = typed_next_action(
                 &a,
                 "verify_issue_closure",
-                "The request is merged, but native evidence does not confirm completion. Verify every associated Issue's native closure, then start follow-up work with `specgit issue <spec> --branch <name>` if the delivery is finished.",
+                "lifecycle",
+                "The request is merged, but native evidence does not confirm completion. Verify every associated Issue's native closure. If the delivery is finished, start follow-up work in a separate clean worktree with `specgit issue <spec> --branch <name>`, or retire this checkpoint with `specgit remove` once every selected Issue is closed.".into(),
+                association_issue_ids(&a),
+                false,
             )
         {
             next_actions.push(action);

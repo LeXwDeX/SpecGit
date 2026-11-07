@@ -178,19 +178,59 @@ fn delivered_checkpoint_cannot_adopt_another_request() {
         saved["delivered_request"] = json!(41);
         fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
         let before = fs::read(&path).unwrap();
-        for args in [&["pr", "--request", "41"][..], &["pr"][..]] {
+        for args in [
+            &["pr", "--request", "41"][..],
+            &["pr", "--request", "42"][..],
+            &["pr"][..],
+        ] {
             let rejected = f.run(args);
             assert_eq!(rejected["exit"], 2, "{provider} {args:?}: {rejected}");
             assert_eq!(
                 rejected["diagnostics"][0]["code"], "invalid_input",
                 "{provider} {args:?}: {rejected}"
             );
+            assert_eq!(
+                rejected["diagnostics"][0]["operation"], "pr",
+                "{provider} {args:?}: {rejected}"
+            );
+            assert!(
+                rejected["diagnostics"][0]["remedy"]
+                    .as_str()
+                    .unwrap()
+                    .contains("--branch"),
+                "{provider} {args:?}: {rejected}"
+            );
             assert_eq!(fs::read(&path).unwrap(), before, "{provider} {args:?}");
         }
-        let preview = f.run(&["pr", "--request", "41", "--dry-run"]);
-        assert_eq!(preview["exit"], 0, "{provider}: {preview}");
-        assert_eq!(fs::read(&path).unwrap(), before, "{provider}");
+        for args in [
+            &["pr", "--request", "41", "--dry-run"][..],
+            &["pr", "--inspect"][..],
+        ] {
+            let preview = f.run(args);
+            assert_eq!(preview["exit"], 0, "{provider} {args:?}: {preview}");
+            assert_eq!(fs::read(&path).unwrap(), before, "{provider} {args:?}");
+        }
     }
+}
+
+#[test]
+fn delivered_checkpoint_cannot_discard_an_uncertain_request() {
+    let f = fixture("github", 1);
+    assert_eq!(f.run(&["pr"])["exit"], 0);
+    let path = f.root.join(".git/specgit-v2/selection.json");
+    let mut saved: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    saved["delivered_request"] = json!(41);
+    saved["request"] = json!(null);
+    saved["request_write_started"] = json!(true);
+    fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    let before = fs::read(&path).unwrap();
+    let rejected = f.run(&["pr", "--discard-uncertain"]);
+    assert_eq!(rejected["exit"], 2, "{rejected}");
+    assert_eq!(
+        rejected["diagnostics"][0]["code"], "invalid_input",
+        "{rejected}"
+    );
+    assert_eq!(fs::read(&path).unwrap(), before, "{rejected}");
 }
 
 #[test]

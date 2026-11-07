@@ -27,8 +27,12 @@ pub(super) fn emit(report: Report, json: bool) {
             println!("{}", terminal_safe(&notice));
         }
         for action in &report.next_actions {
-            if let Some(remedy) = action.get("remedy").and_then(serde_json::Value::as_str) {
-                println!("{}", terminal_safe(remedy));
+            let guidance = action
+                .get("remedy")
+                .or_else(|| action.get("message"))
+                .and_then(serde_json::Value::as_str);
+            if let Some(guidance) = guidance {
+                println!("{}", terminal_safe(guidance));
             }
         }
     }
