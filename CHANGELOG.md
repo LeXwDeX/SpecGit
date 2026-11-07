@@ -14,6 +14,7 @@ and [release procedure](runtime/distribution/README.md).
 - Harden local asset updates and user Skill ownership: recognize CRLF-owned files, use symlink-safe lock handling, preserve the baseline during self-update, report `not_applied` for backup collisions, and align the schema contract with init/setup local writes. (#847)
 - Remove fixed timing and self-referential assumptions from native tests: synchronize on observed poll progress and verify the GitHub closing-query fixture against an independent protocol string. (#848)
 - Align per-attempt release artifact directories with the release assembler, give the Windows hook suite one libtest worker, and restore 2.19.0 release metadata. (#855)
+- Apply the source-test Windows libtest concurrency limits to the installed-binary profile stage (one worker for `hooks.rs`, two for other suites) and raise the Windows job and step budgets to 120 minutes and the profile deadline to 90 minutes, so the 22 `hook_boundaries` cases no longer run at default parallelism on a runner that was 1.5–4.8 times slower and `specgit hook` subprocesses stay within the documented 2.5-second context deadline instead of writing forced notices to stderr; the 2-second input deadline, 2.5-second context deadline and full three-platform installed-binary regression list are unchanged. Main-push CI now completes on the slowed shared runner and 2.19.0 Required verification and SpecGit Acceptance can be produced consistently. (#859)
 
 # 2.18.0
 
