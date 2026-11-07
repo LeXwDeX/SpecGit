@@ -300,12 +300,17 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
             }
             let request = s.request.ok_or_else(|| conflict(&selection_path, "The checkpoint has no delivered request."))?;
             let observed = observation::observe(Some(request), process.clone(), &layout.root).await;
-            if !matches!(observed.status, Status::Completed | Status::Merged) || !observed.diagnostics.is_empty()
-                || observed.evidence.issues.as_ref().is_none_or(|issues| s.issues.iter().any(|id| !issues.iter().any(|i| i.id == *id && i.state == "closed"))) {
-                return Err(conflict(&selection_path, "Finish the native target merge and every selected Issue closure before removal."));
+            let delivered = matches!(observed.status, Status::Completed | Status::Merged);
+            if (!delivered && observed.status != Status::ClosedUnmerged) || !observed.diagnostics.is_empty() {
+                return Err(conflict(&selection_path, "Close the native request or finish its merge before removal."));
             }
             let native = observed.evidence.request.as_ref().ok_or_else(|| conflict(&selection_path, "Native request evidence is unavailable."))?;
-            if native.target != s.target { return Err(conflict(&selection_path, "The delivered request targets another branch.")); }
+            if native.target != s.target { return Err(conflict(&selection_path, "The request targets another branch.")); }
+            if delivered
+                && observed.evidence.issues.as_ref().is_none_or(|issues| s.issues.iter().any(|id| !issues.iter().any(|i| i.id == *id && i.state == "closed")))
+            {
+                return Err(conflict(&selection_path, "Finish every selected Issue closure before removal."));
+            }
             Ok(json!({"request":request,"head":native.head,"target":native.target,"issues":s.issues,"state":observed.status.as_str()}))
         }.await;
         match completed {
