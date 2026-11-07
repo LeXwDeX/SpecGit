@@ -180,8 +180,9 @@ cargo test --locked --all-targets --features test-fixtures
 ```
 
 安装或发行变更还须执行相关原生分发测试。
-CI 在 GitHub-hosted `ubuntu-24.04`、`macos-15`、`windows-2025` 上验证
-Linux x64、macOS arm64、Windows x64 的源码和已安装入口。
+PR 事件只运行 Linux 矩阵；main push、merge group、手动运行与 release 构建
+保留 Linux x64、macOS arm64、Windows x64 三平台的源码和已安装入口验证。
+Windows 问题在发布前集中修复。
 `Required verification` 汇总适用检查；`SpecGit Acceptance` 要求其成功且 PR 已 ready、目标为 main。
 本地编译、旧 head 或其他平台的成功不替代当前 head 的适用验证。
 
