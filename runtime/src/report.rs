@@ -14,6 +14,37 @@ pub struct Report {
     pub effects: Option<Effects>,
     pub next_actions: Vec<Value>,
 }
+fn terminal_next_action(
+    a: &crate::observation_model::Observation,
+    kind: &str,
+    message: &str,
+) -> Option<Value> {
+    let request = a.evidence.request.as_ref()?;
+    let issue_ids: Vec<u64> = a
+        .evidence
+        .associations
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|association| association.issue)
+        .collect();
+    Some(serde_json::json!({
+        "kind": kind,
+        "goal": "lifecycle",
+        "request_id": request.id,
+        "request_state": request.state.clone(),
+        "check_outcome": a.checks_outcome(),
+        "draft": request.draft,
+        "auto_merge": a.evidence.auto_merge,
+        "close_issues_after_merge": a.evidence.close_issues_after_merge,
+        "issue_ids": issue_ids,
+        "failed_checks": [],
+        "diagnostics": [],
+        "message": message,
+        "command": Value::Null,
+        "requires_user_authorization": false
+    }))
+}
 impl Report {
     pub fn observation(operation: &str, a: crate::observation_model::Observation) -> Self {
         let exit = a.exit();
@@ -23,6 +54,24 @@ impl Report {
         }
         if a.status == crate::observation_model::Status::MergedIssuesOpen {
             next_actions.push(serde_json::json!({"kind":"inspect_open_issues","agent_close_preference":a.evidence.close_issues_after_merge,"remedy":"Check native closing eligibility and issue identity. Agent closure requires explicit session authorization, confirmed merge and native readback; this command never closes issues."}));
+        }
+        if a.status == crate::observation_model::Status::ClosedUnmerged
+            && let Some(action) = terminal_next_action(
+                &a,
+                "reopen_or_choose_followup",
+                "The request is closed without native merge evidence. Reopen it on the platform or start follow-up work with `specgit issue <spec> --branch <name>`; local pushes cannot reopen it.",
+            )
+        {
+            next_actions.push(action);
+        }
+        if a.status == crate::observation_model::Status::Merged
+            && let Some(action) = terminal_next_action(
+                &a,
+                "verify_issue_closure",
+                "The request is merged, but native evidence does not confirm completion. Verify every associated Issue's native closure, then start follow-up work with `specgit issue <spec> --branch <name>` if the delivery is finished.",
+            )
+        {
+            next_actions.push(action);
         }
 
         Self {
