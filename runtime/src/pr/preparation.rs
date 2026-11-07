@@ -128,7 +128,7 @@ async fn discover(o: &Options, w: &Workspace) -> Result<Discovery, Diagnostic> {
             &format!(
                 "This branch's checkpoint was delivered by merged request #{delivered}; it cannot adopt another request."
             ),
-            "Switch to the updated target branch and start the next delivery with `specgit issue <spec> --branch <name>`; the delivered checkpoint is preserved.",
+            "Switch to the updated target branch and start the next delivery with `specgit issue <spec> --branch <name>`; this rejected mutation leaves the checkpoint unchanged, and `issue --branch` replaces it.",
         ));
     }
     let number = o.request.or(previous.as_ref().and_then(|s| s.request));

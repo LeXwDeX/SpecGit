@@ -295,6 +295,9 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
             let s = selection::read(&w.context)?.ok_or_else(|| conflict(&selection_path, "The checkpoint disappeared."))?;
             let mut active = s.clone();
             active.delivered_request = None;
+            // `request_intent` without `request_write_started` is a regenerable
+            // proposal left by a deterministic create failure. It is not an
+            // unresolved native write, so it does not block the documented exit.
             if s.project_id != w.facts.id || s.pending_write() || (s.delivered_request.is_some() && (!s.replaceable() || s.delivered_request != s.request)) || !active.checkpoint_valid(Some(&w.target)) || s.intents.iter().any(|i| i.issue.is_none()) {
                 return Err(conflict(&selection_path, "The checkpoint is incomplete or belongs to another native project."));
             }
@@ -302,7 +305,10 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
                 Some(request) => request,
                 // A checkpoint that never recorded a native request is a local
                 // selection only. It has no delivery to verify, so the explicit
-                // preview/apply transaction retires it as `no_request`.
+                // preview/apply transaction retires it as `no_request`. This
+                // deliberately includes a requestless checkpoint recorded on the
+                // delivery target: it cannot be delivered, and removal is its
+                // only supported CLI exit.
                 None => {
                     return Ok(json!({"request":null,"head":null,"target":s.target,"issues":s.issues,"state":"no_request"}));
                 }
@@ -323,10 +329,15 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
         }.await;
         match completed {
             Ok(evidence) => {
+                let ownership = if evidence["state"] == "no_request" {
+                    "local_checkpoint_without_request"
+                } else {
+                    "verified_native_completion"
+                };
                 plan.lifecycle = evidence;
                 plan.add(
                     &selection_path,
-                    "verified_native_completion",
+                    ownership,
                     Change::new(selection_path.clone(), None).map(|c| vec![c]),
                 );
             }

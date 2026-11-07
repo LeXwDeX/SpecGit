@@ -18,6 +18,11 @@ pub(super) async fn discard_uncertain(
             "The selected delivery project or target changed.",
         ));
     }
+    if selected.delivered_request.is_some() {
+        return Err(Diagnostic::input(
+            "This checkpoint was delivered by a merged request and cannot discard an uncertain creation.",
+        ));
+    }
     if !selected.request_write_started || selected.request.is_some() {
         return Err(Diagnostic::input(
             "No checkpoint has an uncertain request creation.",

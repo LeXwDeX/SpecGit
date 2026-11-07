@@ -57,6 +57,27 @@ fn inventory(root: &Path) -> BTreeMap<PathBuf, Value> {
     }
     files
 }
+#[cfg(feature = "test-fixtures")]
+fn checkpoint_path(f: &delivery::Fixture) -> PathBuf {
+    PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"]))
+        .join("specgit-v2/selection.json")
+}
+#[cfg(feature = "test-fixtures")]
+fn edit_checkpoint(f: &delivery::Fixture, edit: impl FnOnce(&mut Value)) -> PathBuf {
+    let checkpoint = checkpoint_path(f);
+    let mut saved: Value = serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+    edit(&mut saved);
+    fs::write(&checkpoint, serde_json::to_vec(&saved).unwrap()).unwrap();
+    checkpoint
+}
+#[cfg(feature = "test-fixtures")]
+fn requestless_checkpoint(f: &delivery::Fixture) -> PathBuf {
+    edit_checkpoint(f, |saved| {
+        saved["request"] = json!(null);
+        saved["request_write_started"] = json!(false);
+        saved["request_intent"] = json!(null);
+    })
+}
 fn initialize(root: &Path) {
     let private = PathBuf::from(git(root, &["rev-parse", "--absolute-git-dir"])).join("specgit-v2");
     let exclude = PathBuf::from(git(
@@ -839,13 +860,110 @@ fn requestless_checkpoint_can_be_removed() {
         git(&f.root, &["commit", "-m", "user content"]);
         git(&f.root, &["rm", "--cached", ".specgit.yaml"]);
         initialize(&f.root);
-        let checkpoint = PathBuf::from(git(&f.root, &["rev-parse", "--absolute-git-dir"]))
-            .join("specgit-v2/selection.json");
-        let mut saved: Value = serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
-        saved["request"] = json!(null);
-        saved["request_write_started"] = json!(false);
-        saved["request_intent"] = json!(null);
-        fs::write(&checkpoint, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let checkpoint = requestless_checkpoint(&f);
+        let before = fs::read(&checkpoint).unwrap();
+        let calls = f.state()["calls"].as_array().unwrap().clone();
+        let writes = f.writes();
+        let preview = f.run(&["remove", "--dry-run"]);
+        assert_eq!(preview["status"], "prepared", "{provider}: {preview}");
+        assert_eq!(
+            preview["evidence"]["checkpoint"]["state"], "no_request",
+            "{provider}: {preview}"
+        );
+        assert_eq!(
+            fs::read(&checkpoint).unwrap(),
+            before,
+            "{provider}: dry-run wrote"
+        );
+        assert_eq!(f.writes(), writes, "{provider}: preview must not write");
+        let calls_after = f.state()["calls"].as_array().unwrap().clone();
+        let new_calls = &calls_after[calls.len()..];
+        assert!(
+            new_calls.iter().all(|call| {
+                let endpoint = call["endpoint"].as_str().unwrap_or_default();
+                !endpoint.contains("/pulls/") && !endpoint.contains("merge_requests/")
+            }),
+            "{provider}: requestless preview read request evidence: {new_calls:?}"
+        );
+        let digest = preview["evidence"]["preview_sha256"].as_str().unwrap();
+        let applied = f.run(&["remove", "--apply", "--expect", digest]);
+        assert_eq!(applied["status"], "removed", "{provider}: {applied}");
+        assert_eq!(
+            applied["evidence"]["checkpoint"]["state"], "no_request",
+            "{provider}: {applied}"
+        );
+        let item = applied["evidence"]["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| {
+                item["path"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("selection.json"))
+            })
+            .unwrap();
+        assert_eq!(
+            item["ownership"], "local_checkpoint_without_request",
+            "{provider}: {applied}"
+        );
+        assert_eq!(item["state"], "removed", "{provider}: {applied}");
+        assert!(!checkpoint.exists(), "{provider}");
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn requestless_checkpoint_with_a_regenerable_intent_can_be_removed() {
+    for provider in ["github", "gitlab"] {
+        let f = acceptance::fixture(provider);
+        let tracked = f.root.join("notes.txt");
+        fs::write(&tracked, "unchanged user content").unwrap();
+        git(&f.root, &["add", "notes.txt"]);
+        git(&f.root, &["commit", "-m", "user content"]);
+        git(&f.root, &["rm", "--cached", ".specgit.yaml"]);
+        initialize(&f.root);
+        let head = "a".repeat(40);
+        let checkpoint = edit_checkpoint(&f, |saved| {
+            saved["request"] = json!(null);
+            saved["request_write_started"] = json!(false);
+            saved["request_intent"] = json!({
+                "head": head,
+                "title": "feat: first spec",
+                "body": "regenerable request proposal",
+                "labels": []
+            });
+        });
+        let saved: Value = serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+        assert!(
+            saved["request_intent"].is_object(),
+            "{provider}: fixture precondition: {saved}"
+        );
+        let preview = f.run(&["remove", "--dry-run"]);
+        assert_eq!(preview["status"], "prepared", "{provider}: {preview}");
+        let digest = preview["evidence"]["preview_sha256"].as_str().unwrap();
+        let applied = f.run(&["remove", "--apply", "--expect", digest]);
+        assert_eq!(applied["status"], "removed", "{provider}: {applied}");
+        assert!(!checkpoint.exists(), "{provider}");
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn requestless_target_branch_checkpoint_can_be_removed() {
+    for provider in ["github", "gitlab"] {
+        let f = acceptance::fixture(provider);
+        let tracked = f.root.join("notes.txt");
+        fs::write(&tracked, "unchanged user content").unwrap();
+        git(&f.root, &["add", "notes.txt"]);
+        git(&f.root, &["commit", "-m", "user content"]);
+        git(&f.root, &["rm", "--cached", ".specgit.yaml"]);
+        initialize(&f.root);
+        git(&f.root, &["switch", "-q", "-C", "main"]);
+        let checkpoint = requestless_checkpoint(&f);
+        edit_checkpoint(&f, |saved| {
+            saved["branch"] = json!("main");
+            saved["target"] = json!("main");
+        });
         let preview = f.run(&["remove", "--dry-run"]);
         assert_eq!(preview["status"], "prepared", "{provider}: {preview}");
         assert_eq!(
@@ -856,6 +974,62 @@ fn requestless_checkpoint_can_be_removed() {
         let applied = f.run(&["remove", "--apply", "--expect", digest]);
         assert_eq!(applied["status"], "removed", "{provider}: {applied}");
         assert!(!checkpoint.exists(), "{provider}");
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn requestless_removal_keeps_the_existing_safety_guards() {
+    type CheckpointMutation = fn(&mut Value);
+    let cases: [(&str, CheckpointMutation); 5] = [
+        ("pending request write", |saved| {
+            saved["request_write_started"] = json!(true);
+        }),
+        ("unresolved issue intent", |saved| {
+            saved["intents"][0]["issue"] = json!(null);
+            saved["intents"][0]["write_started"] = json!(false);
+        }),
+        ("project mismatch", |saved| {
+            saved["project_id"] = json!(999);
+        }),
+        ("target mismatch", |saved| {
+            saved["target"] = json!("other");
+        }),
+        ("delivered request mismatch", |saved| {
+            saved["delivered_request"] = json!(41);
+            saved["request"] = json!(null);
+        }),
+    ];
+    for provider in ["github", "gitlab"] {
+        for (case, mutate) in cases {
+            let f = acceptance::fixture(provider);
+            let tracked = f.root.join("notes.txt");
+            fs::write(&tracked, "unchanged user content").unwrap();
+            git(&f.root, &["add", "notes.txt"]);
+            git(&f.root, &["commit", "-m", "user content"]);
+            git(&f.root, &["rm", "--cached", ".specgit.yaml"]);
+            initialize(&f.root);
+            let checkpoint = requestless_checkpoint(&f);
+            edit_checkpoint(&f, mutate);
+            let before = fs::read(&checkpoint).unwrap();
+            let inventory_before = inventory(&f.root);
+            let preview = f.run(&["remove", "--dry-run"]);
+            assert_ne!(preview["exit"], 0, "{provider} {case}: {preview}");
+            assert_eq!(
+                preview["diagnostics"][0]["code"], "ownership_conflict",
+                "{provider} {case}: {preview}"
+            );
+            assert_eq!(
+                fs::read(&checkpoint).unwrap(),
+                before,
+                "{provider} {case}: checkpoint changed"
+            );
+            assert_eq!(
+                inventory(&f.root),
+                inventory_before,
+                "{provider} {case}: preview changed the worktree"
+            );
+        }
     }
 }
 
