@@ -36,6 +36,13 @@ fn complete_request(f: &delivery::Fixture, provider: &str) {
         s["issues"][0]["state"] = json!("closed");
     });
 }
+fn report_schema() -> Value {
+    serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap()
+}
+fn assert_report_schema(report: &Value) {
+    jsonschema::draft202012::validate(&report_schema(), report)
+        .unwrap_or_else(|error| panic!("report violates report.schema.json: {error}\n{report}"));
+}
 /// The mock uses the GitLab API field shape documented for list merge requests,
 /// including the valid transitional `state: "locked"` value:
 /// https://docs.gitlab.com/api/merge_requests/#list-merge-requests
@@ -476,6 +483,112 @@ fn complete_requires_native_merge_and_every_referenced_issue_closed() {
         assert_eq!(f.writes(), writes);
     }
 }
+#[test]
+fn pr_status_offers_terminal_next_actions_without_a_status_loop() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!("closed");
+            s["requests"][0]["merged"] = json!(false);
+        });
+        let closed = f.run(&["pr", "--status"]);
+        assert_eq!(closed["status"], "closed_unmerged", "{provider}: {closed}");
+        assert_report_schema(&closed);
+        let action = &closed["next_actions"][0];
+        assert_eq!(
+            action["kind"], "reopen_or_choose_followup",
+            "{provider}: {closed}"
+        );
+        assert_eq!(action["goal"], "lifecycle", "{provider}: {closed}");
+        assert_eq!(action["request_id"], 41, "{provider}: {closed}");
+        assert_eq!(action["issue_ids"], json!([1]), "{provider}: {closed}");
+        assert!(action["command"].is_null(), "{provider}: {closed}");
+        let message = action["message"].as_str().unwrap();
+        assert!(
+            message.contains("separate clean worktree"),
+            "{provider}: {closed}"
+        );
+        assert!(message.contains("specgit remove"), "{provider}: {closed}");
+        assert!(!message.contains("pr --status"), "{provider}: {closed}");
+        let human = f.run_human(&["pr", "--status"]);
+        let stdout = String::from_utf8_lossy(&human.stdout);
+        assert!(
+            stdout.contains("separate clean worktree"),
+            "{provider}: {stdout}"
+        );
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing"] = json!([]);
+        });
+        let merged = f.run(&["pr", "--status"]);
+        assert_eq!(merged["status"], "merged", "{provider}: {merged}");
+        assert_report_schema(&merged);
+        let action = &merged["next_actions"][0];
+        assert_eq!(
+            action["kind"], "verify_issue_closure",
+            "{provider}: {merged}"
+        );
+        assert_eq!(action["goal"], "lifecycle", "{provider}: {merged}");
+        assert_eq!(action["request_id"], 41, "{provider}: {merged}");
+        assert_eq!(action["issue_ids"], json!([1]), "{provider}: {merged}");
+        assert!(action["command"].is_null(), "{provider}: {merged}");
+        let message = action["message"].as_str().unwrap();
+        assert!(
+            message.contains("separate clean worktree"),
+            "{provider}: {merged}"
+        );
+        assert!(message.contains("specgit remove"), "{provider}: {merged}");
+        assert!(!message.contains("pr --status"), "{provider}: {merged}");
+    }
+}
+
+#[test]
+fn pr_status_reports_validate_against_the_published_schema() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        assert_report_schema(&f.run(&["pr", "--status"]));
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!("closed");
+            s["requests"][0]["merged"] = json!(false);
+        });
+        let closed = f.run(&["pr", "--status"]);
+        assert_eq!(closed["status"], "closed_unmerged", "{provider}: {closed}");
+        assert_report_schema(&closed);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("open");
+        });
+        let open_issues = f.run(&["pr", "--status"]);
+        assert_eq!(
+            open_issues["status"], "merged_issues_open",
+            "{provider}: {open_issues}"
+        );
+        assert_report_schema(&open_issues);
+        assert_eq!(
+            open_issues["next_actions"][0]["kind"], "inspect_open_issues",
+            "{provider}: {open_issues}"
+        );
+        f.edit(|s| {
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing"] = json!([]);
+        });
+        let merged = f.run(&["pr", "--status"]);
+        assert_eq!(merged["status"], "merged", "{provider}: {merged}");
+        assert_report_schema(&merged);
+    }
+}
+
 #[test]
 fn completed_requires_the_request_itself_to_close_an_issue() {
     for provider in ["github", "gitlab"] {
@@ -1311,6 +1424,16 @@ fn a_merged_read_retires_the_checkpoint_until_new_issues_are_selected() {
         assert_eq!(checkpoint(&f)["delivered_request"], 41);
         let again = f.run(&["pr", "--status"]);
         assert!(again["effects"].is_null(), "{provider}: {again}");
+        let doctor = f.run(&["doctor"]);
+        assert_eq!(
+            doctor["evidence"]["local"]["checkpoint"]["status"], "current",
+            "{provider}: {doctor}"
+        );
+        assert_eq!(
+            doctor["evidence"]["local"]["checkpoint"]["delivered_request"], 41,
+            "{provider}: {doctor}"
+        );
+        assert_report_schema(&doctor);
 
         // New commits cannot bind the delivered Issues.
         fs::write(f.root.join("after.txt"), "later work").unwrap();
@@ -1386,8 +1509,50 @@ fn a_merged_lifecycle_watch_also_retires_the_checkpoint() {
         "--once",
     ]);
     assert_eq!(watched["exit"], 0, "{watched}");
+    assert_eq!(
+        watched["effects"]["operations"][0]["action"], "record_delivered_checkpoint",
+        "{watched}"
+    );
+    assert_eq!(watched["effects"]["outcome"], "applied", "{watched}");
     assert_eq!(f.writes(), writes);
     assert_eq!(checkpoint(&f)["delivered_request"], 41, "{watched}");
+}
+
+#[test]
+fn a_merged_inbox_refresh_also_retires_the_checkpoint() {
+    let f = fixture("github");
+    complete_request(&f, "github");
+    let writes = f.writes();
+    let inbox = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+    ]);
+    assert_eq!(inbox["exit"], 0, "{inbox}");
+    assert_eq!(inbox["operation"], "inbox", "{inbox}");
+    assert_eq!(
+        inbox["effects"]["operations"][0]["action"], "record_delivered_checkpoint",
+        "{inbox}"
+    );
+    assert_eq!(inbox["effects"]["outcome"], "applied", "{inbox}");
+    assert_eq!(f.writes(), writes);
+    assert_eq!(checkpoint(&f)["delivered_request"], 41, "{inbox}");
+    let no_refresh = f.run(&[
+        "inbox",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+        "--no-refresh",
+    ]);
+    assert_eq!(no_refresh["operation"], "inbox", "{no_refresh}");
+    assert!(no_refresh["effects"].is_null(), "{no_refresh}");
 }
 
 #[tokio::test]

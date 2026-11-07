@@ -266,8 +266,8 @@ return migration diagnostics instead of new meanings.
 | finish | Fresh shared rules, complete issue/request/check/review evidence | None |
 | merge | Exact current request, native capabilities and accepted checks | Explicit native SHA-guarded merge delegation and ignored intent; no closure/delete fallback |
 | promotion | Native commit/request/issue associations and exact Git range/postimages | None; candidates require deliberate association |
-| inbox | Exact subscription and optionally fresh native facts | Local explicit event receipt only |
-| watch | Live delivery snapshots and local subscriptions | Local lease/outbox only; bounded background child |
+| inbox | Exact subscription and optionally fresh native facts | Local explicit event receipt, observation state and checkpoint retirement after verified merge |
+| watch | Live delivery snapshots and local subscriptions | Local lease/outbox and checkpoint retirement after verified merge; bounded background child |
 | hook | Event payload and local project/subscriber context | Local context/inbox plus read-only watch handoff |
 
 Keep useful binding adoption/unbinding as explicit `pr` actions; compatibility
