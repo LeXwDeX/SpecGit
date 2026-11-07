@@ -799,6 +799,37 @@ fn only_native_completed_checkpoints_can_be_removed_without_remote_writes() {
 
 #[cfg(feature = "test-fixtures")]
 #[test]
+fn closed_unmerged_checkpoint_can_be_removed_without_issue_closure() {
+    for provider in ["github", "gitlab"] {
+        let f = acceptance::fixture(provider);
+        let tracked = f.root.join("notes.txt");
+        fs::write(&tracked, "unchanged user content").unwrap();
+        git(&f.root, &["add", "notes.txt"]);
+        git(&f.root, &["commit", "-m", "user content"]);
+        git(&f.root, &["rm", "--cached", ".specgit.yaml"]);
+        initialize(&f.root);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!("closed");
+            s["requests"][0]["merged"] = json!(false);
+        });
+        let preview = f.run(&["remove", "--dry-run"]);
+        assert_eq!(preview["status"], "prepared", "{provider}: {preview}");
+        assert_eq!(
+            preview["evidence"]["checkpoint"]["state"], "closed_unmerged",
+            "{provider}: {preview}"
+        );
+        let digest = preview["evidence"]["preview_sha256"].as_str().unwrap();
+        let applied = f.run(&["remove", "--apply", "--expect", digest]);
+        assert_eq!(applied["status"], "removed", "{provider}: {applied}");
+        assert_eq!(
+            applied["evidence"]["checkpoint"]["state"], "closed_unmerged",
+            "{provider}: {applied}"
+        );
+    }
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
 fn interrupted_removal_blocks_new_plans_and_recovers_from_durable_preimages() {
     let f = Fixture::new(true);
     let before = inventory(&f.root);

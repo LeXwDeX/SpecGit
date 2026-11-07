@@ -1112,14 +1112,19 @@ when a committed init or migration journal proves their exact bytes and
 permissions; a tracked `.specgit.yaml` blocks removal because removal never
 changes the Git index. Init guidance blocks and recorded project agent skills,
 guidance, settings (#652) and receipt-owned guard hooks join the same transaction.
-An existing delivery checkpoint permits removal only after the native request is
-reported `merged` or `completed` with the recorded target, with every selected
-Issue closed and no observation diagnostics; the evidence's `lifecycle.state`
-records the observed status. The shared `info/exclude` block is removed only when
-no sibling initialized worktree still consumes it. A sibling with a declaration,
-or with SpecGit private state whose declaration is missing, counts as a consumer.
+An existing delivery checkpoint permits removal only when the observed native
+request is `merged` or `completed` and every selected Issue is closed, or is
+`closed_unmerged`. A `closed_unmerged` request was closed without merging and
+remains undelivered, so its selected Issues may stay open. Every state also
+requires a complete checkpoint for the recorded project and target, no pending
+write and no observation diagnostics; any other observed status, including
+`open`, still blocks removal, and the checkpoint evidence's `state` records the
+observed status, including `closed_unmerged`. The shared `info/exclude` block is
+removed only when no sibling initialized worktree still consumes it. A sibling
+with a declaration, or with SpecGit private state whose declaration is missing,
+counts as a consumer.
 
-An edited or damaged owned asset, a pending transaction, and an undelivered or
+An edited or damaged owned asset, a pending transaction, and an unfinished or
 foreign checkpoint block the preview: its evidence lists the conflicts and
 applies nothing. Unknown private evidence, journals, locks and backups are
 retained rather than recursively deleted; global agent assets, the shared
