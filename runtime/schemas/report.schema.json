@@ -560,6 +560,13 @@
                 "null"
               ],
               "minimum": 1
+            },
+            "delivered_request": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
             }
           }
         },

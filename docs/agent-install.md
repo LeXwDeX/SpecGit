@@ -279,15 +279,17 @@ specgit remove --rollback <transaction>
 Declaration and local-routing removal requires exact bytes and permissions proven
 by a committed init or migration journal; an unowned or edited declaration, a
 tracked `.specgit.yaml` or a pending transaction blocks the preview. An existing
-delivery checkpoint permits removal only when the observed native request is
-`merged` or `completed` with every selected Issue closed, or is
-`closed_unmerged`; a `closed_unmerged` request was closed without merging and
-remains undelivered, so its selected Issues may stay open. Every state also
-requires a complete checkpoint for the recorded project and target, no pending
-write and no observation diagnostics; any other observed status, including
-`open`, still blocks removal, and the checkpoint evidence's `state` records the
-observed status. Sibling worktrees retain shared exclude and hook blocks they
-still consume.
+delivery checkpoint permits removal only for a `merged` or `completed` request
+with every selected Issue closed, a `closed_unmerged` request, or a checkpoint
+that never recorded a native request (for example, a PR/MR created outside
+SpecGit), reported as `no_request`. A `closed_unmerged` request was closed
+without merging and remains undelivered, so its selected Issues may stay open.
+Every state also requires a complete checkpoint for the recorded project
+and target, no pending write or unresolved intent, and no observation
+diagnostics where a request was observed; any other
+observed status, including `open`, still blocks removal, and the checkpoint
+evidence's `state` records the observed status. Sibling worktrees retain shared
+exclude and hook blocks they still consume.
 
 ### Optional user Skill
 

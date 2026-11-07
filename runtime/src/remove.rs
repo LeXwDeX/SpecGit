@@ -298,7 +298,15 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
             if s.project_id != w.facts.id || s.pending_write() || (s.delivered_request.is_some() && (!s.replaceable() || s.delivered_request != s.request)) || !active.checkpoint_valid(Some(&w.target)) || s.intents.iter().any(|i| i.issue.is_none()) {
                 return Err(conflict(&selection_path, "The checkpoint is incomplete or belongs to another native project."));
             }
-            let request = s.request.ok_or_else(|| conflict(&selection_path, "The checkpoint has no delivered request."))?;
+            let request = match s.request {
+                Some(request) => request,
+                // A checkpoint that never recorded a native request is a local
+                // selection only. It has no delivery to verify, so the explicit
+                // preview/apply transaction retires it as `no_request`.
+                None => {
+                    return Ok(json!({"request":null,"head":null,"target":s.target,"issues":s.issues,"state":"no_request"}));
+                }
+            };
             let observed = observation::observe(Some(request), process.clone(), &layout.root).await;
             let delivered = matches!(observed.status, Status::Completed | Status::Merged);
             if (!delivered && observed.status != Status::ClosedUnmerged) || !observed.diagnostics.is_empty() {
