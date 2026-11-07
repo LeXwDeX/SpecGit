@@ -29,6 +29,7 @@ jobs:
     outputs:
       build: ${{ steps.scope.outputs.build }}
       metadata: ${{ steps.scope.outputs.metadata }}
+      rust_matrix: ${{ steps.rust-matrix.outputs.rust_matrix }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,6 +61,20 @@ jobs:
           METADATA: ${{ steps.scope.outputs.metadata }}
         run: node -e "if (!['true','false'].includes(process.env.BUILD) || process.env.METADATA !== String(process.env.BUILD === 'false')) process.exit(1)"
 
+      - name: Select the Rust platform matrix
+        id: rust-matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          linux='{"os":"ubuntu-24.04","label":"linux","target":"x86_64-unknown-linux-gnu","runs_on":"[\"self-hosted\",\"Linux\",\"X64\",\"azure-f16\"]","hosted_runs_on":"[\"ubuntu-24.04\"]"}'
+          macos='{"os":"macos-15","label":"macos","target":"aarch64-apple-darwin","runs_on":"[\"macos-15\"]","hosted_runs_on":"[\"macos-15\"]"}'
+          windows='{"os":"windows-2025","label":"windows","target":"x86_64-pc-windows-msvc","runs_on":"[\"self-hosted\",\"Windows\",\"X64\",\"azure-win\"]","hosted_runs_on":"[\"windows-2025\"]"}'
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            printf 'rust_matrix={"include":[%s]}\n' "$linux" >> "$GITHUB_OUTPUT"
+          else
+            printf 'rust_matrix={"include":[%s,%s,%s]}\n' "$linux" "$macos" "$windows" >> "$GITHUB_OUTPUT"
+          fi
+
   metadata:
     name: Native repository contracts
     runs-on: ubuntu-24.04
@@ -87,23 +102,8 @@ jobs:
     timeout-minutes: ${{ matrix.label == 'windows' && 120 || 45 }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            label: linux
-            target: x86_64-unknown-linux-gnu
-            runs_on: '["self-hosted","Linux","X64","azure-f16"]'
-            hosted_runs_on: '["ubuntu-24.04"]'
-          - os: macos-15
-            label: macos
-            target: aarch64-apple-darwin
-            runs_on: '["macos-15"]'
-            hosted_runs_on: '["macos-15"]'
-          - os: windows-2025
-            label: windows
-            target: x86_64-pc-windows-msvc
-            runs_on: '["self-hosted","Windows","X64","azure-win"]'
-            hosted_runs_on: '["windows-2025"]'
+      # PR events receive only the Linux entry; main pushes receive all three.
+      matrix: ${{ fromJSON(needs.changes.outputs.rust_matrix) }}
     defaults:
       run:
         shell: bash
