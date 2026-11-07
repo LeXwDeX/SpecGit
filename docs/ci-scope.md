@@ -22,19 +22,28 @@ verification exemptions. Unknown paths require product verification.
 CI and security classification execute the classifier from the event's base commit,
 not the pull request checkout. Missing base evidence fails closed.
 
-For pushes to main and same-repository PRs, native CI routes Linux and Windows to
-the owner's self-hosted Azure runners; macOS uses GitHub-hosted `macos-15` ARM64.
-Fork PRs, merge groups and manual runs use GitHub-hosted runners for all three
-platforms. Other CI jobs and release builds use GitHub-hosted runners. This differs
-from the owner-runner-only decision in #528; a routing policy change needs owner
-review, not an implicit change here. Dependabot PRs are same-repository PRs, so
-third-party crate `build.rs` code can execute on the owner's Linux and Windows
-machines. Review updates and runner isolation with that risk in mind.
+On `pull_request` events the Rust matrix runs Linux only; macOS and Windows do
+not run. Pushes to main, merge groups, manual runs and release builds
+keep all three platform jobs. Windows failures are therefore fixed in a single
+release-readiness pass, and ordinary PRs do not wait for Windows.
+
+For pushes to main, native CI routes Linux and Windows to the owner's
+self-hosted Azure runners; macOS uses GitHub-hosted `macos-15` ARM64.
+Same-repository PRs use the same Linux route. Fork PRs use GitHub-hosted
+runners for the Linux job; merge groups and manual runs use GitHub-hosted
+runners for all three platforms. Other CI jobs and release builds use
+GitHub-hosted runners. This differs from the owner-runner-only decision in
+#528; a routing policy change needs owner review, not an implicit change here.
+Dependabot PRs are same-repository PRs, so third-party crate `build.rs` code can
+execute on the owner's Linux machine during the PR and on the owner's Windows
+machine once the change reaches main.
+Review updates and runner isolation with that risk in mind.
 GitHub-managed CodeQL default setup is configured separately in security settings.
-The native matrix runs Linux x64, macOS arm64 and Windows x64. Each platform checks
-Rust formatting and lint, compiles and runs every source test, verifies native
-distribution tooling, compiles and installs the release executable, then repeats
-the public regression inventory through that installed executable. Verified phase
+The full native matrix covers Linux x64, macOS arm64 and Windows x64; PR runs
+execute only the Linux entry. Each platform job checks Rust formatting and lint,
+compiles and runs every source test, verifies native distribution tooling,
+compiles and installs the release executable, then repeats the public regression
+inventory through that installed executable. Verified phase
 outputs stay in the current job's temporary runner directory; a new job starts
 clean. Qualification evidence is retained as Actions artifacts. Neither path treats
 an incomplete phase as passed.
@@ -43,9 +52,12 @@ Repository contract tests check workflow permissions, exact native runner
 routing, signed publication identity, the required dependency chain and metadata
 classification.
 `Required verification` succeeds only when classification and repository contracts
-pass and every applicable Rust matrix job succeeds. Documentation-only changes
-must have the Rust job skipped. `SpecGit Acceptance` depends on that result and
-requires a ready PR targeting main. The existing protected status name is retained.
+pass and every applicable Rust matrix job succeeds. On PRs only the Linux matrix
+job can apply, so a product-changing PR needs only that result; on main pushes
+all three platform jobs must succeed. Documentation-only changes must have the
+Rust job skipped. `SpecGit Acceptance` depends on that result and
+requires a ready PR targeting main; it inherits the same PR scope. The existing
+protected status name is retained.
 GitHub owns merge eligibility and protection; there is no v1 `finish` verdict.
 
 Dependency Review runs on every PR and fails on high-severity dependency findings.
@@ -73,7 +85,8 @@ Issue to be closed.
 Merging does not authorize publication. The explicitly dispatched Release workflow
 builds all three platforms from main, requires successful `Required verification` and
 `SpecGit Acceptance` checks on that exact source SHA before signing and again before
-publication, then signs SHA256SUMS with the trusted workflow
+publication. Those checks come from the main push run, which still exercises the full
+three-platform matrix. The release then signs SHA256SUMS with the trusted workflow
 identity, verifies the signature and uploaded bytes, and preserves immutable
 releases. The signature covers only `SHA256SUMS`, and therefore the ZIP bytes; the
 source commit, version, build run and internal `native-release.json` are not in the
