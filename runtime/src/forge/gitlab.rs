@@ -96,6 +96,22 @@ pub(crate) async fn issue_read(
     })
 }
 
+pub(crate) async fn issue_with_reason(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<(Issue, Option<String>), Diagnostic> {
+    let v = reader
+        .get(&format!("{}/issues/{number}", prefix(repo)))
+        .await?;
+    let issue = issue_value(&v, project_id)?;
+    if issue.id != number {
+        return Err(malformed());
+    }
+    Ok((issue, None))
+}
+
 fn milestone_context(
     raw: &Value,
     repo: &Repository,

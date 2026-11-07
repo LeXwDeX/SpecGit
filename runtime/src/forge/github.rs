@@ -43,6 +43,18 @@ fn body(v: &Value) -> Result<String, Diagnostic> {
         _ => Err(malformed()),
     }
 }
+fn issue_value_with_reason(
+    v: &Value,
+    project_id: u64,
+) -> Result<(Issue, Option<String>), Diagnostic> {
+    let issue = issue_value(v, project_id)?;
+    let state_reason = match v.get("state_reason") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(reason)) => Some(reason.clone()),
+        _ => return Err(malformed()),
+    };
+    Ok((issue, state_reason))
+}
 fn issue_value(v: &Value, _project_id: u64) -> Result<Issue, Diagnostic> {
     if v.get("pull_request").is_some() {
         return Err(Diagnostic::new(
@@ -83,7 +95,7 @@ pub(crate) async fn issue_read(
     let v = reader
         .get(&format!("{}/issues/{number}", prefix(repo)))
         .await?;
-    let result = issue_value(&v, project_id)?;
+    let (result, _) = issue_value_with_reason(&v, project_id)?;
     if result.id != number {
         return Err(malformed());
     }
@@ -91,6 +103,22 @@ pub(crate) async fn issue_read(
         issue: result,
         milestone: milestone_context(&v, repo),
     })
+}
+
+pub(crate) async fn issue_with_reason(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    number: u64,
+) -> Result<(Issue, Option<String>), Diagnostic> {
+    let v = reader
+        .get(&format!("{}/issues/{number}", prefix(repo)))
+        .await?;
+    let (issue, state_reason) = issue_value_with_reason(&v, project_id)?;
+    if issue.id != number {
+        return Err(malformed());
+    }
+    Ok((issue, state_reason))
 }
 
 fn milestone_context(raw: &Value, repo: &Repository) -> crate::delivery_model::MilestoneContext {

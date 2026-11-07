@@ -343,6 +343,7 @@ fn terminal_poll_fully_verifies_merged_and_closed_requests() {
                 });
                 s["requests"][0]["merged"] = json!(merged);
                 s["issues"][0]["state"] = json!("closed");
+                s["native_closing"] = json!([1]);
             });
             finish_watcher(&mut child);
             let terminal = f.state()["calls"].as_array().unwrap().len() - first;
@@ -901,6 +902,7 @@ fn configured_notification_filters_do_not_filter_direct_watch_evidence() {
         s["requests"][0]["state"] = json!("closed");
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
+        s["native_closing"] = json!([1]);
     });
 
     let offered = hook_output(&f, "PostToolUse", true);
@@ -1002,6 +1004,45 @@ fn draft_check_states_produce_specific_authorized_next_steps_for_both_forges() {
             assert_eq!(f.writes(), writes, "{provider}/{check_state}");
         }
     }
+}
+
+#[test]
+fn many_failed_checks_keep_the_event_persisted_and_the_action_bounded() {
+    let f = fixture("github");
+    set_check_state(&f, "github", "failed");
+    f.edit(|s| {
+        for (route, response) in s["read_routes"].as_object_mut().unwrap() {
+            if !route.contains("/check-runs?") {
+                continue;
+            }
+            let runs = response["check_runs"].as_array_mut().unwrap();
+            let base = runs[0].clone();
+            for index in 0..40 {
+                let mut run = base.clone();
+                run["id"] = json!(9000 + index);
+                run["check_suite"]["id"] = json!(8000 + index);
+                run["name"] = json!(format!(
+                    "Long matrix verification name {index} for a slow shared runner"
+                ));
+                runs.push(run);
+            }
+            response["total_count"] = json!(runs.len());
+        }
+    });
+    let result = f.run(&watch("checks"));
+    assert_eq!(result["status"], "failed", "{result}");
+    let event = &result["evidence"]["events"][0];
+    assert_eq!(event["state"], "failed", "{result}");
+    let action = &result["next_actions"][0];
+    assert_eq!(action["kind"], "repair_checks", "{result}");
+    assert!(
+        action["message"].as_str().unwrap().len() <= 1024,
+        "persisted action exceeded its byte budget: {result}"
+    );
+    assert!(
+        action["failed_checks"].as_array().unwrap().len() > 10,
+        "structured failed checks were truncated: {result}"
+    );
 }
 
 #[test]
@@ -1801,6 +1842,7 @@ fn lifecycle_timeout_preserves_resumable_intent_and_never_closes_issues() {
     f.edit(|s| {
         s["requests"][0]["state"] = json!("merged");
         s["issues"][0]["state"] = json!("closed");
+        s["native_closing"] = json!([1]);
     });
     assert_eq!(f.run(&watch("lifecycle"))["status"], "completed");
     assert_eq!(f.writes(), writes);
@@ -2213,6 +2255,7 @@ fn explicit_watch_offers_fresh_events_and_allowed_hooks_only_recover_unverified_
             });
             s["requests"][0]["merged"] = json!(true);
             s["issues"][0]["state"] = json!("closed");
+            s["native_closing"] = json!([1]);
         });
         let writes = f.writes();
         let first = f.run(&watch("lifecycle"));
@@ -2506,6 +2549,7 @@ fn unpushed_commits_remain_pending_for_multiple_polls_then_native_push_resumes()
         s["requests"][0]["state"] = json!("closed");
         s["requests"][0]["merged"] = json!(true);
         s["issues"][0]["state"] = json!("closed");
+        s["native_closing"] = json!([1]);
     });
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -2785,6 +2829,31 @@ fn persistent_unknown_checks_end_with_an_action_before_the_deadline() {
             .lease
             .is_none(),
         "unknown terminal state did not release the lease"
+    );
+}
+
+#[test]
+fn expire_lease_preserves_unexpired_and_locked_leases() {
+    let f = fixture("github");
+    let observed = f.run(&watch("checks"));
+    let identity: Identity =
+        serde_json::from_value(observed["evidence"]["subscription"].clone()).unwrap();
+    let store = Store::new(identity).unwrap();
+    let (lock, _) = store.lease(watch_store::now() + 1000).unwrap();
+    assert!(
+        store.expire_lease().unwrap().unwrap().lease.is_some(),
+        "an unexpired lease must remain"
+    );
+    drop(lock);
+    let (lock, _) = store.lease(watch_store::now().saturating_sub(1)).unwrap();
+    assert!(
+        store.expire_lease().unwrap().unwrap().lease.is_some(),
+        "a lease held by a live process must remain"
+    );
+    drop(lock);
+    assert!(
+        store.expire_lease().unwrap().unwrap().lease.is_none(),
+        "an expired unlocked lease must be cleared"
     );
 }
 

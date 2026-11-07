@@ -194,6 +194,43 @@ fn merged_issues_open_message(ids: &[u64], closure_preference: &str) -> String {
 
 type SuggestedAction = (ActionKind, String, Option<String>, bool, Vec<u64>);
 
+/// Keep the persisted action inside the event store's byte budget while the
+/// structured `failed_checks` field retains every native name.
+fn failed_message(failed_checks: &[String]) -> String {
+    const PREFIX: &str = "Native checks failed";
+    const SUFFIX: &str = "; inspect their logs, repair the cause, and observe the request again. A draft state does not hide failing checks.";
+    let limit = crate::watch_store::NEXT_ACTION_MAX_BYTES;
+    if failed_checks.is_empty() {
+        return format!("{PREFIX}{SUFFIX}");
+    }
+    let complete = format!("{PREFIX}: {}{SUFFIX}", failed_checks.join(", "));
+    if complete.len() <= limit {
+        return complete;
+    }
+    let reserve = format!(" and {} more", failed_checks.len()).len();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut used = PREFIX.len() + 2 + SUFFIX.len() + reserve;
+    for name in failed_checks {
+        let cost = name.len() + 2;
+        if used + cost > limit {
+            break;
+        }
+        kept.push(name);
+        used += cost;
+    }
+    let omitted = failed_checks.len() - kept.len();
+    let message = if kept.is_empty() {
+        format!("{PREFIX}: {omitted} failed checks{SUFFIX}")
+    } else {
+        format!("{PREFIX}: {} and {omitted} more{SUFFIX}", kept.join(", "))
+    };
+    if message.len() <= limit {
+        message
+    } else {
+        format!("{PREFIX}: {omitted} failed checks{SUFFIX}")
+    }
+}
+
 fn checks_action(
     assessment: &NativeObservation,
     goal: Goal,
@@ -214,10 +251,7 @@ fn checks_action(
     Some(match state {
         EventState::Failed => (
             ActionKind::RepairChecks,
-            format!(
-                "Native checks failed{}; inspect their logs, repair the cause, and observe the request again. A draft state does not hide failing checks.",
-                if failed_checks.is_empty() { String::new() } else { format!(": {}", failed_checks.join(", ")) }
-            ),
+            failed_message(failed_checks),
             None,
             false,
             Vec::new(),
