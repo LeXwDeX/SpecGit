@@ -1374,6 +1374,17 @@ impl AssetStore {
             if !name.starts_with("tx-") {
                 continue;
             }
+            // The journal is written atomically before any asset or directory
+            // proof. A transaction directory without one crashed before it
+            // could change the project, so it is not evidence of ownership;
+            // `pending_at` already applies the same rule. Explicit rollback of
+            // a named transaction still reports the missing journal.
+            if Snapshot::read(&entry.path().join("journal.json"))?
+                .bytes
+                .is_none()
+            {
+                continue;
+            }
             let (_, journal) = self.rollback_journal(&name)?;
             if journal.state != "prepared" {
                 self.prune_directories(&journal.created_directories, Some(root))?;
@@ -2296,6 +2307,51 @@ mod rollback_terminal_tests {
         assert_eq!(
             DirectoryIdentity::capture(&parent, &fs::metadata(&parent).unwrap()),
             DirectoryIdentity::capture(&parent, &user_identity)
+        );
+    }
+
+    #[test]
+    fn prune_preserves_a_transaction_directory_without_a_journal() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let asset = root.join("owned/file");
+        store
+            .apply(vec![
+                Change::new(asset, Some(b"committed".to_vec())).unwrap(),
+            ])
+            .unwrap();
+        let orphan = root.join("state/transactions/tx-crashed-before-journal");
+        fs::create_dir_all(&orphan).unwrap();
+        fs::write(orphan.join("0.before"), b"partial backup").unwrap();
+        store.prune_empty_project_directories(&root).unwrap();
+        assert!(
+            orphan.is_dir(),
+            "a transaction without a journal never changed the project and must be retained"
+        );
+    }
+
+    #[test]
+    fn prune_still_rejects_a_corrupt_journal() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let store = AssetStore::lock(
+            &root.join("state"),
+            std::slice::from_ref(&root),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        let corrupt = root.join("state/transactions/tx-corrupt");
+        fs::create_dir_all(&corrupt).unwrap();
+        fs::write(corrupt.join("journal.json"), b"{not a journal").unwrap();
+        assert!(
+            store.prune_empty_project_directories(&root).is_err(),
+            "a present but corrupt journal is still an error"
         );
     }
 
