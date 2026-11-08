@@ -71,6 +71,14 @@ test('protected acceptance requires applicable native verification and a ready m
   for (const phase of ['lint', 'compile-tests', 'source-tests', 'distribution-tests', 'compile-release', 'install', 'profile']) assert(commands.includes(`--phase ${phase} `));
 });
 
+test('native artifact retention never expands an unset path to the filesystem root', () => {
+  const job = parse(workflow('ci.yml')).jobs.rust;
+  const upload = job.steps.find(step => step.uses?.startsWith('actions/upload-artifact@'));
+  assert.match(upload.if, /always\(\)/);
+  assert.match(upload.if, /env\.SPECGIT_NATIVE_PROFILE != ''/);
+  assert.match(upload.if, /env\.SPECGIT_NATIVE_INSTALLED != ''/);
+});
+
 test('CI native routes preserve owner and fork runner labels', () => {
   const job = parse(workflow('ci.yml')).jobs.rust;
   assert.equal(job.if, "needs.changes.outputs.build == 'true'");
