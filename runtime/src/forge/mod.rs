@@ -1,6 +1,6 @@
 //! Native protocol boundary. Opaque observations retain full readback equality.
 use crate::{
-    delivery_model::{Check, PullRequest},
+    delivery_model::{Check, Issue, PullRequest},
     diagnostic::{Code, Diagnostic},
     forge_read::ForgeRead,
     identity::{Provider, Repository},
@@ -66,12 +66,78 @@ pub(crate) mod protocol;
 
 /// Complete same-project native closing references. An empty result is distinct
 /// from unavailable evidence; no body or local-selection fallback is performed.
+/// This is the ID projection of `closing_issue_facts`, so a set that embeds an
+/// Issue whose facts cannot be decoded is an error here too.
 pub async fn closing_issues(
     reader: &ForgeRead,
     repo: &Repository,
     project_id: u64,
     request_id: u64,
 ) -> Result<Vec<u64>, Diagnostic> {
+    Ok(closing_issue_facts(reader, repo, project_id, request_id)
+        .await?
+        .into_iter()
+        .map(|(issue, _)| issue.id)
+        .collect())
+}
+
+/// The complete native closing set together with the Issue facts and provider
+/// close reason that the same bounded read returns, in ascending Issue order.
+/// These are the facts an exact per-Issue read would build, so the Issues of
+/// the set need no read of their own. Facts that cannot be decoded fail closed.
+pub async fn closing_issue_facts(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    request_id: u64,
+) -> Result<Vec<(Issue, Option<String>)>, Diagnostic> {
+    match closing_read(reader, repo, project_id, request_id).await? {
+        ClosingRead::Complete(facts) => Ok(facts),
+        ClosingRead::Unavailable(unavailable) => Err(unavailable),
+    }
+}
+
+/// Outcome of the native closing read, split by what the failure proves.
+pub(crate) enum ClosingRead {
+    /// The complete set, with the facts of every Issue in it.
+    Complete(Vec<(Issue, Option<String>)>),
+    /// The set could not be established (permission, transport, unsupported
+    /// operation, incomplete pages, identity). This is diagnostic evidence only
+    /// and never an empty set.
+    Unavailable(Diagnostic),
+}
+
+/// `Err` is reserved for a complete set that embeds an unreadable Issue. A
+/// separate Issue read failed the whole observation in that case, so it still
+/// does; callers must not downgrade it to an unavailable set.
+pub(crate) async fn closing_read(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    request_id: u64,
+) -> Result<ClosingRead, Diagnostic> {
+    let rows = match closing_rows(reader, repo, project_id, request_id).await {
+        Ok(rows) => rows,
+        Err(unavailable) => return Ok(ClosingRead::Unavailable(unavailable)),
+    };
+    // Decode only after the whole set is proven complete and same-project.
+    let facts = rows
+        .iter()
+        .map(|row| match repo.provider {
+            Provider::Github => github::closing_fact(row),
+            Provider::Gitlab => gitlab::closing_fact(row, project_id),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ClosingRead::Complete(facts))
+}
+
+/// Raw native rows of a complete, duplicate-free, same-project set by Issue ID.
+async fn closing_rows(
+    reader: &ForgeRead,
+    repo: &Repository,
+    project_id: u64,
+    request_id: u64,
+) -> Result<Vec<Value>, Diagnostic> {
     if project_id == 0 || request_id == 0 {
         return Err(Diagnostic::input(
             "Positive native project and request IDs are required.",
@@ -81,8 +147,8 @@ pub async fn closing_issues(
         return Err(closing_identity());
     }
     match repo.provider {
-        Provider::Github => github::closing_issues(reader, repo, project_id, request_id).await,
-        Provider::Gitlab => gitlab::closing_issues(reader, repo, project_id, request_id).await,
+        Provider::Github => github::closing_nodes(reader, repo, project_id, request_id).await,
+        Provider::Gitlab => gitlab::closing_rows(reader, repo, project_id, request_id).await,
     }
 }
 pub(super) fn closing_identity() -> Diagnostic {
