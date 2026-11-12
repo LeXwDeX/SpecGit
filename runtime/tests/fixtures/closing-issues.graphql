@@ -5,7 +5,16 @@ query SpecGitClosingIssues($owner: String!, $name: String!, $number: Int!, $afte
     pullRequest(number: $number) {
       number
       closingIssuesReferences(first: 100, after: $after) {
-        nodes { number repository { databaseId nameWithOwner } }
+        nodes {
+          number
+          title
+          body
+          state
+          stateReason
+          updatedAt
+          labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
+          repository { databaseId nameWithOwner }
+        }
         pageInfo { hasNextPage endCursor }
       }
     }
