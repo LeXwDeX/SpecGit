@@ -1186,3 +1186,81 @@ fn changed_git_branch_invalidates_the_preview_even_with_identical_assets() {
     );
     assert_eq!(inventory(&f.base), before);
 }
+
+/// The real CLI writes init and project-agent assets through one shared
+/// transaction store, so a refresh or a later setup leaves one journal that
+/// proves assets on both sides. Removal must accept that shared, unchanged
+/// proof instead of treating it as overlapping guidance.
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn removal_accepts_a_journal_shared_by_init_and_setup() {
+    for order in [
+        "init-setup",
+        "init-setup-init",
+        "setup-init",
+        "init-setup-setup",
+    ] {
+        let f = delivery::Fixture::new("github");
+        for step in order.split('-') {
+            let out = if step == "init" {
+                f.run(&["init", "--manual-observe"])
+            } else {
+                f.run(&["setup", "--agent", "codex", "--hook-purpose", "context"])
+            };
+            assert_eq!(out["exit"], 0, "{order} {step}: {out}");
+        }
+        // Removal never changes the Git index; the fixture tracks the declaration.
+        git(&f.root, &["rm", "-q", "--cached", ".specgit.yaml"]);
+        let skill = f.root.join(".agents/skills/specgit-native/SKILL.md");
+        assert!(skill.exists(), "{order}");
+        let base = f.root.parent().unwrap().to_owned();
+        let before = inventory(&base);
+
+        let preview = f.run(&["remove", "--dry-run"]);
+        assert_eq!(preview["status"], "prepared", "{order}: {preview}");
+        // The shared journal is rechecked once and left unchanged.
+        let journals: Vec<_> = preview["evidence"]["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| {
+                item["path"].as_str().is_some_and(|path| {
+                    path.contains("assets/transactions/tx-") && path.ends_with("journal.json")
+                })
+            })
+            .collect();
+        assert!(!journals.is_empty(), "{order}: {preview}");
+        assert!(
+            journals.iter().all(|item| item["state"] == "preserved"),
+            "{order}: {preview}"
+        );
+        assert_eq!(inventory(&base), before, "{order}: preview wrote");
+
+        let digest = preview["evidence"]["preview_sha256"].as_str().unwrap();
+        let applied = f.run(&["remove", "--apply", "--expect", digest]);
+        assert_eq!(applied["status"], "removed", "{order}: {applied}");
+        assert!(!skill.exists(), "{order}");
+        assert!(!f.root.join(".specgit.yaml").exists(), "{order}");
+        // The real guidance merge beside the shared proof still runs.
+        if let Ok(agents) = fs::read_to_string(f.root.join("AGENTS.md")) {
+            assert!(!agents.contains("specgit:v2:start"), "{order}: {agents}");
+            assert!(
+                !agents.contains("specgit:project:v2:start"),
+                "{order}: {agents}"
+            );
+        }
+        if let Ok(hooks) = fs::read_to_string(f.root.join(".codex/hooks.json")) {
+            assert!(!hooks.contains("specgit"), "{order}: {hooks}");
+        }
+
+        let id = applied["evidence"]["transaction"]["transaction"]
+            .as_str()
+            .unwrap();
+        let restored = f.run(&["remove", "--rollback", id]);
+        assert_eq!(restored["status"], "rolled_back", "{order}: {restored}");
+        let after = inventory(&base);
+        for (path, value) in &before {
+            assert_eq!(after.get(path), Some(value), "{order}: {}", path.display());
+        }
+    }
+}
