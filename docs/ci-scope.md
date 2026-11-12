@@ -27,6 +27,13 @@ not run. Pushes to main, merge groups, manual runs and release builds
 keep all three platform jobs. Windows failures are therefore fixed in a single
 release-readiness pass, and ordinary PRs do not wait for Windows.
 
+Because PRs never compile Windows-only code, local product verification also
+runs a Windows cross-target lint before pushing:
+`cargo clippy --locked --all-targets --features test-fixtures --target x86_64-pc-windows-msvc -- -D warnings`
+(install the target once with `rustup target add x86_64-pc-windows-msvc`). It type-checks
+and lints only, without linking or running, so it catches `cfg`, platform API and type
+errors but not runtime behavior. This check is local only; GitHub Actions does not run it.
+
 For pushes to main, native CI routes Linux and Windows to the owner's
 self-hosted Azure runners; macOS uses GitHub-hosted `macos-15` ARM64.
 Same-repository PRs use the same Linux route. Fork PRs use GitHub-hosted
