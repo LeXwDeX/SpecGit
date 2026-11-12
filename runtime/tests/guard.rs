@@ -373,6 +373,14 @@ fn ownership_receipt(root: &Path, claude: bool) -> serde_json::Value {
 }
 
 fn checkpoint(root: &Path, branch: &str) {
+    checkpoint_issues(root, branch, &[41]);
+}
+
+fn checkpoint_issues(root: &Path, branch: &str, issues: &[u64]) {
+    let intents: Vec<_> = issues
+        .iter()
+        .map(|id| json!({"title":format!("feat: fixture {id}"),"body":"complete","labels":[],"issue":id,"write_started":true}))
+        .collect();
     let output = Command::new("git")
         .current_dir(root)
         .args(["rev-parse", "--absolute-git-dir"])
@@ -389,8 +397,8 @@ fn checkpoint(root: &Path, branch: &str) {
             "project_id":7,
             "branch":branch,
             "target":"main",
-            "issues":[41],
-            "intents":[{"title":"feat: fixture","body":"complete","labels":[],"issue":41,"write_started":true}],
+            "issues":issues,
+            "intents":intents,
             "request":null,
             "request_write_started":false,
             "request_intent":null
@@ -1148,6 +1156,88 @@ fn installed_guard_rejects_a_real_push_of_unbound_commits() {
         String::from_utf8_lossy(&renamed.stderr).contains("refs/heads/main"),
         "{}",
         String::from_utf8_lossy(&renamed.stderr)
+    );
+}
+
+/// A delivery that combines branches keeps each commit's own `Issue: #N`
+/// trailer. The guard must name the unselected Issues and the additive
+/// selection that fixes it, instead of telling the Agent to rewrite trailers.
+#[test]
+fn installed_guard_names_unselected_trailer_issues_and_accepts_them_once_selected() {
+    let temp = fixture();
+    let root = temp.path().canonicalize().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "--bare", "-q"]);
+    git(
+        &root,
+        &["remote", "add", "local", remote.path().to_str().unwrap()],
+    );
+    let seed = hooked_git(&root, &["push", "-q", "local", "feature:main"]);
+    assert!(seed.status.success(), "{seed:?}");
+    git(&root, &["fetch", "-q", "local"]);
+    assert!(manage(&root, "--install").status.success());
+    checkpoint(&root, "feature");
+
+    let commit = |name: &str, trailer: Option<&str>| {
+        fs::write(root.join(name), name).unwrap();
+        assert!(hooked_git(&root, &["add", name]).status.success());
+        let mut args = vec!["commit", "-q", "-m", name];
+        if let Some(trailer) = trailer {
+            args.extend(["--trailer", trailer]);
+        }
+        let output = hooked_git(&root, &args);
+        assert!(output.status.success(), "{output:?}");
+    };
+    commit("selected.rs", Some("Issue: #41"));
+    // One selected ID among several keeps a commit bound.
+    commit("mixed.rs", Some("Issue: #99, #41"));
+    commit("combined-a.rs", Some("Issue: #43"));
+    commit("combined-b.rs", Some("Issue: #42"));
+
+    let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+    assert!(!push.status.success());
+    let stderr = String::from_utf8_lossy(&push.stderr);
+    assert!(
+        stderr.contains("2 new commit(s) on refs/heads/feature name only Issues outside this branch's checkpoint (#42, #43; selected: #41)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("`specgit issue 42 43`"), "{stderr}");
+    assert!(stderr.contains("keep their trailers"), "{stderr}");
+    assert!(stderr.contains("correct a mistyped trailer"), "{stderr}");
+    assert!(!stderr.contains("lack an `Issue: #N` trailer"), "{stderr}");
+
+    // A commit without any trailer still gets the amend guidance, next to the
+    // selection guidance for the foreign trailers.
+    commit("unbound.rs", None);
+    let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+    assert!(!push.status.success());
+    let stderr = String::from_utf8_lossy(&push.stderr);
+    assert!(stderr.contains("`specgit issue 42 43`"), "{stderr}");
+    assert!(
+        stderr.contains("1 new commit(s) on refs/heads/feature lack an `Issue: #N` trailer"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("--amend --no-edit --trailer"), "{stderr}");
+    let amended = hooked_git(
+        &root,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--no-edit",
+            "--trailer",
+            "Issue: #41",
+        ],
+    );
+    assert!(amended.status.success(), "{amended:?}");
+
+    // Selecting the named Issues on the same branch is what lets the push through.
+    checkpoint_issues(&root, "feature", &[41, 42, 43]);
+    let push = hooked_git(&root, &["push", "-q", "local", "feature"]);
+    assert!(
+        push.status.success(),
+        "{}",
+        String::from_utf8_lossy(&push.stderr)
     );
 }
 

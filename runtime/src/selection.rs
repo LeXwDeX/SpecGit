@@ -225,7 +225,7 @@ pub fn branch_mismatch_diagnostic(checkpoint: &BranchMismatch) -> Diagnostic {
         if checkpoint.delivered() {
             "The checkpoint is delivered. Update the target branch and select the next Issues with `issue <spec> --branch <name>`; the checkpoint remains unchanged."
         } else {
-            "Return to the recorded branch or use a separate worktree for independent delivery; the checkpoint remains unchanged."
+            "Return to the recorded branch or use a separate worktree for independent delivery; the checkpoint remains unchanged. To combine several branches into one delivery, create the combining branch in its own worktree (`git worktree add -b <name> <path> <remote>/<target>`), run `specgit init --config-file <existing .specgit.yaml>` there, select every Issue with `specgit issue <ID> <ID>...`, then cherry-pick; do not delete or rename the recorded branch."
         },
     )
 }
