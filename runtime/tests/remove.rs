@@ -1224,7 +1224,9 @@ fn removal_accepts_a_journal_shared_by_init_and_setup() {
             .unwrap()
             .iter()
             .filter(|item| {
+                // Windows reports backslash separators.
                 item["path"].as_str().is_some_and(|path| {
+                    let path = path.replace('\\', "/");
                     path.contains("assets/transactions/tx-") && path.ends_with("journal.json")
                 })
             })
