@@ -16,6 +16,7 @@ pub struct PaginatedRows {
 }
 /// Fixed query shared with the read transport and protocol fixtures. Callers can
 /// provide only typed variables; no arbitrary GraphQL document is executable.
+/// Each node carries the facts of its Issue, so the closing set needs no per-Issue read.
 /// https://docs.github.com/en/graphql/reference/pulls#pullrequest
 pub const CLOSING_ISSUES_QUERY: &str = r#"query SpecGitClosingIssues($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -24,7 +25,16 @@ pub const CLOSING_ISSUES_QUERY: &str = r#"query SpecGitClosingIssues($owner: Str
     pullRequest(number: $number) {
       number
       closingIssuesReferences(first: 100, after: $after) {
-        nodes { number repository { databaseId nameWithOwner } }
+        nodes {
+          number
+          title
+          body
+          state
+          stateReason
+          updatedAt
+          labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
+          repository { databaseId nameWithOwner }
+        }
         pageInfo { hasNextPage endCursor }
       }
     }

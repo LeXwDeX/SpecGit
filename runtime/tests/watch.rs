@@ -267,6 +267,38 @@ fn unchanged_poll_reuses_only_this_loops_verified_evidence() {
     }
 }
 
+/// Native closing Issues arrive with the closing set, not from their own reads.
+/// Their private content must still invalidate the polling verification
+/// fingerprint, while an unchanged set lets the next poll skip verification.
+#[test]
+fn native_issue_content_invalidates_the_polling_fingerprint() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| s["native_closing"] = json!([1]));
+        let mut child = polling(&f, "native-issue-fingerprint");
+        let first = wait_for_poll(&f, &mut child, 1);
+        let second = wait_for_poll(&f, &mut child, 2) - first;
+        assert!(
+            second * 3 <= first * 2,
+            "{provider}: unchanged poll did not skip verification: {first} -> {second}"
+        );
+        f.edit(|s| {
+            s["issues"][0][if provider == "github" {
+                "body"
+            } else {
+                "description"
+            }] = json!("private native issue edit")
+        });
+        let third = wait_for_poll(&f, &mut child, 3) - (first + second);
+        assert_eq!(
+            third, first,
+            "{provider}: a changed native Issue must fully verify"
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}
+
 #[test]
 fn changed_poll_verifies_checks_and_private_evidence_before_publishing() {
     for provider in ["github", "gitlab"] {
@@ -348,9 +380,11 @@ fn terminal_poll_fully_verifies_merged_and_closed_requests() {
             finish_watcher(&mut child);
             let terminal = f.state()["calls"].as_array().unwrap().len() - first;
             println!("{provider}: merged={merged}, terminal poll={terminal}");
+            // The native closing set carries the facts of Issue 1, so no Issue
+            // resource is read: only PR, closing set and project, twice each.
             assert_eq!(
-                terminal, 8,
-                "terminal PR, Issue, closing set and project must each be read twice"
+                terminal, 6,
+                "terminal PR, closing set and project must each be read twice"
             );
             assert_eq!(request_reads(&f), 4);
             let state = watch_store::read(&child.identity).unwrap().unwrap();
@@ -605,6 +639,8 @@ fn one_shot_watch_inbox_and_status_always_fully_verify() {
                 let result = f.run(&args);
                 assert_eq!(result["exit"], 0, "{result}");
                 assert_eq!(request_reads(&f), 2);
+                // Issue 1 is a body reference and local selection here, not a
+                // native closing Issue, so it is still read once per phase.
                 assert_eq!(
                     f.state()["calls"].as_array().unwrap().len(),
                     if provider == "github" { 14 } else { 10 }
@@ -1639,6 +1675,135 @@ fn merged_open_issue_action_bounds_long_issue_preview_without_losing_typed_ids()
             .unwrap()
             .is_empty()
     );
+}
+
+/// A request that natively closes `count` Issues. Nothing else associates an
+/// Issue: no local selection, no body reference. The closing set is the only source.
+fn native_closing_fixture(
+    provider: &str,
+    count: u64,
+    merged: bool,
+) -> (delivery::Fixture, Vec<u64>) {
+    let f = fixture(provider);
+    let ids: Vec<u64> = (10_001..10_001 + count).collect();
+    let selection = f.root.join(".git/specgit-v2/selection.json");
+    let mut selected: Value = serde_json::from_slice(&std::fs::read(&selection).unwrap()).unwrap();
+    selected["issues"] = json!([]);
+    selected["adopted"] = json!([]);
+    std::fs::write(&selection, selected.to_string()).unwrap();
+    f.edit(|state| {
+        state["native_closing"] = json!(&ids);
+        state["issues"] = json!(
+            ids.iter()
+                .map(|id| json!({
+                    "id": id,
+                    "number": id,
+                    "iid": id,
+                    "project_id": 7,
+                    "title": format!("Issue {id}"),
+                    "body": "",
+                    "description": "",
+                    "labels": [],
+                    "state": if provider == "github" { "open" } else { "opened" },
+                    "updated_at": "2026-09-09T00:00:00Z",
+                }))
+                .collect::<Vec<_>>()
+        );
+        state["requests"][0]["body"] = json!("Scoped native observation.");
+        state["requests"][0]["description"] = json!("Scoped native observation.");
+        if merged {
+            state["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            state["requests"][0]["merged"] = json!(true);
+        }
+    });
+    (f, ids)
+}
+
+/// One request of the closing set: a GraphQL page on GitHub, a `closes_issues`
+/// page on GitLab.
+fn is_closing_read(call: &Value) -> bool {
+    call["endpoint"] == "graphql"
+        || call["endpoint"]
+            .as_str()
+            .is_some_and(|endpoint| endpoint.contains("/closes_issues"))
+}
+
+/// Reads of the Issue resource itself, `.../issues/{id}`.
+fn issue_resource_reads(calls: &[Value], id: u64) -> usize {
+    calls
+        .iter()
+        .filter(|call| {
+            call["method"] == "GET"
+                && call["endpoint"]
+                    .as_str()
+                    .is_some_and(|endpoint| endpoint.ends_with(&format!("/issues/{id}")))
+        })
+        .count()
+}
+
+/// Reading one Issue per association made a poll's cost grow with the closing
+/// set, so 100 Issues exceeded the 90-second inbox cap. The closing read now
+/// carries the Issue facts: native reads no longer depend on the Issue count.
+#[test]
+fn native_closing_issues_add_no_reads_to_a_once_poll() {
+    for provider in ["github", "gitlab"] {
+        for merged in [false, true] {
+            let mut outside_the_closing_set = std::collections::BTreeMap::new();
+            for count in [1_u64, 100] {
+                let (f, ids) = native_closing_fixture(provider, count, merged);
+                for (entry, args) in [
+                    ("watch", watch("lifecycle").to_vec()),
+                    ("inbox", inbox_for("lifecycle").to_vec()),
+                ] {
+                    let case = format!("{provider} merged={merged} {entry} with {count} Issues");
+                    f.edit(|s| s["calls"] = json!([]));
+                    let result = f.run(&args);
+                    assert_eq!(
+                        result["status"],
+                        if merged {
+                            "merged_issues_open"
+                        } else {
+                            "checks_passed"
+                        },
+                        "{case}: {result}"
+                    );
+                    let calls = f.state()["calls"].as_array().unwrap().clone();
+                    // Collection and verification each read the set. GitLab cannot
+                    // tell that a full page of 100 is the last one without asking
+                    // for the next page, so it adds one request per read there.
+                    let pages = if provider == "gitlab" {
+                        count / 100 + 1
+                    } else {
+                        1
+                    };
+                    let closing = calls.iter().filter(|call| is_closing_read(call)).count();
+                    assert_eq!(closing as u64, 2 * pages, "{case}");
+                    for id in &ids {
+                        assert_eq!(
+                            issue_resource_reads(&calls, *id),
+                            0,
+                            "{case}: Issue {id} came with the closing set"
+                        );
+                    }
+                    println!("{case}: {} native reads", calls.len());
+                    let other = calls.len() - closing;
+                    if merged {
+                        // Request and project, read once to collect and once to verify.
+                        assert_eq!(other, 4, "{case}");
+                    }
+                    assert_eq!(
+                        *outside_the_closing_set.entry(entry).or_insert(other),
+                        other,
+                        "{case}: reads outside the closing set grew with the Issue count"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]

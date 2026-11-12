@@ -630,13 +630,15 @@ fn branches_route(repo: &Repository) -> String {
 
 pub use crate::forge_read::CLOSING_ISSUES_QUERY;
 
-pub(super) async fn closing_issues(
+/// Every closing-reference node of the request, by Issue ID, once the whole set
+/// is proven complete and same-project. Facts are decoded later by `closing_fact`.
+pub(super) async fn closing_nodes(
     reader: &ForgeRead,
     repo: &Repository,
     project_id: u64,
     request_id: u64,
-) -> Result<Vec<u64>, Diagnostic> {
-    use std::collections::BTreeSet;
+) -> Result<Vec<Value>, Diagnostic> {
+    use std::collections::{BTreeMap, BTreeSet};
     let (owner, name) = repo
         .path
         .split_once('/')
@@ -648,7 +650,7 @@ pub(super) async fn closing_issues(
     }
     let mut after: Option<String> = None;
     let mut cursors = BTreeSet::new();
-    let mut ids = BTreeSet::new();
+    let mut by_issue = BTreeMap::new();
     for _ in 0..10 {
         let value = reader
             .github_closing_issues_page(owner, name, request_id, after.as_deref())
@@ -712,7 +714,7 @@ pub(super) async fn closing_issues(
                 .get("repository")
                 .ok_or_else(super::closing_malformed)?;
             closing_repository(project, repo, project_id)?;
-            if !ids.insert(issue) {
+            if by_issue.insert(issue, node.clone()).is_some() {
                 return Err(super::closing_malformed());
             }
         }
@@ -724,7 +726,7 @@ pub(super) async fn closing_issues(
             .and_then(Value::as_bool)
             .ok_or_else(super::closing_malformed)?;
         if !more {
-            return Ok(ids.into_iter().collect());
+            return Ok(by_issue.into_values().collect());
         }
         let cursor = page
             .get("endCursor")
@@ -737,6 +739,56 @@ pub(super) async fn closing_issues(
         after = Some(cursor.to_owned());
     }
     Err(super::closing_limit())
+}
+
+/// The Issue facts one closing-reference node embeds, normalized to the values
+/// the REST issue read yields for the same Issue (`issue_value_with_reason`).
+/// GraphQL enums are mapped explicitly. A missing field, an unknown enum value
+/// or a label connection with another page is malformed, never a default.
+pub(super) fn closing_fact(node: &Value) -> Result<(Issue, Option<String>), Diagnostic> {
+    let state = match node.get("state").and_then(Value::as_str) {
+        Some("OPEN") => "open",
+        Some("CLOSED") => "closed",
+        _ => return Err(malformed()),
+    };
+    let state_reason = match node.get("stateReason") {
+        Some(Value::Null) => None,
+        Some(Value::String(reason)) => Some(match reason.as_str() {
+            "COMPLETED" => "completed",
+            "NOT_PLANNED" => "not_planned",
+            "REOPENED" => "reopened",
+            "DUPLICATE" => "duplicate",
+            _ => return Err(malformed()),
+        }),
+        _ => return Err(malformed()),
+    };
+    let issue = Issue {
+        id: id(node, "number")?,
+        title: text(node, "title")?,
+        body: body(node)?,
+        labels: closing_labels(node)?,
+        state: state.into(),
+        updated_at: text(node, "updatedAt")?,
+    };
+    Ok((issue, state_reason.map(String::from)))
+}
+
+/// A truncated label list would make the Issue differ from its exact read.
+fn closing_labels(node: &Value) -> Result<Vec<String>, Diagnostic> {
+    let connection = node.get("labels").ok_or_else(malformed)?;
+    if connection
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        return Err(malformed());
+    }
+    let nodes = connection
+        .get("nodes")
+        .and_then(Value::as_array)
+        .filter(|nodes| nodes.len() <= 100)
+        .ok_or_else(malformed)?;
+    nodes.iter().map(|label| text(label, "name")).collect()
 }
 
 fn closing_repository(

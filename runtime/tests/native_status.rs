@@ -946,6 +946,214 @@ fn native_association_changes_during_observation_are_not_a_stable_snapshot() {
     }
 }
 
+/// The closing read returns the Issue facts, so it also has to prove they did
+/// not change before the observation is published. The platform applies each
+/// edit at the second closing read, between collection and verification.
+#[test]
+fn native_issue_facts_changing_between_collection_and_readback_are_not_a_stable_snapshot() {
+    for (provider, change, fields) in [
+        ("github", "reopened", json!({"state":"open"})),
+        // The close reason alone changes: state and updated_at stay the same.
+        (
+            "github",
+            "close reason",
+            json!({"state_reason":"not_planned"}),
+        ),
+        ("github", "title", json!({"title":"fix: renamed"})),
+        ("gitlab", "reopened", json!({"state":"opened"})),
+        ("gitlab", "description", json!({"description":"edited"})),
+    ] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["native_closing"] = json!([1]);
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            s["native_closing_issue_edit"] = json!({"on_read":2,"issue":1,"fields":fields});
+        });
+        let writes = f.writes();
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 3, "{provider}: {change}: {r}");
+        assert_eq!(
+            r["diagnostics"][0]["code"], "concurrent_edit",
+            "{provider}: {change}: {r}"
+        );
+        assert_ne!(r["status"], "completed", "{provider}: {change}: {r}");
+        assert_eq!(f.writes(), writes);
+    }
+    let f = fixture("github");
+    f.edit(|s| {
+        s["native_closing"] = json!([1]);
+        s["requests"][0]["state"] = json!("closed");
+        s["requests"][0]["merged"] = json!(true);
+        s["issues"][0]["state"] = json!("closed");
+        s["native_closing_issue_edit"] =
+            json!({"on_read":2,"issue":1,"fields":{"state_reason":"not_planned"}});
+    });
+    let watched = f.run(&[
+        "watch",
+        "--request",
+        "41",
+        "--session",
+        "session-a",
+        "--goal",
+        "lifecycle",
+        "--once",
+    ]);
+    assert_eq!(watched["status"], "unknown", "{watched}");
+    assert!(
+        watched["evidence"]["events"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("concurrent_edit"),
+        "{watched}"
+    );
+}
+
+/// GraphQL says `NOT_PLANNED`; the REST issue read says `not_planned`. Both
+/// must reach completion and evidence as the same normalized value.
+#[test]
+fn github_close_reasons_from_the_closing_read_normalize_like_the_rest_issue_read() {
+    for (reason, status, reported) in [
+        (Value::Null, "completed", Value::Null),
+        (json!("completed"), "completed", json!("completed")),
+        (json!("not_planned"), "merged", json!("not_planned")),
+        (json!("duplicate"), "merged", json!("duplicate")),
+    ] {
+        let f = fixture("github");
+        f.edit(|s| {
+            s["native_closing"] = json!([1]);
+            s["requests"][0]["state"] = json!("closed");
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            s["issues"][0]["state_reason"] = reason.clone();
+        });
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["status"], status, "{reason}: {r}");
+        let mut expected = json!({"issue":1});
+        if !reported.is_null() {
+            expected["state_reason"] = reported;
+        }
+        assert_eq!(
+            r["evidence"]["issue_state_reasons"],
+            json!([expected]),
+            "{reason}: {r}"
+        );
+    }
+}
+
+/// A closing set that cannot be established is diagnostic evidence. A set that
+/// embeds an Issue nobody can read failed the whole observation when each Issue
+/// had its own read, and it still does: the facts are not downgraded to a
+/// missing set next to otherwise usable evidence.
+#[test]
+fn an_unreadable_issue_in_the_closing_set_fails_the_observation_not_only_the_set() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            s["requests"][0]["state"] = json!(if provider == "github" {
+                "closed"
+            } else {
+                "merged"
+            });
+            s["requests"][0]["merged"] = json!(true);
+            s["issues"][0]["state"] = json!("closed");
+            if provider == "github" {
+                s["native_closing_graphql_pages"] = json!([{"data":{"repository":{
+                    "databaseId":7,"nameWithOwner":"fixture/repo",
+                    "pullRequest":{"number":41,"closingIssuesReferences":{
+                        "nodes":[{"number":1,"repository":{"databaseId":7,"nameWithOwner":"fixture/repo"}}],
+                        "pageInfo":{"hasNextPage":false,"endCursor":null}
+                    }}
+                }}}]);
+            } else {
+                s["native_closing_gitlab_pages"] = json!([[{"iid":1,"project_id":7}]]);
+            }
+        });
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 3, "{provider}: {r}");
+        assert_eq!(r["status"], "unknown", "{provider}: {r}");
+        assert_eq!(
+            r["diagnostics"][0]["code"], "malformed_response",
+            "{provider}: {r}"
+        );
+        assert!(r["evidence"].is_null(), "{provider}: {r}");
+        f.edit(|s| {
+            s.as_object_mut().unwrap().remove(if provider == "github" {
+                "native_closing_graphql_pages"
+            } else {
+                "native_closing_gitlab_pages"
+            });
+            s["native_closing_failure"] = json!("forbidden");
+        });
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(r["exit"], 3, "{provider}: {r}");
+        assert_eq!(r["evidence"]["native_closing_available"], false, "{r}");
+        assert_eq!(r["evidence"]["request"]["id"], 41, "{provider}: {r}");
+    }
+}
+
+/// Only native closing Issues come with the closing set. Body references and
+/// local selections outside it are separate resources: read once to collect and
+/// once to verify, as before.
+#[test]
+fn associations_outside_the_native_set_are_read_in_collection_and_verification() {
+    for provider in ["github", "gitlab"] {
+        let f = fixture(provider);
+        f.edit(|s| {
+            for id in 2..=5 {
+                let mut issue = s["issues"][0].clone();
+                issue["number"] = json!(id);
+                issue["iid"] = json!(id);
+                issue["id"] = json!(100 + id);
+                s["issues"].as_array_mut().unwrap().push(issue);
+            }
+            s["native_closing"] = json!([2, 5]);
+            let body = "Closes #1\nCloses #4\nCloses #5";
+            s["requests"][0]["body"] = json!(body);
+            s["requests"][0]["description"] = json!(body);
+        });
+        let path = f.root.join(".git/specgit-v2/selection.json");
+        let mut selected: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        selected["issues"] = json!([1, 3, 5]);
+        fs::write(&path, selected.to_string()).unwrap();
+        f.edit(|s| s["calls"] = json!([]));
+        let r = f.run(&["pr", "--status"]);
+        assert_eq!(
+            r["evidence"]["associations"],
+            json!([
+                {"issue":1,"sources":["body_reference","local_selection"]},
+                {"issue":2,"sources":["native_closing"]},
+                {"issue":3,"sources":["local_selection"]},
+                {"issue":4,"sources":["body_reference"]},
+                {"issue":5,"sources":["native_closing","body_reference","local_selection"]}
+            ]),
+            "{provider}: {r}"
+        );
+        let calls = f.state()["calls"].as_array().unwrap().clone();
+        let reads = |id: u64| {
+            calls
+                .iter()
+                .filter(|call| {
+                    call["method"] == "GET"
+                        && call["endpoint"]
+                            .as_str()
+                            .is_some_and(|endpoint| endpoint.ends_with(&format!("/issues/{id}")))
+                })
+                .count()
+        };
+        assert_eq!(
+            [reads(1), reads(2), reads(3), reads(4), reads(5)],
+            [2, 0, 2, 2, 0],
+            "{provider}: body-only and selection-only Issues are read twice, native ones never"
+        );
+    }
+}
+
 #[test]
 fn explicit_request_ignores_unrelated_old_selection_target() {
     for provider in ["github", "gitlab"] {

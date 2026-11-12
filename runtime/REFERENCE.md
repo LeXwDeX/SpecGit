@@ -647,7 +647,13 @@ within the watch budget; they never prove passing checks.
 Issue associations retain per-Issue sources: `native_closing`, `body_reference`
 and `local_selection`. The native source comes from the platform's closing-Issue
 query; unavailable queries remain diagnostic evidence, never an empty successful
-result. A body-only `Closes` reference is a reference, not native closure, and
+result. The same bounded read returns each closing Issue's facts, including the
+provider close reason, so a native closing Issue costs no read of its own and the
+second closing read at readback compares those facts, not only the Issue IDs. An
+Issue in a complete set whose facts cannot be decoded fails the observation with
+`malformed_response`; it is not reported as an unavailable set. Associations
+outside the native set are still read one by one, once to collect and once to
+verify. A body-only `Closes` reference is a reference, not native closure, and
 cannot complete a delivery alone. Unsupported body-reference syntax adds a
 diagnostic while retaining the request and any separately read native
 association/Issue facts; mutation commands still reject that syntax. Local

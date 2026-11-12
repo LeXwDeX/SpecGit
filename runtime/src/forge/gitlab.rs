@@ -510,13 +510,14 @@ fn branches_route(repo: &Repository) -> String {
 
 /// Native GET closes_issues, including server-recognized references from commits.
 /// External trackers and cross-project rows cannot establish same-project IDs.
+/// Rows are full issue objects; `closing_fact` decodes them like an exact read.
 /// https://docs.gitlab.com/api/merge_requests/#list-issues-that-close-on-merge
-pub(super) async fn closing_issues(
+pub(super) async fn closing_rows(
     reader: &ForgeRead,
     repo: &Repository,
     project_id: u64,
     request_id: u64,
-) -> Result<Vec<u64>, Diagnostic> {
+) -> Result<Vec<Value>, Diagnostic> {
     let rows = reader
         .list(
             &format!("{}/closes_issues", request_route(repo, request_id)),
@@ -524,7 +525,7 @@ pub(super) async fn closing_issues(
             10,
         )
         .await?;
-    let mut ids = std::collections::BTreeSet::new();
+    let mut by_issue = std::collections::BTreeMap::new();
     for row in rows {
         let project = row
             .get("project_id")
@@ -539,9 +540,17 @@ pub(super) async fn closing_issues(
         if project != project_id {
             return Err(super::closing_identity());
         }
-        if !ids.insert(issue) {
+        if by_issue.insert(issue, row).is_some() {
             return Err(super::closing_malformed());
         }
     }
-    Ok(ids.into_iter().collect())
+    Ok(by_issue.into_values().collect())
+}
+
+/// GitLab exposes no close reason, matching `issue_with_reason`.
+pub(super) fn closing_fact(
+    row: &Value,
+    project_id: u64,
+) -> Result<(Issue, Option<String>), Diagnostic> {
+    Ok((issue_value(row, project_id)?, None))
 }
