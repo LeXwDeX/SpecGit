@@ -120,6 +120,7 @@ commit/push 前，用 `issue --inspect` 查找重复的 WHY，并用 `issue` 选
 仅当同一缺陷仍阻碍其关联修复时，才可使用有记录的单任务本地 checkpoint 例外；修复后恢复正常检查。不得全局禁用 guard，也不得绕过任务范围、平台保护、必需验证或原生交付回读。
 
 每个提交都为所选 Issue 带 `Issue: #N` trailer（`git commit --trailer "Issue: #12"` 或消息最后一行）；pre-push 拒绝缺少 trailer 的新提交。不得使用 `--no-verify`。
+一次交付可选多个 Issue：`issue <ID> <ID>...`；在同一分支再运行 `issue <ID>` 是追加。pre-push 报告提交只指向未选 Issue 时，属于本次交付就追加选择并保留 trailer；否则修正写错的 trailer 或把提交移到各自的交付。汇聚多个分支的工作时，在新 worktree 建汇总分支并一次选齐，不删除或改名原分支。
 一旦 `pr --status`/`watch` 确认记录的请求已合并，checkpoint 即已交付：更新目标分支，然后用 `issue <标题或 ID> --branch <name>` 开始下一项。
 
 实施并 commit/push 后，`pr` 汇总所选 Issue；创建需要真实已推送的变更，并生成草稿。与已有正文或引用不同的更新只提供预览：用 `--dry-run`，在评审冲突后原生编辑，再刷新 `pr --status`。适配器拒绝无条件替换正文。

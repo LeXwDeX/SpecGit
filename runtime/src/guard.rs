@@ -1527,45 +1527,102 @@ async fn bound_commits(
             pushed.branch
         )));
     }
-    let mut unbound = vec![];
+    let mut unbound = Unbound::default();
     for record in records {
         let (commit, values) = record.split_once('\0').unwrap_or((record, ""));
-        let bound = values.split(',').any(|value| {
-            value
-                .trim()
-                .strip_prefix('#')
-                .and_then(|id| id.parse::<u64>().ok())
-                .is_some_and(|id| selected.issues.contains(&id))
-        });
-        if !bound {
-            unbound.push(commit.chars().take(12).collect::<String>());
+        let named: Vec<u64> = values
+            .split(',')
+            .filter_map(|value| value.trim().strip_prefix('#')?.parse::<u64>().ok())
+            .filter(|id| *id > 0)
+            .collect();
+        if named.iter().any(|id| selected.issues.contains(id)) {
+            continue;
+        }
+        let commit = commit.chars().take(12).collect::<String>();
+        if named.is_empty() {
+            unbound.missing.push(commit);
+        } else {
+            unbound.foreign.push(commit);
+            unbound.unselected.extend(named);
         }
     }
-    if unbound.is_empty() {
-        return Ok(());
+    unbound.diagnostic(&pushed.branch, selected)
+}
+
+/// New commits whose trailers do not name a selected Issue, split by cause:
+/// no `Issue:` trailer at all, or trailers that only name unselected Issues.
+#[derive(Default)]
+struct Unbound {
+    missing: Vec<String>,
+    foreign: Vec<String>,
+    unselected: std::collections::BTreeSet<u64>,
+}
+
+impl Unbound {
+    fn diagnostic(
+        &self,
+        branch: &str,
+        checkpoint: &selection::Selection,
+    ) -> Result<(), Diagnostic> {
+        if self.missing.is_empty() && self.foreign.is_empty() {
+            return Ok(());
+        }
+        let issues = |ids: &mut dyn Iterator<Item = &u64>, prefix: &str, separator: &str| {
+            ids.map(|id| format!("{prefix}{id}"))
+                .collect::<Vec<_>>()
+                .join(separator)
+        };
+        let commits =
+            |list: &[String]| list.iter().take(10).cloned().collect::<Vec<_>>().join(", ");
+        let selected = issues(&mut checkpoint.issues.iter(), "#", ", ");
+        let mut message = vec![];
+        let mut remedy = vec![];
+        if !self.foreign.is_empty() {
+            let mut unselected = issues(&mut self.unselected.iter().take(20), "#", ", ");
+            if self.unselected.len() > 20 {
+                unselected.push_str(&format!(", ... {} in total", self.unselected.len()));
+            }
+            message.push(format!(
+                "{} new commit(s) on refs/heads/{branch} name only Issues outside this branch's checkpoint ({unselected}; selected: {selected}): {}.",
+                self.foreign.len(),
+                commits(&self.foreign)
+            ));
+            // An unresolved creation intent may adopt a single appended ID, and
+            // one delivery holds at most 100 Issues; name no command then.
+            let unresolved = checkpoint
+                .intents
+                .iter()
+                .filter(|intent| intent.issue.is_none())
+                .count();
+            let fits = checkpoint.issues.len() + unresolved + self.unselected.len() <= 100;
+            remedy.push(if unresolved > 0 {
+                "Resolve the checkpoint's unconfirmed Issue creation first (`specgit issue` with its exact native ID), then select these Issues if they belong to this delivery.".to_owned()
+            } else if !fits {
+                "Selecting all of these Issues would exceed 100 Issues in one delivery; split the commits into separate deliveries.".to_owned()
+            } else {
+                // Command arguments: one exact ID per argv entry.
+                let ids = issues(&mut self.unselected.iter(), "", " ");
+                format!(
+                    "If these Issues belong to this delivery, add them to the checkpoint with `specgit issue {ids}` (selection on the same branch is additive; preview with --dry-run) and keep their trailers, then push again."
+                )
+            });
+            remedy.push("Otherwise correct a mistyped trailer or move those commits to their own delivery; never rebind a commit only to pass the guard.".to_owned());
+        }
+        if !self.missing.is_empty() {
+            message.push(format!(
+                "{} new commit(s) on refs/heads/{branch} lack an `Issue: #N` trailer for the selected Issues ({selected}): {}.",
+                self.missing.len(),
+                commits(&self.missing)
+            ));
+            remedy.push("Bind each commit without a trailer to a selected Issue, for example `git commit --amend --no-edit --trailer \"Issue: #N\"` or `git rebase --exec 'git commit --amend --no-edit --trailer \"Issue: #N\"' <upstream>`, then push again. For new commits use `git commit --trailer \"Issue: #N\"`, or end the message with an `Issue: #N` line on Git before 2.32.".to_owned());
+        }
+        Err(Diagnostic::new(
+            Code::EvidenceRejected,
+            "git_guard",
+            &message.join(" "),
+            &remedy.join(" "),
+        ))
     }
-    let issues = selected
-        .issues
-        .iter()
-        .map(|id| format!("#{id}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let shown = unbound
-        .iter()
-        .take(10)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(Diagnostic::new(
-        Code::EvidenceRejected,
-        "git_guard",
-        &format!(
-            "{} new commit(s) on refs/heads/{} lack an `Issue: #N` trailer for the selected Issues ({issues}): {shown}.",
-            unbound.len(),
-            pushed.branch
-        ),
-        "Bind each commit to a selected Issue, for example `git commit --amend --no-edit --trailer \"Issue: #N\"` or `git rebase --exec 'git commit --amend --no-edit --trailer \"Issue: #N\"' <upstream>`, then push again. For new commits use `git commit --trailer \"Issue: #N\"`, or end the message with an `Issue: #N` line on Git before 2.32.",
-    ))
 }
 
 fn read_dependency(path: &Path) -> Result<Change, Diagnostic> {
