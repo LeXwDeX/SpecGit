@@ -4,6 +4,12 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.20.1
+
+- Let `remove` preview and apply in projects set up through the real CLI. `init` and `setup` share one transaction store, so one committed journal can prove assets on both sides and both removal plans recheck it unchanged; the merge of the project-agent plan treated every overlap as shared guidance and failed with `ownership_conflict` (`Unexpected overlapping asset.`) on any project that had run both `init` and `setup`. An overlap that is an unchanged proof on both sides is now kept once; any real write on either side still takes the guidance merge and the disjoint-ownership check. (#887)
+- Add a local-only Windows cross-target lint (`cargo clippy --target x86_64-pc-windows-msvc`) to the documented product verification, so Windows-only `cfg`, platform API and type errors are caught before pushing; GitHub Actions is unchanged. (#883)
+- Align the repository's Issue/PR writing conventions with the `language: zh` declaration. (#885)
+
 # 2.20.0
 
 - Let `remove` retire the delivery checkpoint of a `closed_unmerged` request, whose selected Issues may still be open. The checkpoint must still be complete, have no pending write, match the recorded project and target, and carry no observation diagnostics; `open` requests stay rejected, `completed` and `merged` still require every selected Issue closed, and `lifecycle.state` reports the observed status. (#863)
