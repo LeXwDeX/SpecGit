@@ -28,12 +28,29 @@ impl Fixture {
             // fresh copy once outside that budget so a slow first launch on a
             // loaded runner cannot replace the comparison under test with a
             // timeout. The product budget itself stays unchanged.
-            let warm = Command::new(&path)
-                .args(["exit", "0"])
-                .env_remove("SPECGIT_FIXTURE_UPDATE_DIR")
-                .env_remove("SPECGIT_FIXTURE_API_FILE")
-                .status()
-                .unwrap();
+            //
+            // On Linux, a sibling test thread that forks while this copy's write
+            // handle is open hands that handle to its child until the child
+            // execs, so starting the copy right away can briefly fail with
+            // ETXTBSY. Only that error is retried, within a short bound.
+            let mut attempts = 0;
+            let warm = loop {
+                match Command::new(&path)
+                    .args(["exit", "0"])
+                    .env_remove("SPECGIT_FIXTURE_UPDATE_DIR")
+                    .env_remove("SPECGIT_FIXTURE_API_FILE")
+                    .status()
+                {
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                            && attempts < 100 =>
+                    {
+                        attempts += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    result => break result.unwrap(),
+                }
+            };
             assert!(warm.success(), "fixture warm-up failed: {warm}");
         }
         let assets = if complete {
