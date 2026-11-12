@@ -527,10 +527,18 @@ tag-only updates are exempt; more than 1,000 new commits fail closed. A checkpoi
 whose recorded branch is the delivery target is not deliverable: pre-commit and
 pre-push both reject it, so the target cannot serve as the new-commit boundary
 that would exempt its commits from the trailer check. `git commit --trailer`
-needs Git 2.32 or newer; on older Git, end the message with an `Issue: #N` line. The trailer
+needs Git 2.32 or newer; on older Git, end the message with an `Issue: #N` line.
+The trailer
 keeps the binding in history after the local checkpoint is gone. It does not close
 the Issue; squash merges keep the request's closing references as the binding.
 Do not bypass the guard with `--no-verify`.
+
+When a rejected commit's trailers name only Issues outside the checkpoint, the
+diagnostic lists them. If they belong to this delivery, select them with
+`specgit issue <ID>...`: selection on the same branch is additive, so keep the
+trailers. Otherwise correct a mistyped trailer or move those commits to their
+own delivery. The command is omitted when the checkpoint has an unconfirmed
+Issue creation, or when the delivery would exceed 100 Issues.
 
 When `pr --status` or `watch` verifies that the request recorded in the current
 branch checkpoint is merged (`merged`, `completed` or `merged_issues_open`), it
