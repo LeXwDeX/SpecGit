@@ -158,9 +158,12 @@ opencode.json
 # Serena
 .serena/
 
-# SpecGit
+# SpecGit generated assets (never tracked; see .git/info/exclude for the managed block)
 /.specgit.yaml
 /.agents/skills/specgit-native/SKILL.md
+/.claude/skills/specgit-native/SKILL.md
+/.codex/hooks.json
+/.opencode/hooks.json
 
 # Codex
 .codex/
