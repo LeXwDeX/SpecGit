@@ -176,8 +176,12 @@ node scripts/ci-metadata-check.mjs
 cd runtime
 cargo fmt --all --check
 cargo clippy --locked --all-targets --features test-fixtures -- -D warnings
+cargo clippy --locked --all-targets --features test-fixtures --target x86_64-pc-windows-msvc -- -D warnings
 cargo test --locked --all-targets --features test-fixtures
 ```
+
+Windows 交叉 clippy 只在本地运行，不链接、不执行，用于在提交前发现只在 Windows 上编译的 cfg、平台 API 和类型问题。
+缺少目标标准库时先运行 `rustup target add x86_64-pc-windows-msvc`。运行时行为仍以 main 的 Windows 原生任务为准。
 
 安装或发行变更还须执行相关原生分发测试。
 PR 事件只运行 Linux 矩阵；main push、merge group、手动运行与 release 构建
