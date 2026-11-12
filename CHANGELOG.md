@@ -4,6 +4,10 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# 2.20.2
+
+- Keep `watch` and `inbox` within their bounds for requests with many native closing Issues. Each observation read every associated Issue on its own twice (collection and readback), about 206 native reads for 100 Issues, which on a real network exceeded the 90-second `inbox` refresh and left only a `TimedOut` event. The closing read now returns each closing Issue's facts and close reason, so a native closing Issue costs no read of its own (6 reads per GitHub poll regardless of the Issue count); the readback closing read compares those facts, not only the Issue IDs, so a concurrent edit is still detected. Undecodable embedded facts fail the observation; body-reference and selection-only Issues are still read one by one. The GitHub closing query now also requires `Issue.stateReason`; a GitHub Enterprise Server without it reports the closing set as unsupported instead of complete. (#901)
+
 # 2.20.1
 
 - Let `remove` preview and apply in projects set up through the real CLI. `init` and `setup` share one transaction store, so one committed journal can prove assets on both sides and both removal plans recheck it unchanged; the merge of the project-agent plan treated every overlap as shared guidance and failed with `ownership_conflict` (`Unexpected overlapping asset.`) on any project that had run both `init` and `setup`. An overlap that is an unchanged proof on both sides is now kept once; any real write on either side still takes the guidance merge and the disjoint-ownership check. (#887)
