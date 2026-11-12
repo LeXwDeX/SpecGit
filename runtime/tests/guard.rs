@@ -1162,6 +1162,7 @@ fn installed_guard_rejects_a_real_push_of_unbound_commits() {
 /// A delivery that combines branches keeps each commit's own `Issue: #N`
 /// trailer. The guard must name the unselected Issues and the additive
 /// selection that fixes it, instead of telling the Agent to rewrite trailers.
+#[cfg(unix)]
 #[test]
 fn installed_guard_names_unselected_trailer_issues_and_accepts_them_once_selected() {
     let temp = fixture();
