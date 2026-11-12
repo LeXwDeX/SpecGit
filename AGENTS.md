@@ -99,7 +99,7 @@ Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本�
 
 1. 加载 specgit-native Skill，读取 `.specgit.yaml`、共享 CLI 的 `--help` 和 `--schema`。
 2. Agent 主动用 `specgit issue --inspect` 查重，并在 commit/push 前完成 Issue checkpoint。
-   选择包含 Why / Scope / Approach / Acceptance 的完整相关 Issue，保留其原生 ID。
+   选择包含原因 / 范围 / 方案 / 验收的完整相关 Issue，保留其原生 ID。
    较大目标主动组织 Milestone；每个 Issue 对应独立可验收目标，不按操作步骤拆 Issue。
    普通编辑不设 checkpoint 门禁；只读审计不需要 Issue。纯文档同样需要 Issue + PR，只是验证采用下方短路径。
 3. 按范围实施和验证。提交使用 Conventional Commit 前缀并带 `Issue: #N` trailer，PR/MR 目标为 `main`。
@@ -117,11 +117,12 @@ Agent 自行创建或采用完整 Issue、创建或更新 PR/MR、准备版本�
 
 ### Issue/PR 书写约定
 
-本仓库 `.specgit.yaml` 使用 `language: en`、`validation.titles: true`、`validation.bodies: true`、`validation.labels: kind`。
+本仓库 `.specgit.yaml` 使用 `language: zh`、`validation.titles: true`、`validation.bodies: true`、`validation.labels: kind`。
 
-- Issue/PR 的标题和正文使用英文。
+- Issue/PR 的标题和正文使用中文。标题校验为结构性检查：zh 标题须至少包含一个汉字，纯英文标题会被拒绝。
+  技术标识符、Conventional Commit 类型前缀、URL 和 `kind::<type>` 标签保持原文。
 - 标题使用目录中的 Conventional Commit 类型，如 `fix:`、`feat:`、`docs:`、`chore:`。
-- Issue 正文填写 Why / Scope / Approach / Acceptance；PR 正文按 PR 模板填写。
+- Issue 正文填写原因 / 范围 / 方案 / 验收；PR 正文填写原因 / 变更 / 证据 / 检查清单（内置模板章节）。
 - 标签只用一个与标题类型一致的 `kind::<type>`。省略 `--tags` 时自动推导；显式指定不一致的 kind 会被拒绝。
 - 不使用旧标签（`bug`、`chore`、`feature`、`docs`、`enhancement` 等）。
 
