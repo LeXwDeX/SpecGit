@@ -547,6 +547,41 @@ fn milestone_context_refreshes_without_changing_checkpoint_or_candidate_digest()
     }
 }
 
+/// Selecting another Issue on the same branch appends to the checkpoint. The
+/// pre-push guard names `specgit issue <ID>...` for exactly this case.
+#[test]
+fn issue_on_the_same_branch_appends_to_the_checkpoint() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        fs::write(
+            f.root.join(".specgit.yaml"),
+            format!("version: 2\nprovider: {provider}\nvalidation:\n  labels: off\n"),
+        )
+        .unwrap();
+        f.edit(|state| {
+            state["issues"] = json!([
+                native_issue(provider, 1, false),
+                native_issue(provider, 2, false),
+                native_issue(provider, 3, false)
+            ])
+        });
+        let first = f.run(&["issue", "1"]);
+        assert_eq!(first["exit"], 0, "{first}");
+        assert_eq!(first["evidence"]["selection"]["issues"], json!([1]));
+        let appended = f.run(&["issue", "3", "2"]);
+        assert_eq!(appended["exit"], 0, "{appended}");
+        assert_eq!(
+            appended["evidence"]["selection"]["issues"],
+            json!([1, 3, 2])
+        );
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(checkpoint_path(&f)).unwrap()).unwrap();
+        assert_eq!(saved["issues"], json!([1, 3, 2]), "{saved}");
+        assert_eq!(saved["branch"], "feature", "{saved}");
+        assert_eq!(f.writes(), 0);
+    }
+}
+
 #[test]
 fn matching_recent_closed_history_also_changes_candidate_reviews() {
     for provider in ["github", "gitlab"] {
@@ -949,6 +984,12 @@ fn foreign_branch_reads_are_diagnostic_and_do_not_touch_the_original_checkpoint(
             assert!(diagnostic.contains("feature"), "{rejected}");
             assert!(diagnostic.contains("branch-b"), "{rejected}");
             assert!(diagnostic.contains("selection.json"), "{rejected}");
+            // Combining branches goes through a new worktree, never by
+            // deleting or renaming the recorded branch.
+            let remedy = rejected["diagnostics"][0]["remedy"].as_str().unwrap();
+            assert!(remedy.contains("git worktree add -b"), "{rejected}");
+            assert!(remedy.contains("specgit init --config-file"), "{rejected}");
+            assert!(remedy.contains("specgit issue <ID> <ID>..."), "{rejected}");
         }
         assert_eq!(fixture.writes(), writes);
         assert_eq!(fs::read(&checkpoint).unwrap(), before_checkpoint);
