@@ -984,6 +984,21 @@ fn closing_api(
             state["native_closing"] = changed;
         }
     }
+    // A concurrent native edit of one Issue, applied at the numbered closing
+    // read. The platform keeps it, so later reads of that Issue show it as well.
+    let edit = state["native_closing_issue_edit"].clone();
+    if edit["on_read"].is_number() && edit["on_read"] == state["native_closing_reads"] {
+        let key = if gh { "number" } else { "iid" };
+        let issue = state["issues"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|issue| issue[key] == edit["issue"])
+            .unwrap();
+        for (field, value) in edit["fields"].as_object().unwrap() {
+            issue[field] = value.clone();
+        }
+    }
     snapshot::write(path, state);
     if let Some(failure) = state["native_closing_failure"].as_str() {
         match failure {
@@ -1028,11 +1043,18 @@ fn closing_api(
         .cloned()
         .unwrap_or(json!([]));
     let values = values.as_array().unwrap();
-    let nodes: Vec<_> = values.iter().skip(offset).take(100).map(|value| {
-        if value.is_object() { return value.clone(); }
-        if gh { json!({"number":value,"repository":{"databaseId":state["project"]["id"],"nameWithOwner":state["project"]["full_name"]}}) }
-        else { json!({"iid":value,"project_id":state["project"]["id"]}) }
-    }).collect();
+    let nodes: Vec<_> = values
+        .iter()
+        .skip(offset)
+        .take(100)
+        .map(|value| {
+            if value.is_object() {
+                value.clone()
+            } else {
+                closing_entry(state, gh, value)
+            }
+        })
+        .collect();
     let response = if gh {
         let more = offset + 100 < values.len();
         let connection = json!({"nodes":nodes,"pageInfo":{"hasNextPage":more,"endCursor":if more {json!(format!("closing:{}",offset+100))} else {Value::Null}}});
@@ -1042,6 +1064,51 @@ fn closing_api(
     };
     println!("{response}");
     true
+}
+
+/// One closing-reference entry as the native protocol returns it. The Issue comes
+/// from `state["issues"]`, which holds REST issue objects. GitHub GraphQL returns
+/// an `Issue` node: upper-case enums, a label connection and `updatedAt`. GitLab
+/// `closes_issues` returns the full REST issue row. A number with no Issue in the
+/// state gets a minimal open Issue, so protocol tests need not model Issues.
+fn closing_entry(
+    state: &serde_json::Value,
+    gh: bool,
+    number: &serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let project = &state["project"];
+    let key = if gh { "number" } else { "iid" };
+    let found = state["issues"]
+        .as_array()
+        .and_then(|issues| issues.iter().find(|issue| issue[key] == *number));
+    let default = json!({
+        "number":number,"iid":number,"project_id":project["id"],
+        "title":format!("Issue {number}"),"body":"","description":"","labels":[],
+        "state":if gh {"open"} else {"opened"},"updated_at":"2026-09-09T00:00:00Z"
+    });
+    let issue = found.unwrap_or(&default);
+    if !gh {
+        return issue.clone();
+    }
+    let upper = |value: &Value| {
+        value
+            .as_str()
+            .map_or(Value::Null, |text| json!(text.to_ascii_uppercase()))
+    };
+    json!({
+        "number":issue["number"],
+        "title":issue["title"],
+        "body":if issue["body"].is_null() { json!("") } else { issue["body"].clone() },
+        "state":upper(&issue["state"]),
+        "stateReason":upper(&issue["state_reason"]),
+        "updatedAt":issue["updated_at"],
+        "labels":{
+            "nodes":issue["labels"].as_array().unwrap().iter().map(|label| json!({"name":label["name"]})).collect::<Vec<_>>(),
+            "pageInfo":{"hasNextPage":false}
+        },
+        "repository":{"databaseId":project["id"],"nameWithOwner":project["full_name"]}
+    })
 }
 
 fn request_api(

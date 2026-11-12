@@ -22,11 +22,19 @@ impl Fixture {
             } else {
                 name.into()
             };
-            fs::copy(
-                env!("CARGO_BIN_EXE_specgit-process-fixture"),
-                bin.join(name),
-            )
-            .unwrap();
+            let path = bin.join(name);
+            fs::copy(env!("CARGO_BIN_EXE_specgit-process-fixture"), &path).unwrap();
+            // Doctor's optional release check has a fixed 5s budget. Start each
+            // fresh copy once outside that budget so a slow first launch on a
+            // loaded runner cannot replace the comparison under test with a
+            // timeout. The product budget itself stays unchanged.
+            let warm = Command::new(&path)
+                .args(["exit", "0"])
+                .env_remove("SPECGIT_FIXTURE_UPDATE_DIR")
+                .env_remove("SPECGIT_FIXTURE_API_FILE")
+                .status()
+                .unwrap();
+            assert!(warm.success(), "fixture warm-up failed: {warm}");
         }
         let assets = if complete {
             [
@@ -94,9 +102,13 @@ fn doctor_compares_latest_without_downloading_or_updating() {
             "--api-host",
             "gitlab.example.test",
         ]);
+        // calls.log distinguishes a child that never ran (launch stall) from
+        // one that ran but whose exit or pipes were not collected in time.
         assert_eq!(
-            report["evidence"]["runtime_update"]["status"], status,
-            "{report}"
+            report["evidence"]["runtime_update"]["status"],
+            status,
+            "{report}\ncalls.log:\n{}",
+            fixture.calls()
         );
         assert_eq!(
             report["evidence"]["runtime_update"]["latest_version"],

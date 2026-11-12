@@ -84,12 +84,16 @@ fn local_applicability(
 pub(crate) struct Collected {
     workspace: Workspace,
     request: forge::RequestObservation,
-    native_ids: Option<Vec<u64>>,
-    issues: Option<Vec<crate::delivery_model::Issue>>,
-    issue_state_reasons: Vec<(u64, Option<String>)>,
+    /// The native closing set with its Issue facts. The same read verifies it.
+    native: Option<Vec<IssueFact>>,
+    /// Associations outside the native set have no embedded copy, so each one
+    /// is read on its own and read again by `verify`.
+    single_reads: Vec<IssueFact>,
     checks: Option<Vec<crate::delivery_model::Check>>,
     pub(crate) assessment: Observation,
 }
+/// An Issue with its provider close reason.
+type IssueFact = (crate::delivery_model::Issue, Option<String>);
 impl Collected {
     /// Unlike the durable presentation projection, this covers private Issue and
     /// PR content, opaque native request fields, and local/native project identity.
@@ -100,7 +104,7 @@ impl Collected {
             &serde_json::to_vec(&(
                 &self.assessment.evidence,
                 &self.assessment.diagnostics,
-                &self.native_ids,
+                &self.native,
                 format!("{:?}", self.request),
                 (&w.context.git_dir, &w.context.remote, w.context.dirty),
                 (w.facts.id, &w.facts.default_branch),
@@ -117,21 +121,19 @@ impl Collected {
     pub(crate) async fn verify(self) -> Result<Observation, Diagnostic> {
         let w = &self.workspace;
         let repo = &w.context.repository;
-        for issue in self.issues.iter().flatten() {
-            let (fresh, reason) =
-                native_delivery::issue_with_reason(&w.reader, repo, w.facts.id, issue.id).await?;
-            if fresh != *issue
-                || !self
-                    .issue_state_reasons
-                    .iter()
-                    .any(|(id, known)| *id == issue.id && *known == reason)
-            {
+        for known in &self.single_reads {
+            let fresh =
+                native_delivery::issue_with_reason(&w.reader, repo, w.facts.id, known.0.id).await?;
+            if fresh != *known {
                 return Err(changed());
             }
         }
-        if let Some(ids) = self.native_ids
-            && forge::closing_issues(&w.reader, repo, w.facts.id, self.request.facts.id).await?
-                != ids
+        // The closing read returns the facts of its Issues, so it also compares
+        // their state and close reason, not only which Issues the set contains.
+        if let Some(known) = &self.native
+            && forge::closing_issue_facts(&w.reader, repo, w.facts.id, self.request.facts.id)
+                .await?
+                != *known
         {
             return Err(changed());
         }
@@ -241,19 +243,22 @@ async fn collect_in_scope(
     };
     let mut diagnostics = Vec::new();
     let mut associations = BTreeMap::<u64, Vec<AssociationSource>>::new();
-    let mut native_ids = None;
-    match forge::closing_issues(&w.reader, repo, w.facts.id, number).await {
-        Ok(ids) => {
-            native_ids = Some(ids.clone());
+    let mut native = None;
+    // An unavailable set is diagnostic evidence. `?` is only for a set that
+    // embeds an unreadable Issue, which failed the whole observation before the
+    // Issues came with the set.
+    match forge::closing_read(&w.reader, repo, w.facts.id, number).await? {
+        forge::ClosingRead::Complete(facts) => {
             evidence.native_closing_available = true;
-            for id in ids {
+            for (issue, _) in &facts {
                 associations
-                    .entry(id)
+                    .entry(issue.id)
                     .or_default()
                     .push(AssociationSource::NativeClosing);
             }
+            native = Some(facts);
         }
-        Err(d) => diagnostics.push(d),
+        forge::ClosingRead::Unavailable(d) => diagnostics.push(d),
     }
     let body_ids = match spec::references_for(repo.provider, &r.body) {
         Ok(ids) => ids,
@@ -290,11 +295,26 @@ async fn collect_in_scope(
             "Inspect native associations in bounded groups.",
         ));
     }
+    // Native closing Issues came with the closing set. Body references and
+    // local selections outside it are separate resources, read one by one.
+    let embedded: BTreeMap<u64, &IssueFact> = native
+        .iter()
+        .flatten()
+        .map(|fact| (fact.0.id, fact))
+        .collect();
     let mut issues = Vec::new();
     let mut issue_state_reasons = Vec::new();
+    let mut single_reads = Vec::new();
     for id in associations.keys() {
-        let (issue, state_reason) =
-            native_delivery::issue_with_reason(&w.reader, repo, w.facts.id, *id).await?;
+        let (issue, state_reason) = match embedded.get(id) {
+            Some(fact) => (*fact).clone(),
+            None => {
+                let fact =
+                    native_delivery::issue_with_reason(&w.reader, repo, w.facts.id, *id).await?;
+                single_reads.push(fact.clone());
+                fact
+            }
+        };
         issues.push(issue);
         issue_state_reasons.push((*id, state_reason));
     }
@@ -327,16 +347,14 @@ async fn collect_in_scope(
     }
     // `describe` can discard invalid facts. Keep the original readback inputs so
     // one-shot callers still verify every collected resource before describing it.
-    let issues = evidence.issues.clone();
     let checks = evidence.checks.clone();
     let mut result = describe(evidence);
     result.diagnostics.extend(diagnostics);
     Ok(Collected {
         workspace: w,
         request: observed,
-        native_ids,
-        issues,
-        issue_state_reasons,
+        native,
+        single_reads,
         checks,
         assessment: result,
     })
