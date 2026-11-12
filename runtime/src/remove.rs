@@ -372,6 +372,13 @@ async fn plan(layout: &Layout, process: &Process) -> Result<Plan, Diagnostic> {
         Ok(mut changes) => {
             for c in &mut changes {
                 if let Some(init) = plan.changes.get(&c.path) {
+                    // One init/setup transaction can prove assets on both sides,
+                    // so both plans recheck the same journal unchanged. Such a
+                    // shared proof needs no guidance merge; `plan.add` keeps one.
+                    // Any real write on either side still takes the merge path.
+                    if init.unchanged() && c.unchanged() && init.before.bytes == c.before.bytes {
+                        continue;
+                    }
                     let before = c.before.bytes.as_deref().unwrap_or_default();
                     let after_init = init.after.as_deref().unwrap_or_default();
                     let after_agent = c.after.as_deref().unwrap_or_default();
