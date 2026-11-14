@@ -31,6 +31,15 @@ Native writes require existing user authorization. A declaration and a
 review, protection, and merge conditions pass. SpecGit must read back native
 state before it reports delivery completion.
 
+## Host-neutral product principle
+
+New capability is implemented first in the CLI and the Git guard, and works
+fully with zero host integration. Host hooks only provide prompts and context;
+they do not carry business rules. Each host adaptation states its support
+status and fallback in the installation catalog (`setup --catalog`). Distributed
+Skills and guidance text contain no host-specific tool names. Host-specific
+code lives only in setup adapters.
+
 ## Module dependency DAG
 
 The table records every runtime component, its layer, and all direct component
