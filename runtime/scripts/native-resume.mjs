@@ -60,8 +60,10 @@ export async function main(args) {
         const directory = attempt('lint');
         const fmt = path.join(directory, 'fmt.log');
         const clippy = path.join(directory, 'clippy.log');
+        const defaultClippy = path.join(directory, 'default-clippy.log');
         command('cargo', ['fmt', '--check'], { log: fmt });
         command('cargo', ['clippy', '--locked', '--all-targets', '--features', 'test-fixtures', '--', '-D', 'warnings'], { log: clippy });
+        command('cargo', ['clippy', '--locked', '--lib', '--bins', '--', '-D', 'warnings'], { log: defaultClippy });
         return { value: { directory }, files: [directory] };
       });
       break;
