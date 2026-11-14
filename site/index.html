@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpecGit — Issue specifications to verified delivery</title>
+<meta name="description" content="SpecGit gives coding agents a shared delivery workflow for GitHub and GitLab: specifications in Issues, implementation in native PRs or MRs, and verified completion.">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="alternate" hreflang="en" href="./">
+<link rel="alternate" hreflang="zh-Hans" href="zh/">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="./">SpecGit</a>
+    <nav aria-label="Main navigation">
+      <a href="#overview">Overview</a>
+      <a href="#install">Install</a>
+      <a href="#hosts">Hosts</a>
+      <a href="#matrix">Support matrix</a>
+      <a href="#download">Download</a>
+      <a href="#docs">Documentation</a>
+      <a class="language" href="zh/" hreflang="zh-Hans" lang="zh-Hans">中文</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero" id="overview">
+    <div class="wrap">
+      <p class="eyebrow">Issue specifications → code changes → native PR/MR → verified completion</p>
+      <h1>SpecGit</h1>
+      <p class="lead">SpecGit gives coding agents a shared delivery workflow for GitHub and GitLab. Issues hold the specification. A native PR or MR gathers the selected Issues and the implementation. SpecGit reads the forge's current state so the agent can repair failures and distinguish pending work from completed delivery.</p>
+      <p class="actions">
+        <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">Download the latest release</a>
+        <a class="button" href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">Read the README</a>
+        <a class="button" href="https://github.com/LeXwDeX/SpecGit/wiki">Browse the Wiki</a>
+      </p>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Install</h2>
+      <p>Open your coding agent in the repository you want to use with SpecGit and ask it to read and follow the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">agent installation guide</a>. The guide downloads the latest stable signed GitHub Release, verifies its signature and SHA-256, installs the shared CLI, and initializes the project.</p>
+      <p>One user-level executable serves every repository and worktree. End-user installation needs no Node.js, npm or Rust compiler; repository work needs Git and an authenticated <code>gh</code> or <code>glab</code>. GitHub Releases is the only distribution channel.</p>
+      <p>After installation, initialize each clone or worktree separately and inspect the offline capability catalog:</p>
+      <pre><code>specgit init --provider github --remote origin --check --json
+specgit init --provider github --remote origin --dry-run --json
+specgit init --provider github --remote origin --json
+specgit setup --catalog --json</code></pre>
+      <p>Already installed? Use the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">project maintenance guide</a> instead of repeating the first-install procedure.</p>
+    </div>
+  </section>
+
+  <section id="hosts">
+    <div class="wrap">
+      <h2>Host quick start</h2>
+      <p>SpecGit capability lives in the shared CLI and the native Git guard, so a project works with zero host integration. Naming a host with <code>--agent</code> adds its guidance and Skill only; hooks and managed read-only permissions are separate explicit choices. Preview with <code>--dry-run</code>, then repeat the command without it to apply.</p>
+      <div class="grid">
+        <article class="card">
+          <h3>Generic</h3>
+          <p>Guidance entry in <code>AGENTS.md</code> and the canonical <code>.agents/skills/specgit-native/SKILL.md</code>. No host callbacks; the native Git guard still applies on commit and push.</p>
+          <pre><code>specgit setup --agent generic --dry-run --json
+specgit setup --agent generic --json</code></pre>
+          <p class="note">Fallback: read the guidance and Skill directly. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#generic">Supported Hosts</a>.</p>
+        </article>
+
+        <article class="card">
+          <h3>Claude Code</h3>
+          <p>Root <code>CLAUDE.md</code> entry, the canonical <code>.agents</code> Skill, and a <code>.claude/skills/specgit-native/SKILL.md</code> copy. Context hooks and the managed read-only allowlist are optional.</p>
+          <pre><code>specgit setup --agent claude --dry-run --json
+specgit setup --agent claude --json
+specgit setup --agent claude --hook-purpose context --dry-run --json
+specgit setup --agent claude --hook-purpose context --json
+specgit setup --agent claude --readonly-permissions --dry-run --json
+specgit setup --agent claude --readonly-permissions --json</code></pre>
+          <p class="note">The allowlist reduces prompts; it is not a sandbox or an authorization boundary. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#claude-code">Supported Hosts</a>.</p>
+        </article>
+
+        <article class="card">
+          <h3>Codex</h3>
+          <p>Canonical <code>.agents</code> Skill and a guidance entry in <code>AGENTS.md</code>, or in an existing nonempty <code>AGENTS.override.md</code>. Context hooks go to <code>.codex/hooks.json</code>.</p>
+          <pre><code>specgit setup --agent codex --hook-purpose context --dry-run --json
+specgit setup --agent codex --hook-purpose context --json</code></pre>
+          <p class="note">Trust the project <code>.codex/</code> layer in the host's <code>/hooks</code> review; registration is reported as <code>written_not_verified</code> until the host imports it. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#codex">Supported Hosts</a>.</p>
+        </article>
+
+        <article class="card">
+          <h3>OpenCode</h3>
+          <p>The official build receives the root <code>AGENTS.md</code> entry and the <code>.agents</code> Skill; context hooks are declined. A custom fork supporting Claude-compatible command hooks can opt in explicitly.</p>
+          <pre><code>specgit setup --agent opencode --dry-run --json
+specgit setup --agent opencode --json
+# Custom fork only:
+specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --dry-run --json
+specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --json</code></pre>
+          <p class="note">Fallback: re-read the guidance and Skill and use bounded <code>watch</code>/<code>inbox</code>; the Git guard remains independent. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#opencode">Supported Hosts</a>.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="matrix">
+    <div class="wrap">
+      <h2>Support matrix</h2>
+      <p>The maintained summary lives in <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">Supported coding agents</a> and <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts">Supported Hosts</a>; the linked documents are authoritative.</p>
+      <div class="table-scroll" role="region" aria-label="Support matrix" tabindex="0">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Host</th>
+              <th scope="col">Guidance entry</th>
+              <th scope="col">Skill discovery</th>
+              <th scope="col">Context hooks</th>
+              <th scope="col">Read-only allowlist</th>
+              <th scope="col">Fallback</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>generic</code></td>
+              <td><code>AGENTS.md</code></td>
+              <td><code>.agents/skills/specgit-native/SKILL.md</code> when the host reads <code>.agents</code></td>
+              <td>none; declined</td>
+              <td>declined: no host permission configuration</td>
+              <td>Read guidance and the Skill directly</td>
+            </tr>
+            <tr>
+              <td>Claude Code</td>
+              <td><code>CLAUDE.md</code></td>
+              <td>Canonical <code>.agents</code> Skill plus <code>.claude/skills/specgit-native/SKILL.md</code></td>
+              <td><code>.claude/settings.json</code> SessionStart/PreToolUse</td>
+              <td><code>.claude/settings.json</code> <code>permissions.allow</code> with <code>--readonly-permissions</code></td>
+              <td>Re-read guidance and Skill</td>
+            </tr>
+            <tr>
+              <td>Codex</td>
+              <td><code>AGENTS.md</code>, or an existing nonempty <code>AGENTS.override.md</code></td>
+              <td>Canonical <code>.agents</code> Skill; Codex scans it from the working directory to the repository root and also reads <code>~/.agents/skills</code></td>
+              <td><code>.codex/hooks.json</code>; requires the host <code>/hooks</code> trust review</td>
+              <td>declined: experimental approval and sandbox</td>
+              <td>Re-read guidance and Skill</td>
+            </tr>
+            <tr>
+              <td>OpenCode (official)</td>
+              <td><code>AGENTS.md</code></td>
+              <td><code>.agents</code> Skill; the host also reads project <code>.opencode/</code> and <code>.claude/</code> skills</td>
+              <td>none; declined</td>
+              <td>declined: default-allow, no portable allowlist</td>
+              <td>Re-read guidance and Skill; bounded <code>watch</code>/<code>inbox</code></td>
+            </tr>
+            <tr>
+              <td>OpenCode custom fork</td>
+              <td><code>AGENTS.md</code></td>
+              <td>Same as official OpenCode</td>
+              <td><code>.opencode/hooks.json</code> with <code>inputFormat: claude-code</code>; requires <code>--agent opencode --opencode-claude-hooks</code> plus an explicit hook purpose</td>
+              <td>declined</td>
+              <td>Same as official OpenCode</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note"><code>guard</code> is the native Git pre-commit/pre-push check, not a host callback. It applies to every host, including generic, through <code>setup --hook-purpose guard</code> or <code>specgit guard --install</code>. Context hooks only prompt and provide context; they never carry business rules.</p>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <h2>Download</h2>
+      <p>SpecGit is distributed only through <a href="https://github.com/LeXwDeX/SpecGit/releases/latest">GitHub Releases</a>. The latest stable release provides:</p>
+      <ul>
+        <li><code>specgit-&lt;version&gt;-darwin-arm64.zip</code> — macOS arm64</li>
+        <li><code>specgit-&lt;version&gt;-linux-x64-gnu.zip</code> — Linux x64 glibc</li>
+        <li><code>specgit-&lt;version&gt;-win32-x64.zip</code> — Windows x64</li>
+        <li><code>SHA256SUMS</code> and <code>SHA256SUMS.sigstore.json</code> — checksum manifest and its Sigstore signature bundle</li>
+      </ul>
+      <p>Verify the signature and SHA-256 with the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">release asset verification reference</a>. The signature covers <code>SHA256SUMS</code> and therefore the ZIP bytes; cross-check the tag commit and the native build workflow run separately.</p>
+      <p class="actions">
+        <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">Open the latest release</a>
+      </p>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="wrap">
+      <h2>Documentation</h2>
+      <ul class="docs-list">
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">README: product, installation and workflow</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">Agent installation and initialization</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">Installed-CLI project maintenance</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">Supported coding agents and discovery boundaries</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">Release asset verification reference</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md">Native commands, configuration and JSON contract</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/assets/SKILL.md">SpecGit Skill workflow</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md">Migration from v1</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/distribution/README.md">Release procedure and recovery</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/CONTEXT.md">Current glossary</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/wiki">English Wiki</a></li>
+        <li><a href="https://github.com/LeXwDeX/SpecGit/wiki/Home-zh">中文 Wiki</a></li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>SpecGit is released under the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/LICENSE">MIT License</a>. This static site has no analytics, tracking scripts or third-party assets; the linked repository documents are the source of truth.</p>
+  </div>
+</footer>
+</body>
+</html>

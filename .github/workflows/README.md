@@ -4,6 +4,8 @@
   Required verification and the protected SpecGit Acceptance status.
 - Security: dependency review, Cargo audit and private Node tooling audit.
 - Release: explicit main dispatch, three native builds, signed ZIP publication.
+- Pages: main-only deployment of the static bilingual site in `site/`; no build
+  step, Node.js or third-party assets.
 - CodeQL: GitHub-managed default setup; its repository setting selects the standard
   GitHub runner independently of these tracked workflow files.
 
