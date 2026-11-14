@@ -63,6 +63,44 @@ cannot overwrite an existing immutable signature asset. The internal
 attachments. The five published assets are unchanged. A branch dispatch cannot
 publish.
 
+## Host load verification
+
+Host load probes are an optional release-readiness check, not a CI job. Run them
+before a release that changes setup, host registration, the generated Skill,
+project guidance or hook context, and repeat them on a machine that has the real
+hosts installed:
+
+```sh
+python3 runtime/scripts/host-load-probe.py \
+  --binary /absolute/path/to/installed/specgit --host all
+```
+
+The probe creates a temporary project, runs the installed CLI's `setup`, starts
+one bounded non-interactive session per host and checks what that host actually
+loaded: Skill discovery, project guidance, SessionStart context and PreToolUse
+context. Model traffic goes to loopback-only synthetic servers; no user
+credentials or remote model are used. Host configuration and state stay under
+the temporary directory, and the temporary project is removed afterwards. Use
+`--keep` to inspect the evidence directory.
+
+Each host reports `pass`, `fail` or `not-installed`, plus one status per check:
+
+- `pass` — the installed host itself exposed or delivered the asset.
+- `fail` — the host is installed but a check failed or could not be observed.
+- `not-installed` — the host CLI was not found. This is never a pass; install the
+  host or point at it with `--claude`, `--codex` or `--opencode`.
+- `not-supported` — the host has no supported hook surface for that check. It is
+  not evidence of hook delivery.
+- `not-checked` — the host is installed but the probe could not observe the
+  check without human trust or interaction.
+
+The process exits zero only when every requested host reports `pass`. Codex
+requires the host's own `/hooks` trust review for project hooks; the probe does
+not automate, assume or bypass that trust, so Codex hook checks normally report
+`not-checked` and make the run non-passing. Written registration alone is never
+treated as load evidence. A release that claims host support should include a
+`pass` report for each host it claims, or state the limitation explicitly.
+
 ## Resume an interrupted publication
 
 For failed publication, reuse the retained signed bundle from the original attempt.
