@@ -200,6 +200,86 @@ command contract. The maintained command, configuration, and JSON reference is
 the [native runtime reference](../runtime/REFERENCE.md). The installed
 [SpecGit skill](../runtime/assets/SKILL.md) describes the agent workflow.
 
+## Candidate host evaluation
+
+On 2026-11-14 we reviewed first-party documentation for eight additional coding
+agents against the same dimensions as the matrix above: guidance entry, Skill
+discovery, hooks and non-interactive verification. These are documentation
+evaluations, not live host qualifications; written support does not prove host
+import, context delivery or prompt behavior. None of these hosts is a supported
+`--agent` selection. Where `generic` already covers the host's documented
+guidance and Skill paths, no adapter is needed.
+
+| Host | Guidance entry | Skill discovery | Hooks | Non-interactive check | Conclusion |
+| --- | --- | --- | --- | --- | --- |
+| Pi | `AGENTS.md` by default; also reads `CLAUDE.md` and `AGENTS.override.md`; `-nc`/`--no-context-files` disables discovery | `.agents/skills/` from the working directory through ancestors to the repository root, plus `~/.agents/skills` | TypeScript extensions in `.pi/extensions/` or `~/.pi/agent/extensions/`; `session_start`, `before_agent_start`, `tool_call` (can block); project-local extensions load only after project trust | `pi -p "..."`; `pi --mode json "..."` writes JSONL events | Covered by `generic`; no `.pi/` assets needed |
+| Cursor | `AGENTS.md` in the project root and subdirectories; `.cursor/rules/*.mdc` | `.agents/skills/`, `.cursor/skills/`; also `.claude/skills/` and `.codex/skills/` | `.cursor/hooks.json`; `sessionStart`, `preToolUse`, `postToolUse` and other agent events | `agent -p` / `--print`; `--output-format json` | Covered by `generic`; optional hooks enhancement |
+| Cline | `AGENTS.md` (documented as cross-tool) and `~/.agents/AGENTS.md`; `.clinerules/` or `.cline/rules/` | `.cline/skills/`, `.clinerules/skills/`, `.claude/skills/`; `.agents/skills` is not documented | `.clinerules/hooks/<Event>`; `TaskStart`, `PreToolUse` (cancel blocks) and other events | `cline --json "..."` emits one JSON object per line | Covered by `generic`; optional hooks enhancement |
+| Amp | `AGENTS.md` from the working directory and parents up to `$HOME`; falls back to `AGENT.md` or `CLAUDE.md` per directory | `.agents/skills/` (project and parents), `.claude/skills/`, `~/.config/agents/skills/` | Bun/TypeScript plugins in `.amp/plugins/` or `~/.config/amp/plugins/`; `session.start`, `agent.start`, `tool.call` | `amp -x "..."` / `--execute` | Covered by `generic`; optional hooks enhancement |
+| Gemini CLI | `GEMINI.md` by default; `AGENTS.md` only when `context.fileName` includes it | `.gemini/skills/` or `.agents/skills/` (native alias) | `.gemini/settings.json` top-level `hooks`; `SessionStart` `additionalContext`, `BeforeTool` deny/block | `gemini -p` with `--output-format json` | Needs adapter: guidance entry first, optional hooks |
+| Aider | `CONVENTIONS.md` only through `--read` or `.aider.conf.yml` `read:`; no default `AGENTS.md` discovery | No Skill surface documented | No hook surface documented | `aider -m "..." --yes` | Needs guidance-only adapter |
+| Continue | Official rules docs list only `.continue/rules/`. PR #7717 (merged 2025-09-22) adds root `AGENTS.md`, with `AGENT.md`/`CLAUDE.md` fallback; current source loads it, the rules docs do not state it | Not confirmed in first-party docs | Not confirmed in first-party docs | Not confirmed | Unknown; spike first |
+| Windsurf | The Windsurf `AGENTS.md` page redirects to Devin Desktop Cascade docs, which document `AGENTS.md` for Devin Local and call `.windsurf/rules/*.md` legacy; current Windsurf behavior is unconfirmed | Not confirmed for Windsurf | Not confirmed for Windsurf | Not confirmed | Unknown; spike first |
+
+Sources checked on 2026-11-14:
+
+- Pi: [Skills](https://docs.pi.dev/latest/skills),
+  [configuration](https://docs.pi.dev/latest/configuration),
+  [extensions](https://docs.pi.dev/latest/extensions) and
+  [CLI](https://docs.pi.dev/latest/cli). The `pi.dev/docs/latest/*` paths
+  redirect to `docs.pi.dev`.
+- Cursor: [rules](https://cursor.com/docs/context/rules),
+  [skills](https://cursor.com/docs/context/skills),
+  [hooks](https://cursor.com/docs/agent/hooks) and
+  [CLI headless mode](https://cursor.com/docs/cli/headless). Current docs use
+  the `agent` binary name.
+- Cline: [rules](https://docs.cline.bot/customization/cline-rules),
+  [skills](https://docs.cline.bot/customization/skills),
+  [hooks](https://github.com/cline/cline/blob/main/.clinerules/hooks/README.md)
+  and [CLI reference](https://docs.cline.bot/cli/cli-reference).
+- Amp: [AGENTS.md](https://ampcode.com/docs/customize/agents-md),
+  [skills](https://ampcode.com/docs/customize/skills),
+  [plugin API](https://ampcode.com/docs/plugin-api) and
+  [execute mode](https://ampcode.com/docs/cli/execute-mode).
+- Gemini CLI: [skills](https://geminicli.com/docs/cli/skills/),
+  [GEMINI.md](https://geminicli.com/docs/cli/gemini-md/),
+  [hooks](https://geminicli.com/docs/hooks/reference/),
+  [settings](https://geminicli.com/docs/cli/settings/) and
+  [headless mode](https://geminicli.com/docs/cli/headless/).
+- Aider: [conventions](https://aider.chat/docs/usage/conventions.html) and
+  [scripting](https://aider.chat/docs/scripting.html).
+- Continue: [rules](https://docs.continue.dev/customize/deep-dives/rules) and
+  [PR #7717](https://github.com/continuedev/continue/pull/7717). Issue #6716
+  was closed as completed by that PR, so the earlier request is no longer
+  evidence of missing support; the documentation gap remains.
+- Windsurf: [AGENTS.md](https://docs.windsurf.com/windsurf/cascade/agents-md)
+  redirects to the Devin Desktop Cascade page.
+
+### Follow-up implementation proposals
+
+None of the candidates above changes the support matrix by itself. Proposed
+separate implementation Issues:
+
+1. Gemini CLI adapter (priority, #916). Manage the guidance entry only: write a stable
+   managed `GEMINI.md`, or record `context.fileName` with `AGENTS.md` without
+   overwriting user configuration. Skills need no adapter because
+   `.agents/skills/` is native. Optional `SessionStart` context and `BeforeTool`
+   hooks only after live qualification, keeping the zero-integration fallback.
+2. Aider guidance-only adapter (#917). Manage `.aider.conf.yml` `read:` with
+   `AGENTS.md`, or a managed `CONVENTIONS.md` pointer, preserving existing
+   keys. No Skill or hook surface exists; verify with
+   `aider -m "..." --yes`.
+3. Optional hooks enhancement for Cursor, Pi, Cline and Amp. Each documents a
+   project hook surface; add context purposes only after a live qualification,
+   and never carry business rules in hooks.
+4. Research spike for Continue and Windsurf before deciding either way. Verify
+   documented guidance, Skill discovery, hooks and non-interactive entry points
+   in current releases. For Continue, resolve the gap between the rules
+   documentation and merged PR #7717.
+
+Per the host-neutral principle, any adapter lands in setup adapters and the
+installation catalog; distributed Skills and guidance text stay host-neutral.
+
 ## Delivery flow
 
 Read-only inspection and `--dry-run` previews do not authorize writes by themselves.
