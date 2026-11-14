@@ -51,9 +51,10 @@ user-level CLI from Requirements.
 
 ### Claude Code
 
-The repository hosts its own marketplace, validated with
-`claude plugin validate --strict --profile directory`. Add the marketplace, then
-install the plugin:
+The repository hosts its own marketplace. Validate the plugin directory with
+`claude plugin validate plugin --strict --profile directory`, and the
+repository-root `marketplace.json` with `claude plugin validate . --strict`.
+Add the marketplace, then install the plugin:
 
 ```sh
 claude plugin marketplace add LeXwDeX/SpecGit
@@ -65,6 +66,9 @@ Inside a Claude Code session, the one-step form is:
 ```text
 /plugin install specgit --marketplace LeXwDeX/SpecGit
 ```
+
+The one-step form requires Claude Code v2.1.275 or newer; on older versions use
+the two-step commands above.
 
 ### Codex
 
@@ -78,11 +82,13 @@ Then use `/plugins` in Codex to browse and install `specgit`. This entry has not
 yet been exercised with a local Codex installation, so verify that the host
 loads the Skill before relying on it.
 
-### Pi, OpenCode and other skill-only hosts
+### Pi, OpenCode and other hosts without SpecGit-installed hooks
 
-Hosts without a plugin marketplace read the shared Skill under `.agents/skills`.
-`specgit init` already installs it for the project; the default covers this, so
-no `--agent` flag is needed. To install one user-level copy instead:
+These hosts may have their own plugin or extension mechanisms; SpecGit installs
+no host hook for them. The shared Skill under `.agents/skills` is how SpecGit
+integrates, and `specgit init` already installs it for the project; the default
+covers this, so no `--agent` flag is needed. To install one user-level copy
+instead:
 
 ```sh
 specgit skill --user

@@ -68,7 +68,7 @@ v1 TypeScript 运行时、Vitest、npm 发布和旧 acceptance controller 已退
 
 - 新能力先在 CLI 与 Git guard 中实现，零宿主接入即可完整使用。
 - 宿主 hooks 只提供提示与上下文，不承载业务规则。
-- 每个宿主适配在 catalog 中写明支持状态与回退。
+- catalog 是离线能力清单；每个宿主的支持状态与回退以[支持矩阵](docs/supported-tools.md#support-matrix)为唯一维护源。
 - 随产品分发的 Skill 与指导文本不出现宿主专属工具名。
 - 宿主相关代码只出现在 setup 适配器中。
 
