@@ -35,9 +35,11 @@ state before it reports delivery completion.
 
 New capability is implemented first in the CLI and the Git guard, and works
 fully with zero host integration. Host hooks only provide prompts and context;
-they do not carry business rules. Each host adaptation states its support
-status and fallback in the installation catalog (`setup --catalog`). Distributed
-Skills and guidance text contain no host-specific tool names. Host-specific
+they do not carry business rules. `setup --catalog` is an offline capability
+catalog, not a per-host support-status list; the [support
+matrix](supported-tools.md#support-matrix) is the only maintained summary of
+per-host status and fallback. Distributed Skills and
+guidance text contain no host-specific tool names. Host-specific
 code lives only in setup adapters. `runtime/tests/architecture.rs` enforces this
 boundary on production source: host names and paths may appear only in the
 current host access surface (`setup`, `project_receipt`, `migration_assets`,

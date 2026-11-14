@@ -174,12 +174,13 @@ specgit setup --agent opencode --json</code></pre><p class="note">回退：重�
       </div>
       <div class="table-scroll reveal" role="region" aria-label="支持矩阵" tabindex="0">
         <table>
-          <thead><tr><th scope="col">宿主</th><th scope="col">指导入口</th><th scope="col">Skill 发现</th><th scope="col">上下文 hooks</th><th scope="col">只读白名单</th><th scope="col">回退</th></tr></thead>
+          <thead><tr><th scope="col">宿主</th><th scope="col">指导入口</th><th scope="col">Skill 发现</th><th scope="col">SpecGit 安装的上下文 hooks</th><th scope="col">只读白名单</th><th scope="col">回退</th></tr></thead>
           <tbody>
             <tr><td><code>generic</code></td><td><code>AGENTS.md</code></td><td>宿主读取 <code>.agents</code> 时用 <code>.agents/skills/specgit-native/SKILL.md</code></td><td>无；declined</td><td>declined：无宿主权限配置</td><td>直接阅读指导与 Skill</td></tr>
+            <tr><td>Pi</td><td><code>AGENTS.md</code>（还读 <code>CLAUDE.md</code> 与 <code>AGENTS.override.md</code>；<code>-nc</code>/<code>--no-context-files</code> 关闭发现）</td><td>从工作目录经各级祖先到仓库根的 <code>.agents/skills</code>，另加 <code>~/.agents/skills</code></td><td>无；未适配（宿主有 TypeScript extensions，SpecGit 不安装 hook）</td><td>declined</td><td>重读指导与 Skill；用 <code>--agent generic</code> 记录覆盖</td></tr>
             <tr><td>Claude Code</td><td><code>CLAUDE.md</code></td><td>规范 <code>.agents</code> Skill 加 <code>.claude/skills/specgit-native/SKILL.md</code></td><td><code>.claude/settings.json</code> SessionStart/PreToolUse</td><td><code>.claude/settings.json</code> <code>permissions.allow</code> 配 <code>--readonly-permissions</code></td><td>重读指导与 Skill</td></tr>
             <tr><td>Codex</td><td><code>AGENTS.md</code>，或已存在的非空 <code>AGENTS.override.md</code></td><td>规范 <code>.agents</code> Skill；从工作目录扫描到仓库根并读 <code>~/.agents/skills</code></td><td><code>.codex/hooks.json</code>；需宿主 <code>/hooks</code> 信任复核</td><td>declined：实验性审批与沙箱</td><td>重读指导与 Skill</td></tr>
-            <tr><td>OpenCode（官方）</td><td><code>AGENTS.md</code></td><td><code>.agents</code> Skill；宿主还读项目 <code>.opencode/</code> 与 <code>.claude/</code> skills</td><td>无；declined</td><td>declined：默认放行，无可移植白名单</td><td>重读指导与 Skill；有界 <code>watch</code>/<code>inbox</code></td></tr>
+            <tr><td>OpenCode（官方）</td><td><code>AGENTS.md</code></td><td><code>.agents</code> Skill；宿主还读项目 <code>.opencode/</code> 与 <code>.claude/</code> skills</td><td>无；未适配（宿主有 plugins，SpecGit 不安装 hook）</td><td>declined：默认放行，无可移植白名单</td><td>重读指导与 Skill；有界 <code>watch</code>/<code>inbox</code></td></tr>
             <tr><td>OpenCode 自定义 fork</td><td><code>AGENTS.md</code></td><td>同官方 OpenCode</td><td><code>.opencode/hooks.json</code> 配 <code>inputFormat: claude-code</code>；需 <code>--agent opencode --opencode-claude-hooks</code> 加显式 hook 用途</td><td>declined</td><td>同官方 OpenCode</td></tr>
           </tbody>
         </table>
@@ -212,9 +213,10 @@ claude plugin marketplace add LeXwDeX/SpecGit
 claude plugin install specgit@specgit-marketplace
 
 # Codex：先添加市场，再在 /plugins 中浏览安装
+# 尚未在本地 Codex 安装中实测
 codex plugin marketplace add LeXwDeX/SpecGit
 
-# Pi、OpenCode 等仅支持 Skill 的宿主
+# Pi、OpenCode 等未安装 SpecGit hooks 的宿主
 specgit init
 specgit skill --user</code></pre>
       </div>
