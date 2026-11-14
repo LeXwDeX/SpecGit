@@ -34,6 +34,12 @@ runs a Windows cross-target lint before pushing:
 and lints only, without linking or running, so it catches `cfg`, platform API and type
 errors but not runtime behavior. This check is local only; GitHub Actions does not run it.
 
+Host load probes are also local only. `runtime/scripts/host-load-probe.py` starts real
+installed hosts against an isolated temporary project and reports `pass`, `fail` or
+`not-installed` per host. Run it before a release that changes setup, host registration,
+Skill or guidance assets, and read it as optional release evidence rather than a CI gate;
+a missing host is not a pass. See the [release checklist](../runtime/distribution/README.md#host-load-verification).
+
 For pushes to main, native CI routes Linux and Windows to the owner's
 self-hosted Azure runners; macOS uses GitHub-hosted `macos-15` ARM64.
 Same-repository PRs use the same Linux route. Fork PRs use GitHub-hosted
