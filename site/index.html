@@ -10,201 +10,232 @@
 <link rel="alternate" hreflang="zh-Hans" href="zh/">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#ff6a3d"/><stop offset="0.5" stop-color="#e85d9e"/><stop offset="1" stop-color="#4d9fff"/>
+</linearGradient>
+</defs></svg>
+
 <header class="site-header">
   <div class="wrap header-inner">
-    <a class="brand" href="./">SpecGit</a>
+    <a class="brand" href="./" aria-label="SpecGit home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect class="mark-bg" x="2" y="2" width="28" height="28" rx="8"/><path d="M10 16.5l4 4 8-9" fill="none" stroke="#0a0e16" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      SpecGit
+    </a>
     <nav aria-label="Main navigation">
-      <a href="#overview">Overview</a>
-      <a href="#install">Install</a>
+      <a href="#workflow">Workflow</a>
       <a href="#hosts">Hosts</a>
-      <a href="#matrix">Support matrix</a>
+      <a href="#matrix">Matrix</a>
       <a href="#download">Download</a>
-      <a href="#docs">Documentation</a>
+      <a href="#docs">Docs</a>
       <a class="language" href="zh/" hreflang="zh-Hans" lang="zh-Hans">中文</a>
+      <a class="gh-cta" href="https://github.com/LeXwDeX/SpecGit">GitHub</a>
     </nav>
   </div>
 </header>
 
 <main>
   <section class="hero" id="overview">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">Spec · Build · Verify · Ship</p>
+        <h1>From issue spec to <span class="grad">verified delivery.</span></h1>
+        <p class="lead">SpecGit gives coding agents one shared delivery workflow for GitHub and GitLab. Issues hold the specification, a native PR or MR gathers the work, and SpecGit reads the forge's live state so an agent can repair failures and tell pending work from completed delivery.</p>
+        <p class="actions">
+          <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+            Download latest
+          </a>
+          <a class="button" href="#workflow">See the pipeline</a>
+          <a class="button" href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">Read the README</a>
+        </p>
+      </div>
+      <div class="hero-stage">
+        <span class="chip-float c1"><span class="dot" style="background:var(--green)"></span>verified</span>
+        <span class="chip-float c2"><span class="dot" style="background:var(--amber)"></span>checkpoint</span>
+        <span class="chip-float c3"><span class="dot" style="background:var(--cyan)"></span>CI green</span>
+        <div class="terminal" role="img" aria-label="Terminal showing a SpecGit delivery from issue to verified merge">
+          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">specgit — delivery</span></div>
+          <div class="term-body">
+            <span class="term-line"><span class="term-prompt">$</span> <span class="term-cmd">specgit issue 906 --branch feat/title-scope</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">checkpoint selected ·</span> <span class="term-key">Issue #906</span></span>
+            <span class="term-line"><span class="term-prompt">$</span> <span class="term-cmd">specgit pr --ready</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">PR #909 ready · target</span> <span class="term-key">main</span></span>
+            <span class="term-line"><span class="term-prompt">$</span> <span class="term-cmd">specgit watch --checks</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">Required verification ·</span> <span class="term-ok">success</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">SpecGit Acceptance ·</span> <span class="term-ok">success</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">merged ·</span> <span class="term-key">#906</span> <span class="term-out">closed ·</span> <span class="term-ok">verified</span><span class="cursor"></span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="workflow" class="pipeline">
     <div class="wrap">
-      <p class="eyebrow">Issue specifications → code changes → native PR/MR → verified completion</p>
-      <h1>SpecGit</h1>
-      <p class="lead">SpecGit gives coding agents a shared delivery workflow for GitHub and GitLab. Issues hold the specification. A native PR or MR gathers the selected Issues and the implementation. SpecGit reads the forge's current state so the agent can repair failures and distinguish pending work from completed delivery.</p>
-      <p class="actions">
-        <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">Download the latest release</a>
-        <a class="button" href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">Read the README</a>
-        <a class="button" href="https://github.com/LeXwDeX/SpecGit/wiki">Browse the Wiki</a>
-      </p>
+      <div class="section-head reveal">
+        <p class="section-tag">The delivery pipeline</p>
+        <h2>One issue, one traceable path to production.</h2>
+        <p>Every commit binds to a selected Issue through a local checkpoint. SpecGit aggregates the native PR/MR and observes the platform, so delivery is verified against live state — never assumed.</p>
+      </div>
+      <div class="pipe-track">
+        <div class="stage s-issue reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg><span class="stage-num">01</span></div>
+          <div class="stage-card"><h3>Issue specification <span class="pill">spec</span></h3><p>The Issue holds Why / Scope / Approach / Acceptance. <code>specgit issue --inspect</code> deduplicates the WHY before anything is created.</p></div>
+        </div>
+        <div class="stage s-check reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6-5.2-6-10a6 6 0 1112 0c0 4.8-6 10-6 10z"/><circle cx="12" cy="11" r="2.4"/></svg><span class="stage-num">02</span></div>
+          <div class="stage-card"><h3>Local checkpoint <span class="pill">bind</span></h3><p>A checkpoint records the selected Issue on the branch. The native Git guard checks it and the <code>Issue: #N</code> trailer on every commit and push.</p></div>
+        </div>
+        <div class="stage s-pr reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M6 8.6v6.8M18 15.4V9a3 3 0 00-3-3h-3"/></svg><span class="stage-num">03</span></div>
+          <div class="stage-card"><h3>Native PR / MR <span class="pill">build</span></h3><p>The agent implements and <code>specgit pr</code> gathers the selected Issues into one native request, preserving closing references and the PR template.</p></div>
+        </div>
+        <div class="stage s-ci reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg><span class="stage-num">04</span></div>
+          <div class="stage-card"><h3>CI &amp; review <span class="pill">observe</span></h3><p><code>specgit watch</code> and <code>pr --status</code> read the current head's checks and reviews. Failures are repaired in scope, never by weakening protection.</p></div>
+        </div>
+        <div class="stage s-merge reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="12" r="2.6"/><path d="M6 8.6v6.8M8.6 6H12a3 3 0 013 3v.4"/></svg><span class="stage-num">05</span></div>
+          <div class="stage-card"><h3>Merge <span class="pill">ship</span></h3><p>When required checks pass and the head is clean, the request merges on the platform. SpecGit reads back the merge — exit code 0 alone is never completion.</p></div>
+        </div>
+        <div class="stage s-verify reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span class="stage-num">06</span></div>
+          <div class="stage-card"><h3>Verified closure <span class="pill">verify</span></h3><p>Delivery is confirmed only when the target branch merged and every associated Issue is closed with native evidence — not by a local guess.</p></div>
+        </div>
+        <div class="stage s-release reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M14 4c3-2 7-2 7-2s0 4-2 7l-7 7-5-5z"/><circle cx="15" cy="9" r="1.6"/></svg><span class="stage-num">07</span></div>
+          <div class="stage-card"><h3>Signed release <span class="pill">release</span></h3><p>A separate, signed GitHub Release publishes three-platform ZIPs with a Cosign-signed <code>SHA256SUMS</code>. Merging is not releasing.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="principles">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="section-tag">Product principles</p>
+        <h2>Host-neutral by design.</h2>
+        <p>Capability lives in the CLI and the native Git guard first. Hosts only add prompts and context — they never carry business rules.</p>
+      </div>
+      <div class="grid">
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><h3>Zero-host usable</h3><p>A project works with no host integration at all. The shared CLI and Git guard deliver the full workflow on their own.</p></article>
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg></div><h3>Native Git guard</h3><p>Pre-commit and pre-push checks bind every commit to a selected Issue. No <code>--no-verify</code>, no weakened protection.</p></article>
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div><h3>Live-state verification</h3><p>SpecGit reads the forge's current state to distinguish pending work from completed delivery, and to repair failures in scope.</p></article>
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg></div><h3>Managed host assets</h3><p>Host guidance, hooks and read-only allowlists are explicit, owned, refreshable and removable — never global state.</p></article>
+      </div>
     </div>
   </section>
 
   <section id="install">
     <div class="wrap">
-      <h2>Install</h2>
-      <p>Open your coding agent in the repository you want to use with SpecGit and ask it to read and follow the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">agent installation guide</a>. The guide downloads the latest stable signed GitHub Release, verifies its signature and SHA-256, installs the shared CLI, and initializes the project.</p>
-      <p>One user-level executable serves every repository and worktree. End-user installation needs no Node.js, npm or Rust compiler; repository work needs Git and an authenticated <code>gh</code> or <code>glab</code>. GitHub Releases is the only distribution channel.</p>
-      <p>After installation, initialize each clone or worktree separately and inspect the offline capability catalog:</p>
-      <pre><code>specgit init --provider github --remote origin --check --json
+      <div class="section-head reveal">
+        <p class="section-tag">Install</p>
+        <h2>One executable, every repository.</h2>
+        <p>Open your coding agent in the repository and ask it to follow the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">agent installation guide</a>. It downloads the latest signed GitHub Release, verifies the signature and SHA-256, installs the shared CLI and initializes the project. No Node.js, npm or Rust compiler needed.</p>
+      </div>
+      <div class="reveal">
+        <pre><code>specgit init --provider github --remote origin --check --json
 specgit init --provider github --remote origin --dry-run --json
 specgit init --provider github --remote origin --json
 specgit setup --catalog --json</code></pre>
-      <p>Already installed? Use the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">project maintenance guide</a> instead of repeating the first-install procedure.</p>
+        <p class="note">Already installed? Use the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">project maintenance guide</a>. GitHub Releases is the only distribution channel.</p>
+      </div>
     </div>
   </section>
 
   <section id="hosts">
     <div class="wrap">
-      <h2>Host quick start</h2>
-      <p>SpecGit capability lives in the shared CLI and the native Git guard, so a project works with zero host integration. Naming a host with <code>--agent</code> adds its guidance and Skill only; hooks and managed read-only permissions are separate explicit choices. Preview with <code>--dry-run</code>, then repeat the command without it to apply.</p>
+      <div class="section-head reveal">
+        <p class="section-tag">Host quick start</p>
+        <h2>Bring your own agent.</h2>
+        <p>Naming a host with <code>--agent</code> adds its guidance and Skill only; hooks and managed read-only permissions are separate explicit choices. Preview with <code>--dry-run</code>, then repeat without it to apply.</p>
+      </div>
       <div class="grid">
-        <article class="card">
-          <h3>Generic</h3>
-          <p>Guidance entry in <code>AGENTS.md</code> and the canonical <code>.agents/skills/specgit-native/SKILL.md</code>. No host callbacks; the native Git guard still applies on commit and push.</p>
-          <pre><code>specgit setup --agent generic --dry-run --json
-specgit setup --agent generic --json</code></pre>
-          <p class="note">Fallback: read the guidance and Skill directly. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#generic">Supported Hosts</a>.</p>
-        </article>
-
-        <article class="card">
-          <h3>Claude Code</h3>
-          <p>Root <code>CLAUDE.md</code> entry, the canonical <code>.agents</code> Skill, and a <code>.claude/skills/specgit-native/SKILL.md</code> copy. Context hooks and the managed read-only allowlist are optional.</p>
-          <pre><code>specgit setup --agent claude --dry-run --json
+        <article class="card h-generic reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><h3>Generic</h3><p>Guidance in <code>AGENTS.md</code> and the canonical <code>.agents/skills/specgit-native/SKILL.md</code>. No host callbacks; the Git guard still applies.</p><pre><code>specgit setup --agent generic --dry-run --json
+specgit setup --agent generic --json</code></pre><p class="note">Fallback: read guidance and Skill directly. <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#generic">Supported Hosts</a>.</p></article>
+        <article class="card h-claude reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg></div><h3>Claude Code</h3><p>Root <code>CLAUDE.md</code>, the canonical <code>.agents</code> Skill plus a <code>.claude/skills</code> copy. Context hooks and the managed read-only allowlist are optional.</p><pre><code>specgit setup --agent claude --dry-run --json
 specgit setup --agent claude --json
-specgit setup --agent claude --hook-purpose context --dry-run --json
-specgit setup --agent claude --hook-purpose context --json
-specgit setup --agent claude --readonly-permissions --dry-run --json
-specgit setup --agent claude --readonly-permissions --json</code></pre>
-          <p class="note">The allowlist reduces prompts; it is not a sandbox or an authorization boundary. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#claude-code">Supported Hosts</a>.</p>
-        </article>
-
-        <article class="card">
-          <h3>Codex</h3>
-          <p>Canonical <code>.agents</code> Skill and a guidance entry in <code>AGENTS.md</code>, or in an existing nonempty <code>AGENTS.override.md</code>. Context hooks go to <code>.codex/hooks.json</code>.</p>
-          <pre><code>specgit setup --agent codex --hook-purpose context --dry-run --json
-specgit setup --agent codex --hook-purpose context --json</code></pre>
-          <p class="note">Trust the project <code>.codex/</code> layer in the host's <code>/hooks</code> review; registration is reported as <code>written_not_verified</code> until the host imports it. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#codex">Supported Hosts</a>.</p>
-        </article>
-
-        <article class="card">
-          <h3>OpenCode</h3>
-          <p>The official build receives the root <code>AGENTS.md</code> entry and the <code>.agents</code> Skill; context hooks are declined. A custom fork supporting Claude-compatible command hooks can opt in explicitly.</p>
-          <pre><code>specgit setup --agent opencode --dry-run --json
-specgit setup --agent opencode --json
-# Custom fork only:
-specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --dry-run --json
-specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --json</code></pre>
-          <p class="note">Fallback: re-read the guidance and Skill and use bounded <code>watch</code>/<code>inbox</code>; the Git guard remains independent. Details: <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#opencode">Supported Hosts</a>.</p>
-        </article>
+specgit setup --agent claude --readonly-permissions --json</code></pre><p class="note">The allowlist reduces prompts; it is not a sandbox. <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#claude-code">Supported Hosts</a>.</p></article>
+        <article class="card h-codex reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg></div><h3>Codex</h3><p>Canonical <code>.agents</code> Skill and guidance in <code>AGENTS.md</code> or an existing nonempty <code>AGENTS.override.md</code>. Context hooks go to <code>.codex/hooks.json</code>.</p><pre><code>specgit setup --agent codex --hook-purpose context --dry-run --json
+specgit setup --agent codex --hook-purpose context --json</code></pre><p class="note">Trust the <code>.codex/</code> layer in the host's <code>/hooks</code> review. <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#codex">Supported Hosts</a>.</p></article>
+        <article class="card h-opencode reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></div><h3>OpenCode</h3><p>The official build gets the <code>AGENTS.md</code> entry and <code>.agents</code> Skill; context hooks are declined. A custom fork can opt into Claude-compatible hooks.</p><pre><code>specgit setup --agent opencode --dry-run --json
+specgit setup --agent opencode --json</code></pre><p class="note">Fallback: re-read guidance and use bounded <code>watch</code>/<code>inbox</code>. <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#opencode">Supported Hosts</a>.</p></article>
       </div>
     </div>
   </section>
 
   <section id="matrix">
     <div class="wrap">
-      <h2>Support matrix</h2>
-      <p>The maintained summary lives in <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">Supported coding agents</a> and <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts">Supported Hosts</a>; the linked documents are authoritative.</p>
-      <div class="table-scroll" role="region" aria-label="Support matrix" tabindex="0">
+      <div class="section-head reveal">
+        <p class="section-tag">Support matrix</p>
+        <h2>What each host gets.</h2>
+        <p>The maintained summary lives in <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">Supported coding agents</a> and <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts">Supported Hosts</a>; the linked documents are authoritative.</p>
+      </div>
+      <div class="table-scroll reveal" role="region" aria-label="Support matrix" tabindex="0">
         <table>
-          <thead>
-            <tr>
-              <th scope="col">Host</th>
-              <th scope="col">Guidance entry</th>
-              <th scope="col">Skill discovery</th>
-              <th scope="col">Context hooks</th>
-              <th scope="col">Read-only allowlist</th>
-              <th scope="col">Fallback</th>
-            </tr>
-          </thead>
+          <thead><tr><th scope="col">Host</th><th scope="col">Guidance entry</th><th scope="col">Skill discovery</th><th scope="col">Context hooks</th><th scope="col">Read-only allowlist</th><th scope="col">Fallback</th></tr></thead>
           <tbody>
-            <tr>
-              <td><code>generic</code></td>
-              <td><code>AGENTS.md</code></td>
-              <td><code>.agents/skills/specgit-native/SKILL.md</code> when the host reads <code>.agents</code></td>
-              <td>none; declined</td>
-              <td>declined: no host permission configuration</td>
-              <td>Read guidance and the Skill directly</td>
-            </tr>
-            <tr>
-              <td>Claude Code</td>
-              <td><code>CLAUDE.md</code></td>
-              <td>Canonical <code>.agents</code> Skill plus <code>.claude/skills/specgit-native/SKILL.md</code></td>
-              <td><code>.claude/settings.json</code> SessionStart/PreToolUse</td>
-              <td><code>.claude/settings.json</code> <code>permissions.allow</code> with <code>--readonly-permissions</code></td>
-              <td>Re-read guidance and Skill</td>
-            </tr>
-            <tr>
-              <td>Codex</td>
-              <td><code>AGENTS.md</code>, or an existing nonempty <code>AGENTS.override.md</code></td>
-              <td>Canonical <code>.agents</code> Skill; Codex scans it from the working directory to the repository root and also reads <code>~/.agents/skills</code></td>
-              <td><code>.codex/hooks.json</code>; requires the host <code>/hooks</code> trust review</td>
-              <td>declined: experimental approval and sandbox</td>
-              <td>Re-read guidance and Skill</td>
-            </tr>
-            <tr>
-              <td>OpenCode (official)</td>
-              <td><code>AGENTS.md</code></td>
-              <td><code>.agents</code> Skill; the host also reads project <code>.opencode/</code> and <code>.claude/</code> skills</td>
-              <td>none; declined</td>
-              <td>declined: default-allow, no portable allowlist</td>
-              <td>Re-read guidance and Skill; bounded <code>watch</code>/<code>inbox</code></td>
-            </tr>
-            <tr>
-              <td>OpenCode custom fork</td>
-              <td><code>AGENTS.md</code></td>
-              <td>Same as official OpenCode</td>
-              <td><code>.opencode/hooks.json</code> with <code>inputFormat: claude-code</code>; requires <code>--agent opencode --opencode-claude-hooks</code> plus an explicit hook purpose</td>
-              <td>declined</td>
-              <td>Same as official OpenCode</td>
-            </tr>
+            <tr><td><code>generic</code></td><td><code>AGENTS.md</code></td><td><code>.agents/skills/specgit-native/SKILL.md</code> when the host reads <code>.agents</code></td><td>none; declined</td><td>declined: no host permission configuration</td><td>Read guidance and the Skill directly</td></tr>
+            <tr><td>Claude Code</td><td><code>CLAUDE.md</code></td><td>Canonical <code>.agents</code> Skill plus <code>.claude/skills/specgit-native/SKILL.md</code></td><td><code>.claude/settings.json</code> SessionStart/PreToolUse</td><td><code>.claude/settings.json</code> <code>permissions.allow</code> with <code>--readonly-permissions</code></td><td>Re-read guidance and Skill</td></tr>
+            <tr><td>Codex</td><td><code>AGENTS.md</code>, or an existing nonempty <code>AGENTS.override.md</code></td><td>Canonical <code>.agents</code> Skill; scans working directory to repo root and <code>~/.agents/skills</code></td><td><code>.codex/hooks.json</code>; requires host <code>/hooks</code> trust review</td><td>declined: experimental approval and sandbox</td><td>Re-read guidance and Skill</td></tr>
+            <tr><td>OpenCode (official)</td><td><code>AGENTS.md</code></td><td><code>.agents</code> Skill; host also reads project <code>.opencode/</code> and <code>.claude/</code> skills</td><td>none; declined</td><td>declined: default-allow, no portable allowlist</td><td>Re-read guidance and Skill; bounded <code>watch</code>/<code>inbox</code></td></tr>
+            <tr><td>OpenCode custom fork</td><td><code>AGENTS.md</code></td><td>Same as official OpenCode</td><td><code>.opencode/hooks.json</code> with <code>inputFormat: claude-code</code>; requires <code>--agent opencode --opencode-claude-hooks</code> plus an explicit hook purpose</td><td>declined</td><td>Same as official OpenCode</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="note"><code>guard</code> is the native Git pre-commit/pre-push check, not a host callback. It applies to every host, including generic, through <code>setup --hook-purpose guard</code> or <code>specgit guard --install</code>. Context hooks only prompt and provide context; they never carry business rules.</p>
+      <p class="note reveal"><code>guard</code> is the native Git pre-commit/pre-push check, not a host callback. It applies to every host, including generic, through <code>setup --hook-purpose guard</code> or <code>specgit guard --install</code>. Context hooks only prompt and provide context; they never carry business rules.</p>
     </div>
   </section>
 
   <section id="download">
     <div class="wrap">
-      <h2>Download</h2>
-      <p>SpecGit is distributed only through <a href="https://github.com/LeXwDeX/SpecGit/releases/latest">GitHub Releases</a>. The latest stable release provides:</p>
-      <ul>
-        <li><code>specgit-&lt;version&gt;-darwin-arm64.zip</code> — macOS arm64</li>
-        <li><code>specgit-&lt;version&gt;-linux-x64-gnu.zip</code> — Linux x64 glibc</li>
-        <li><code>specgit-&lt;version&gt;-win32-x64.zip</code> — Windows x64</li>
-        <li><code>SHA256SUMS</code> and <code>SHA256SUMS.sigstore.json</code> — checksum manifest and its Sigstore signature bundle</li>
-      </ul>
-      <p>Verify the signature and SHA-256 with the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">release asset verification reference</a>. The signature covers <code>SHA256SUMS</code> and therefore the ZIP bytes; cross-check the tag commit and the native build workflow run separately.</p>
-      <p class="actions">
-        <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">Open the latest release</a>
-      </p>
+      <div class="section-head reveal">
+        <p class="section-tag">Download</p>
+        <h2>Signed, three-platform releases.</h2>
+        <p>SpecGit is distributed only through <a href="https://github.com/LeXwDeX/SpecGit/releases/latest">GitHub Releases</a>. The latest stable release provides:</p>
+      </div>
+      <div class="dl-grid">
+        <div class="dl-card reveal"><div class="os"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.8c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.7-.1 0-2.5-1-2.5-3.7zM14.1 5.9c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.8 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.8-1.3z"/></svg></div><h3>macOS</h3><p class="arch">specgit-&lt;version&gt;-darwin-arm64.zip</p></div>
+        <div class="dl-card reveal"><div class="os"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c-2.2 0-3.5 1.6-3.5 4 0 1.5.4 2.6.4 4 0 1-.6 1.8-1.4 3-.9 1.3-2 2.8-2 4.6 0 .6.2 1.1.5 1.5-.3.2-.5.5-.5.9 0 .8 1 1.3 2.6 1.6.5.1 1 .4 1.4.7.5.4 1.2.7 2.5.7s2-.3 2.5-.7c.4-.3.9-.6 1.4-.7 1.6-.3 2.6-.8 2.6-1.6 0-.4-.2-.7-.5-.9.3-.4.5-.9.5-1.5 0-1.8-1.1-3.3-2-4.6-.8-1.2-1.4-2-1.4-3 0-1.4.4-2.5.4-4 0-2.4-1.3-4-3.5-4z"/></svg></div><h3>Linux</h3><p class="arch">specgit-&lt;version&gt;-linux-x64-gnu.zip</p></div>
+        <div class="dl-card reveal"><div class="os"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3zM11.5 4.3L21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg></div><h3>Windows</h3><p class="arch">specgit-&lt;version&gt;-win32-x64.zip</p></div>
+      </div>
+      <div class="verify-box reveal">
+        <p class="label"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Verify before installing</p>
+        <p style="margin:0;color:var(--muted);font-size:0.92rem">Each release ships <code>SHA256SUMS</code> and <code>SHA256SUMS.sigstore.json</code>. The Cosign signature covers <code>SHA256SUMS</code> and therefore the ZIP bytes; cross-check the tag commit and the native build workflow run separately. See the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">release asset verification reference</a>.</p>
+      </div>
+      <p class="actions reveal"><a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">Open the latest release</a></p>
     </div>
   </section>
 
   <section id="docs">
     <div class="wrap">
-      <h2>Documentation</h2>
-      <ul class="docs-list">
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">README: product, installation and workflow</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">Agent installation and initialization</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">Installed-CLI project maintenance</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">Supported coding agents and discovery boundaries</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">Release asset verification reference</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md">Native commands, configuration and JSON contract</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/assets/SKILL.md">SpecGit Skill workflow</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md">Migration from v1</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/distribution/README.md">Release procedure and recovery</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/CONTEXT.md">Current glossary</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/wiki">English Wiki</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/wiki/Home-zh">中文 Wiki</a></li>
-      </ul>
+      <div class="section-head reveal">
+        <p class="section-tag">Documentation</p>
+        <h2>Go deeper.</h2>
+      </div>
+      <div class="docs-grid reveal">
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12v18H6a2 2 0 01-2-2z"/><path d="M8 7h8M8 11h8"/></svg></span>README: product, installation and workflow<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg></span>Agent installation and initialization<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 11-2.3-5.6M20 4v4h-4"/></svg></span>Installed-CLI project maintenance<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg></span>Supported coding agents and discovery boundaries<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg></span>Release asset verification reference<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg></span>Native commands, configuration and JSON contract<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/assets/SKILL.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg></span>SpecGit Skill workflow<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h12l-3-3M20 17H8l3 3"/></svg></span>Migration from v1<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/distribution/README.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M14 4c3-2 7-2 7-2s0 4-2 7l-7 7-5-5z"/></svg></span>Release procedure and recovery<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/CONTEXT.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>Current glossary<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/wiki"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12v18H6a2 2 0 01-2-2z"/></svg></span>English Wiki<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/wiki/Home-zh"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12v18H6a2 2 0 01-2-2z"/></svg></span>中文 Wiki<span class="arr">→</span></a>
+      </div>
     </div>
   </section>
 </main>
 
 <footer class="site-footer">
   <div class="wrap">
-    <p>SpecGit is released under the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/LICENSE">MIT License</a>. This static site has no analytics, tracking scripts or third-party assets; the linked repository documents are the source of truth.</p>
+    <span class="foot-brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="mark-bg" x="2" y="2" width="28" height="28" rx="8"/><path d="M10 16.5l4 4 8-9" fill="none" stroke="#0a0e16" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>SpecGit</span>
+    <p>Released under the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/LICENSE">MIT License</a>. This static site has no analytics, tracking scripts or third-party assets; the linked repository documents are the source of truth.</p>
   </div>
 </footer>
 </body>
