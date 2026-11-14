@@ -1,8 +1,10 @@
+> Historical archive. Not current version status or active instructions.
+
 > **Historical qualification snapshot, 2026-09-10.** All statuses, authorizations,
 > local paths and blockers below belong to that snapshot. They are not current
 > release status or permission for another task. npm and the old controller
-> workflows are retired. Use the [current native reference](REFERENCE.md),
-> [CI scope](../docs/ci-scope.md) and [release procedure](distribution/README.md).
+> workflows are retired. Use the [current native reference](../../../runtime/REFERENCE.md),
+> [CI scope](../../ci-scope.md) and [release procedure](../../../runtime/distribution/README.md).
 
 # Lightweight Rust implementation evidence
 
@@ -125,11 +127,11 @@ inventory, not 318 implemented regressions.
 
 | Former runtime/test responsibility | Current disposition and retained checks |
 | --- | --- |
-| `assessment.rs`, `native_requirements.rs`, old assessment tests | Local acceptance/required-check rules retired. Typed [observation](src/observation.rs) and [observation tests](tests/observation.rs) retain missing/invalid facts, native lifecycle and check identity; they do not calculate eligibility. F25/F26/F27 map to L08/L13. |
-| `finish.rs` and old finish tests | Command removed. Relevant scenarios move to [native_status tests](tests/native_status.rs): current facts, failed reads, stale heads, partial pages, merge versus actual Issue state and association discrepancies. Candidate-approved required-check gating is retired, not silently considered tested. |
-| `merge.rs`, `native_settings.rs` and old merge tests | Core writes/gates/recovery retired. [Retired-command tests](tests/retired_commands.rs) check no native access; init tests check explicit capability choices. Actual merge/settings work belongs to authorized native Agent/admin operations. F09/F29/F30 are not inherited as Rust controllers. |
+| `assessment.rs`, `native_requirements.rs`, old assessment tests | Local acceptance/required-check rules retired. Typed [observation](../../../runtime/src/observation.rs) and [observation tests](../../../runtime/tests/observation.rs) retain missing/invalid facts, native lifecycle and check identity; they do not calculate eligibility. F25/F26/F27 map to L08/L13. |
+| `finish.rs` and old finish tests | Command removed. Relevant scenarios move to [native_status tests](../../../runtime/tests/native_status.rs): current facts, failed reads, stale heads, partial pages, merge versus actual Issue state and association discrepancies. Candidate-approved required-check gating is retired, not silently considered tested. |
+| `merge.rs`, `native_settings.rs` and old merge tests | Core writes/gates/recovery retired. [Retired-command tests](../../../runtime/tests/retired_commands.rs) check no native access; init tests check explicit capability choices. Actual merge/settings work belongs to authorized native Agent/admin operations. F09/F29/F30 are not inherited as Rust controllers. |
 | `promotion.rs` and old promotion tests | Dedicated range/postimage/promotion inference retired. Ordinary selected/native Issue associations remain under Issue/PR and observation tests. No substitute stage-closing engine; F38/F48 remain retired runtime responsibilities. |
-| Actions job/suite ownership reconstruction and GitLab child/DAG expansion | Removed from [native_checks](src/native_checks.rs). Native latest pending result is not replaced by old Actions green; incomplete pages/duplicate objects remain unknown; MR head pipeline failure is shown without expanding child jobs. Missing pipeline identity differs from explicit null. This is a narrower observation contract, not equivalent DAG coverage. |
+| Actions job/suite ownership reconstruction and GitLab child/DAG expansion | Removed from [native_checks](../../../runtime/src/native_checks.rs). Native latest pending result is not replaced by old Actions green; incomplete pages/duplicate objects remain unknown; MR head pipeline failure is shown without expanding child jobs. Missing pipeline identity differs from explicit null. This is a narrower observation contract, not equivalent DAG coverage. |
 
 The removal inventory is the `git diff` against source baseline
 `3eb47278459db71a5d29ddd1b25ee1bfa15ca23c`:

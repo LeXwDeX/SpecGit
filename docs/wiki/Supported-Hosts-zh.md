@@ -1,19 +1,21 @@
 # 支持的宿主
 
 SpecGit 的新能力先在共享 CLI 和原生 Git guard 中实现，因此项目即使零宿主集成也能
-完整工作。宿主 hooks 只提供提示和上下文，不承载业务规则。每个宿主适配都在
-`specgit setup --catalog --json` 中声明支持状态与回退方式。完整细节和发现边界见
+完整工作。宿主 hooks 只提供提示和上下文，不承载业务规则。
+`specgit setup --catalog --json` 输出离线能力清单，列出可安装项、要求与回退。
+维护中的支持状态和发现边界见
 [支持的编码 Agent](https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix)。
 
 ## 支持矩阵
 
-| 宿主 | 指导入口 | Skill 发现 | 上下文 hooks | 受管只读白名单 | 回退 |
-| --- | --- | --- | --- | --- | --- |
-| `generic` | `AGENTS.md` | 宿主读取 `.agents` 时使用 `.agents/skills/specgit-native/SKILL.md` | 无；不支持 | 不支持：宿主没有权限配置 | 直接阅读指导与 Skill |
-| Claude Code | `CLAUDE.md` | 规范 `.agents` Skill，另有 `.claude/skills/specgit-native/SKILL.md` | `.claude/settings.json` 的 SessionStart/PreToolUse | 用 `--readonly-permissions` 写入 `.claude/settings.json` 的 `permissions.allow` | 重读指导与 Skill |
-| Codex | `AGENTS.md`，或已存在的非空 `AGENTS.override.md` | 规范 `.agents` Skill；Codex 从工作目录向上扫描到仓库根，并读取 `~/.agents/skills` | `.codex/hooks.json`；须在宿主 `/hooks` 中信任项目层 | 不支持：审批与沙箱仍属实验性 | 重读指导与 Skill |
-| OpenCode（官方） | `AGENTS.md` | `.agents` Skill；宿主还读取项目 `.opencode/` 与 `.claude/` skills | 无；不支持 | 不支持：默认放行，无可移植白名单 | 重读指导与 Skill；使用有界 `watch`/`inbox` |
-| OpenCode 自定义 fork | `AGENTS.md` | 同官方 OpenCode | `.opencode/hooks.json`，`inputFormat: claude-code`；须 `--agent opencode --opencode-claude-hooks` 并显式指定 hook 用途 | 不支持 | 同官方 OpenCode |
+完整支持矩阵（指导入口、Skill 发现、SpecGit 安装的上下文 hooks、受管只读白名单与
+回退）只在
+[支持的编码 Agent](https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix)
+维护。
+
+支持的宿主接入：`generic`、Pi、Claude Code、Codex、官方 OpenCode，以及使用
+`--opencode-claude-hooks` 的自定义 OpenCode fork。Pi 与官方 OpenCode 不需要
+`--agent`：`specgit init` 已安装 `AGENTS.md` 与规范 `.agents` Skill。
 
 `guard` 是原生 Git pre-commit/pre-push 检查，不是宿主回调。它对所有宿主生效，
 包括 generic：用 `setup --hook-purpose guard` 或 `specgit guard --install` 安装。

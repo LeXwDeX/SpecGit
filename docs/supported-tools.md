@@ -24,10 +24,11 @@ unknown optional remote capability does not block applicable local refresh.
 
 New capability lands in the CLI and the native Git guard first and works fully
 with zero host integration. Host hooks only supply prompts and context; they do
-not carry business rules. Each host adaptation states its support status and
-fallback in the installation catalog (`specgit setup --catalog --json`), and the
-matrix below is the maintained summary. Host discovery boundaries and dated
-evidence follow.
+not carry business rules. `specgit setup --catalog --json` prints the offline
+capability catalog of installable items, requirements and fallbacks; it is not a
+per-host support-status list. The matrix below is the only maintained summary of
+each host adaptation's support status and fallback. Host discovery boundaries
+and dated evidence follow.
 
 Project integration remains project-only. The only user-level asset is the
 explicitly installed Skill file; no global hooks, state or receipts.
@@ -45,13 +46,21 @@ or `--hook-purpose context` for supported SessionStart/PreToolUse context. An
 omitted purpose leaves existing recorded choices unchanged. Use
 `--hook-purpose none` when adding guidance without hooks.
 
-| Host | Guidance entry | Skill discovery | Context hooks | Read-only allowlist | Fallback |
+| Host | Guidance entry | Skill discovery | SpecGit-installed context hooks | Read-only allowlist | Fallback |
 | --- | --- | --- | --- | --- | --- |
 | `generic` | `AGENTS.md` | `.agents/skills/specgit-native/SKILL.md` when the host reads `.agents` | none; declined | declined: no host permission configuration | Read guidance and the Skill directly |
+| Pi | `AGENTS.md` (also reads `CLAUDE.md` and `AGENTS.override.md`; `-nc`/`--no-context-files` disables discovery) | `.agents/skills` from the working directory through ancestors to the repository root, plus `~/.agents/skills` | none; not adapted (the host has TypeScript extensions, SpecGit installs no hook) | declined | Re-read guidance and Skill |
 | `claude` | `CLAUDE.md` | Canonical `.agents` Skill plus `.claude/skills/specgit-native/SKILL.md` | `.claude/settings.json` SessionStart/PreToolUse | `.claude/settings.json` `permissions.allow` with `--readonly-permissions` | Re-read guidance and Skill |
 | `codex` | `AGENTS.md`, or an existing nonempty `AGENTS.override.md` | Canonical `.agents` Skill; Codex scans it from the working directory to the repository root and also reads `~/.agents/skills` | `.codex/hooks.json`; requires the host `/hooks` trust review | declined: experimental approval and sandbox | Re-read guidance and Skill |
-| `opencode` (official) | `AGENTS.md` | `.agents` Skill; the host also reads project `.opencode/` and `.claude/` skills | none; declined | declined: default-allow, no portable allowlist | Re-read guidance and Skill; bounded `watch`/`inbox` |
+| `opencode` (official) | `AGENTS.md` | `.agents` Skill; the host also reads project `.opencode/` and `.claude/` skills | none; not adapted (the host has plugins, SpecGit installs no hook) | declined: default-allow, no portable allowlist | Re-read guidance and Skill; bounded `watch`/`inbox` |
 | `opencode` custom fork with `--opencode-claude-hooks` | `AGENTS.md` | Same as official OpenCode | `.opencode/hooks.json` with `inputFormat: claude-code`; requires `--agent opencode` plus an explicit hook purpose | declined | Same as official OpenCode |
+
+"SpecGit-installed context hooks" describes only what SpecGit installs. Pi
+extensions and OpenCode plugins are host capabilities that this integration does
+not adapt; the zero-integration fallback stays available. Pi and official
+OpenCode need no `--agent`: `specgit init` installs `AGENTS.md` and the canonical
+`.agents` Skill. Use `--agent generic` to record that coverage explicitly; there
+is no `--agent pi` selection.
 
 `guard` is the native Git pre-commit/pre-push check, not a host callback. It
 applies to every host, including generic, through `setup --hook-purpose guard`
@@ -202,17 +211,18 @@ the [native runtime reference](../runtime/REFERENCE.md). The installed
 
 ## Candidate host evaluation
 
-On 2026-11-14 we reviewed first-party documentation for eight additional coding
-agents against the same dimensions as the matrix above: guidance entry, Skill
-discovery, hooks and non-interactive verification. These are documentation
-evaluations, not live host qualifications; written support does not prove host
-import, context delivery or prompt behavior. None of these hosts is a supported
-`--agent` selection. Where `generic` already covers the host's documented
-guidance and Skill paths, no adapter is needed.
+On 2026-11-14 we reviewed first-party documentation for additional coding agents
+against the same dimensions as the matrix above: guidance entry, Skill discovery,
+hooks and non-interactive verification. Pi is listed in the matrix because
+`generic` already covers its documented guidance and Skill paths; it needs no
+adapter. The table below covers the seven candidates that still need a decision.
+These are documentation evaluations, not live host qualifications; written
+support does not prove host import, context delivery or prompt behavior. None of
+these hosts is a supported `--agent` selection. Where `generic` already covers
+the host's documented guidance and Skill paths, no adapter is needed.
 
 | Host | Guidance entry | Skill discovery | Hooks | Non-interactive check | Conclusion |
 | --- | --- | --- | --- | --- | --- |
-| Pi | `AGENTS.md` by default; also reads `CLAUDE.md` and `AGENTS.override.md`; `-nc`/`--no-context-files` disables discovery | `.agents/skills/` from the working directory through ancestors to the repository root, plus `~/.agents/skills` | TypeScript extensions in `.pi/extensions/` or `~/.pi/agent/extensions/`; `session_start`, `before_agent_start`, `tool_call` (can block); project-local extensions load only after project trust | `pi -p "..."`; `pi --mode json "..."` writes JSONL events | Covered by `generic`; no `.pi/` assets needed |
 | Cursor | `AGENTS.md` in the project root and subdirectories; `.cursor/rules/*.mdc` | `.agents/skills/`, `.cursor/skills/`; also `.claude/skills/` and `.codex/skills/` | `.cursor/hooks.json`; `sessionStart`, `preToolUse`, `postToolUse` and other agent events | `agent -p` / `--print`; `--output-format json` | Covered by `generic`; optional hooks enhancement |
 | Cline | `AGENTS.md` (documented as cross-tool) and `~/.agents/AGENTS.md`; `.clinerules/` or `.cline/rules/` | `.cline/skills/`, `.clinerules/skills/`, `.claude/skills/`; `.agents/skills` is not documented | `.clinerules/hooks/<Event>`; `TaskStart`, `PreToolUse` (cancel blocks) and other events | `cline --json "..."` emits one JSON object per line | Covered by `generic`; optional hooks enhancement |
 | Amp | `AGENTS.md` from the working directory and parents up to `$HOME`; falls back to `AGENT.md` or `CLAUDE.md` per directory | `.agents/skills/` (project and parents), `.claude/skills/`, `~/.config/agents/skills/` | Bun/TypeScript plugins in `.amp/plugins/` or `~/.config/amp/plugins/`; `session.start`, `agent.start`, `tool.call` | `amp -x "..."` / `--execute` | Covered by `generic`; optional hooks enhancement |
