@@ -20,7 +20,14 @@ option and verification steps. With the CLI already
 installed, use the [project maintenance guide](agent-project-refresh.md) instead;
 unknown optional remote capability does not block applicable local refresh.
 
-## Project integration assets
+## Support matrix
+
+New capability lands in the CLI and the native Git guard first and works fully
+with zero host integration. Host hooks only supply prompts and context; they do
+not carry business rules. Each host adaptation states its support status and
+fallback in the installation catalog (`specgit setup --catalog --json`), and the
+matrix below is the maintained summary. Host discovery boundaries and dated
+evidence follow.
 
 Project integration remains project-only. The only user-level asset is the
 explicitly installed Skill file; no global hooks, state or receipts.
@@ -38,13 +45,51 @@ or `--hook-purpose context` for supported SessionStart/PreToolUse context. An
 omitted purpose leaves existing recorded choices unchanged. Use
 `--hook-purpose none` when adding guidance without hooks.
 
-| Agent | Project assets |
-| --- | --- |
-| `generic` | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
-| `claude` | Root `CLAUDE.md` stable entry to the canonical `.agents` Skill; `.claude/skills/specgit-native/SKILL.md` copy for host discovery, selected `.claude/settings.json` hooks and optional managed read-only `permissions.allow` rules with `--readonly-permissions` |
-| `codex` | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) stable entry to the canonical `.agents` Skill, plus selected `.codex/hooks.json` hooks |
-| `opencode` (official) | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
-| `opencode` custom fork with `--opencode-claude-hooks` | Adds compatible SessionStart and PreToolUse hooks in `.opencode/hooks.json` with `inputFormat: claude-code` |
+| Host | Guidance entry | Skill discovery | Context hooks | Read-only allowlist | Fallback |
+| --- | --- | --- | --- | --- | --- |
+| `generic` | `AGENTS.md` | `.agents/skills/specgit-native/SKILL.md` when the host reads `.agents` | none; declined | declined: no host permission configuration | Read guidance and the Skill directly |
+| `claude` | `CLAUDE.md` | Canonical `.agents` Skill plus `.claude/skills/specgit-native/SKILL.md` | `.claude/settings.json` SessionStart/PreToolUse | `.claude/settings.json` `permissions.allow` with `--readonly-permissions` | Re-read guidance and Skill |
+| `codex` | `AGENTS.md`, or an existing nonempty `AGENTS.override.md` | Canonical `.agents` Skill; Codex scans it from the working directory to the repository root and also reads `~/.agents/skills` | `.codex/hooks.json`; requires the host `/hooks` trust review | declined: experimental approval and sandbox | Re-read guidance and Skill |
+| `opencode` (official) | `AGENTS.md` | `.agents` Skill; the host also reads project `.opencode/` and `.claude/` skills | none; declined | declined: default-allow, no portable allowlist | Re-read guidance and Skill; bounded `watch`/`inbox` |
+| `opencode` custom fork with `--opencode-claude-hooks` | `AGENTS.md` | Same as official OpenCode | `.opencode/hooks.json` with `inputFormat: claude-code`; requires `--agent opencode` plus an explicit hook purpose | declined | Same as official OpenCode |
+
+`guard` is the native Git pre-commit/pre-push check, not a host callback. It
+applies to every host, including generic, through `setup --hook-purpose guard`
+or `specgit guard --install`. Context hooks are optional; they only prompt and
+provide context, and never carry business rules.
+
+Preview, then apply each host selection:
+
+```sh
+# Generic: guidance and canonical Skill; no host callbacks
+specgit setup --agent generic --dry-run --json
+specgit setup --agent generic --json
+
+# Claude Code: guidance and both Skills, plus optional context and read-only rules
+specgit setup --agent claude --dry-run --json
+specgit setup --agent claude --json
+specgit setup --agent claude --hook-purpose context --dry-run --json
+specgit setup --agent claude --hook-purpose context --json
+specgit setup --agent claude --readonly-permissions --dry-run --json
+specgit setup --agent claude --readonly-permissions --json
+
+# Codex: guidance, Skill and .codex/hooks.json; trust the project layer in /hooks
+specgit setup --agent codex --hook-purpose context --dry-run --json
+specgit setup --agent codex --hook-purpose context --json
+
+# OpenCode: the official build gets guidance and Skill only
+specgit setup --agent opencode --dry-run --json
+specgit setup --agent opencode --json
+# Custom fork only:
+specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --dry-run --json
+specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --json
+```
+
+A new `--agent` host adds guidance and the Skill only. Hooks and managed
+read-only permissions are separate explicit choices. Written registration does
+not prove host import, context delivery or actual prompt behavior.
+
+## Hook and permission selection
 
 Select supported SessionStart and PreToolUse hooks only. SessionStart gives brief rules and the Skill entry; PreToolUse supplies relevant context or recovery. No PostToolUse, Stop callback or idle wake is supported. `guard` configures native Git commit/push hooks; `context` needs actual host support. `observe` is recognized but declined; use bounded watch/inbox. Omission preserves exact recorded
 modes on ordinary refresh. Explicit purposes apply to hosts named by `--agent`,
@@ -70,7 +115,8 @@ OpenCode, Codex and generic are not supported and keep per-invocation approval:
 OpenCode allows tools by default and a read-only allowlist would need global
 deny-by-default configuration with JSONC and multi-path ownership; Codex
 approval and sandbox configuration is still experimental and allow rules can be
-bypassed; generic has no host permission configuration. See the
+bypassed; generic has no host permission configuration. Installation reports
+those hosts as declined, and removal requires a recorded Claude registration. See the
 [read-only permission contract](../runtime/REFERENCE.md#select-read-only-host-permissions).
 
 Every entry point contains stable instructions pointing to the canonical
