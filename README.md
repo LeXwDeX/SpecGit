@@ -67,7 +67,7 @@ claude plugin install specgit@specgit-marketplace
 codex plugin marketplace add LeXwDeX/SpecGit
 ```
 
-Pi, OpenCode and other skill-only hosts read `.agents/skills`: run `specgit init`,
+Pi, OpenCode and other hosts without SpecGit-installed hooks read `.agents/skills`: run `specgit init`,
 install the user-level Skill with `specgit skill --user`, or copy
 `plugin/skills/specgit-native/` into the project's `.agents/skills/` directory.
 The [plugin installation guide](plugin/README.md) lists host-specific commands,
@@ -77,17 +77,16 @@ requirements, verification and data disclosure.
 
 SpecGit capability lives in the shared CLI and the native Git guard, so a project
 works with zero host integration. Host integration only supplies guidance and
-context; `specgit setup --catalog --json` declares every host's support status
-and fallback. The maintained details, discovery boundaries and dated host
-evidence are in [supported coding agents](docs/supported-tools.md#support-matrix).
+context. `specgit setup --catalog --json` prints the offline capability catalog
+of installable items, requirements and fallbacks. The full support matrix —
+guidance entry, Skill discovery, SpecGit-installed context hooks, read-only
+allowlist and fallback — is maintained only in [supported coding
+agents](docs/supported-tools.md#support-matrix).
 
-| Host | Guidance entry | Skill discovery | Context hooks | Read-only allowlist | Fallback |
-| --- | --- | --- | --- | --- | --- |
-| `generic` | `AGENTS.md` | `.agents/skills/specgit-native/SKILL.md` when the host reads `.agents` | none; declined | declined: no host permission configuration | Read guidance and the Skill directly |
-| Claude Code | `CLAUDE.md` | Canonical `.agents` Skill plus `.claude/skills/specgit-native/SKILL.md` | `.claude/settings.json` SessionStart/PreToolUse | `.claude/settings.json` `permissions.allow` with `--readonly-permissions` | Re-read guidance and Skill |
-| Codex | `AGENTS.md`, or an existing nonempty `AGENTS.override.md` | Canonical `.agents` Skill; Codex scans it from the working directory to the repository root and also reads `~/.agents/skills` | `.codex/hooks.json`; requires the host `/hooks` trust review | declined: experimental approval and sandbox | Re-read guidance and Skill |
-| OpenCode (official) | `AGENTS.md` | `.agents` Skill; the host also reads project `.opencode/` and `.claude/` skills | none; declined | declined: default-allow, no portable allowlist | Re-read guidance and Skill; bounded `watch`/`inbox` |
-| OpenCode custom fork | `AGENTS.md` | Same as official OpenCode | `.opencode/hooks.json` with `inputFormat: claude-code`; requires `--agent opencode --opencode-claude-hooks` plus an explicit hook purpose | declined | Same as official OpenCode |
+Supported host integrations: `generic`, Pi, Claude Code, Codex, official
+OpenCode, and custom OpenCode forks with `--opencode-claude-hooks`. Pi and
+official OpenCode need no `--agent`: `specgit init` installs `AGENTS.md` and the
+canonical `.agents` Skill.
 
 `guard` is the native Git pre-commit/pre-push check, not a host callback. It
 applies to every host, including generic, through `setup --hook-purpose guard`
@@ -308,7 +307,7 @@ repository-specific cutover; retired v1 command workflows are no longer maintain
 - [Runtime development](runtime/README.md)
 - [Current glossary](CONTEXT.md)
 - [English / 中文 Wiki](https://github.com/LeXwDeX/SpecGit/wiki)
-- [Documentation audit and source inventory](docs/documentation-audit-2.2.1.md)
+- [Historical documentation audit (2.2.1 archive)](docs/history/audits/documentation-audit-2.2.1.md)
 
 ## Development and releases
 

@@ -1,3 +1,5 @@
+> Historical archive. Not current version status or active instructions.
+
 # SpecGit 2.2.0
 
 This release addresses the nine findings from the 2026-09-27 product-design audit.

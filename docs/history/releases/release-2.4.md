@@ -1,3 +1,5 @@
+> Historical archive. Not current version status or active instructions.
+
 # SpecGit 2.4 Preparation Ledger
 
 Preparation date: 2026-10-03, on branch `feat/project-only-240`. This ledger
@@ -67,7 +69,7 @@ checkpoint, and PreToolUse/PostToolUse model context passed. SessionStart
 executed but its context was lost in `opencode run`, including continuation;
 TUI/serve were not qualified. This host offered no patch tool, so patch aliases
 have adapter/subprocess evidence only. These limitations are documented in the
-[supported tools guide](supported-tools.md#observed-custom-host-behavior).
+[supported tools guide](../../supported-tools.md#observed-custom-host-behavior).
 
 ## Remaining gates (not yet met)
 
@@ -81,7 +83,7 @@ have adapter/subprocess evidence only. These limitations are documented in the
   intended 2.4 contract; the installed CLI's `--help`/`--schema` remains the
   authority for any currently installed version.
 
-See the [release procedure](../runtime/distribution/README.md) for publication
+See the [release procedure](../../../runtime/distribution/README.md) for publication
 and interrupted-publication recovery, and the
-[native reference](../runtime/REFERENCE.md) for the command contract this
+[native reference](../../../runtime/REFERENCE.md) for the command contract this
 ledger summarizes.
