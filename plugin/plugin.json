@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "specgit",
+  "version": "2.21.0",
+  "description": "SpecGit delivery workflow Skill for GitHub and GitLab: native Issue specifications, PR/MR delivery, checkpoints, and verified completion.",
+  "author": { "name": "SpecGit Contributors" },
+  "homepage": "https://lexwdex.github.io/SpecGit/",
+  "repository": "https://github.com/LeXwDeX/SpecGit",
+  "license": "MIT",
+  "keywords": ["git", "workflow", "spec", "delivery", "github", "gitlab", "skill"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "SpecGit",
+        "shortDescription": "Issue specifications to verified delivery for GitHub and GitLab.",
+        "longDescription": "SpecGit gives coding agents one shared delivery workflow: specifications in Issues, implementation in native PRs or MRs, and verified completion read from the forge's live state.",
+        "developerName": "SpecGit Contributors",
+        "category": "Productivity",
+        "capabilities": [],
+        "logo": "./assets/icon.png",
+        "composerIcon": "./assets/icon.png"
+      }
+    }
+  }
+}
