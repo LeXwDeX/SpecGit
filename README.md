@@ -51,6 +51,60 @@ npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `gl
 and checksum verification and keeps a backup. One user-level executable serves all
 repositories and worktrees; initialize each clone or worktree separately.
 
+## Supported hosts
+
+SpecGit capability lives in the shared CLI and the native Git guard, so a project
+works with zero host integration. Host integration only supplies guidance and
+context; `specgit setup --catalog --json` declares every host's support status
+and fallback. The maintained details, discovery boundaries and dated host
+evidence are in [supported coding agents](docs/supported-tools.md#support-matrix).
+
+| Host | Guidance entry | Skill discovery | Context hooks | Read-only allowlist | Fallback |
+| --- | --- | --- | --- | --- | --- |
+| `generic` | `AGENTS.md` | `.agents/skills/specgit-native/SKILL.md` when the host reads `.agents` | none; declined | declined: no host permission configuration | Read guidance and the Skill directly |
+| Claude Code | `CLAUDE.md` | Canonical `.agents` Skill plus `.claude/skills/specgit-native/SKILL.md` | `.claude/settings.json` SessionStart/PreToolUse | `.claude/settings.json` `permissions.allow` with `--readonly-permissions` | Re-read guidance and Skill |
+| Codex | `AGENTS.md`, or an existing nonempty `AGENTS.override.md` | Canonical `.agents` Skill; Codex scans it from the working directory to the repository root and also reads `~/.agents/skills` | `.codex/hooks.json`; requires the host `/hooks` trust review | declined: experimental approval and sandbox | Re-read guidance and Skill |
+| OpenCode (official) | `AGENTS.md` | `.agents` Skill; the host also reads project `.opencode/` and `.claude/` skills | none; declined | declined: default-allow, no portable allowlist | Re-read guidance and Skill; bounded `watch`/`inbox` |
+| OpenCode custom fork | `AGENTS.md` | Same as official OpenCode | `.opencode/hooks.json` with `inputFormat: claude-code`; requires `--agent opencode --opencode-claude-hooks` plus an explicit hook purpose | declined | Same as official OpenCode |
+
+`guard` is the native Git pre-commit/pre-push check, not a host callback. It
+applies to every host, including generic, through `setup --hook-purpose guard`
+or `specgit guard --install`. Context hooks are optional; they only prompt and
+provide context, and never carry business rules.
+
+Preview, then apply each host selection:
+
+```sh
+# Generic: guidance and canonical Skill; no host callbacks
+specgit setup --agent generic --dry-run --json
+specgit setup --agent generic --json
+
+# Claude Code: guidance and both Skills, plus optional context and read-only rules
+specgit setup --agent claude --dry-run --json
+specgit setup --agent claude --json
+specgit setup --agent claude --hook-purpose context --dry-run --json
+specgit setup --agent claude --hook-purpose context --json
+specgit setup --agent claude --readonly-permissions --dry-run --json
+specgit setup --agent claude --readonly-permissions --json
+
+# Codex: guidance, Skill and .codex/hooks.json; trust the project layer in /hooks
+specgit setup --agent codex --hook-purpose context --dry-run --json
+specgit setup --agent codex --hook-purpose context --json
+
+# OpenCode: the official build gets guidance and Skill only
+specgit setup --agent opencode --dry-run --json
+specgit setup --agent opencode --json
+# Custom fork only:
+specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --dry-run --json
+specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --json
+```
+
+A new `--agent` host adds guidance and the Skill only. Hooks and managed
+read-only permissions are separate explicit choices. Only Claude Code supports
+the managed read-only allowlist; OpenCode, Codex and generic are reported as
+declined and keep per-invocation approval. Written registration does not prove
+host import, context delivery or actual prompt behavior.
+
 ## Already installed? Inspect and refresh your project
 
 Use the [project maintenance guide](docs/agent-project-refresh.md), not the first-install
@@ -66,6 +120,11 @@ host, but explicit purpose changes apply only to the named host or hosts; withou
 `--agent`, they apply to all recorded hosts. Omit purposes on ordinary refresh to
 preserve recorded choices. A newly named host gets guidance and Skill only. Hooks
 require explicit `--hook-purpose guard` and/or `context`; `none` adds no hooks.
+Managed read-only permissions are a separate explicit opt-in for Claude Code:
+`--readonly-permissions` writes the fixed allowlist, and
+`--remove-readonly-permissions` removes only managed rules. Both require
+`--agent`; installation targets Claude Code only, unsupported hosts keep
+per-invocation approval, and removal requires a recorded Claude registration.
 Enablement delegates task-related Issue, implementation, verification, commit/push,
 PR/MR, review, merge and closure work. Publication is included only when the task
 itself includes release work. A declaration or old receipt cannot expand task scope.
@@ -105,6 +164,12 @@ specgit watch --request 42 --session task-42 --goal lifecycle --json
 # After platform review and merge, re-read the native request and Issues:
 specgit pr --status --request 42 --json
 ```
+
+New Issue and PR/MR titles use `type[(scope)][!]: summary`, for example
+`feat(dag): implement selected specs`, `feat!: ...` or `feat(dag)!: ...`.
+The type must match the configured type catalog exactly and case-sensitively;
+an optional scope must be nonempty and cannot contain `(`, `)` or `:`; at most
+one `!` may immediately follow the type or scope; scope and `!` derive no labels.
 
 Replace the example IDs with real Issues and the resulting request number. Create
 the delivery branch before `specgit issue`: a checkpoint recorded on the target is
@@ -159,6 +224,21 @@ is reported separately from actual host discovery or event delivery; a reload,
 a host trust review (Codex `/hooks`), or another turn may be needed to verify the
 host. Use `specgit remove` to preview and reversibly remove the whole project's
 proven owned integration; `setup --uninstall` removes only recorded agent assets.
+
+Managed read-only permissions are a separate explicit opt-in.
+`setup --agent claude --readonly-permissions` appends the fixed
+`Bash(specgit <argv> *)` rules to project `.claude/settings.json`
+`permissions.allow`, preserving user rules and their order; refresh is
+idempotent and `--remove-readonly-permissions` removes only managed rules. Both
+flags require an explicit `--agent` and are mutually exclusive; installation
+targets Claude Code only, OpenCode, Codex and generic are reported as declined
+and keep per-invocation approval, and removal requires a recorded Claude
+registration. This is prompt reduction, not a sandbox or an
+authorization boundary: write commands still prompt, `pr --status`, `doctor`,
+`watch`, `inbox`, `migrate` and `remove --apply` stay outside the allowlist, and
+written rules do not prove that the host loaded them. Verify both that managed
+read-only commands stop prompting and that write commands still prompt in the
+real host.
 
 The only user-level asset is the explicitly installed Skill file; no global
 hooks, state or receipts. To opt in, preview `specgit skill --user --dry-run --json`,

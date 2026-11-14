@@ -97,4 +97,10 @@ Git pre-commit/pre-push checks; verify actual loading and behavior before relyin
 on any host integration. See the [project maintenance guide](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-review-the-full-host-refresh-scope)
 for host-specific setup and removal.
 
+Each host has a different guidance entry, Skill location and hook support; see
+[Supported Hosts](Supported-Hosts) for the current matrix and quick start.
+Managed read-only permissions are an optional Claude Code opt-in:
+`specgit setup --agent claude --readonly-permissions` (preview with `--dry-run`
+first). OpenCode, Codex and generic keep per-invocation approval.
+
 See [Upgrading Existing Projects](Upgrading-Existing-Projects), [Team Workflow](Team-Workflow), and [CLI Reference](CLI-Reference).

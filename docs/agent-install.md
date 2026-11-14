@@ -188,7 +188,7 @@ protocol contract. The catalog is offline and independent of project setup.
 | Static guidance | Stable entry into the Skill | Recommended `AGENTS.md` entry; may contain manual text and remain tracked |
 | Dynamic context | Current task or checkpoint context | Optional; delivered through SessionStart and PreToolUse where supported |
 | Agent event hooks | Host protocol that loads guidance/context | Optional; inspect host discovery and trust requirements; PostToolUse, Stop and idle wake are unsupported |
-| Read-only host permissions | Optional managed allowlist that reduces per-invocation approval for approved read-only commands | Optional; requires an explicit `--agent` and a supported host; not a sandbox, and write commands still prompt |
+| Read-only host permissions | Optional managed allowlist that reduces per-invocation approval for approved read-only commands | Optional; requires an explicit `--agent` and a supported host (currently Claude Code only); not a sandbox, and write commands still prompt |
 | Git guard | Native commit/push checkpoint enforcement, independent of the Agent process | Optional unless project policy requires it; verify actual guard behavior |
 | Observation | Bounded `watch`/`inbox` and private event state | Optional; reads native forge state when requested, with no automatic host wake |
 | Local project files | `.specgit.yaml`, generated Skill paths and Git `info/exclude` entries | Exclude only exact local paths; ignore rules never untrack files; mixed guidance may be tracked |
@@ -211,9 +211,13 @@ For a new project, initialize the declaration in section 3 first. Then review an
 apply setup's recommended shared Skill and stable guidance entry point. New setup
 does not add Agent hooks. Existing setup choices are retained on refresh. The
 legacy `--agent generic|claude|codex|opencode` selection remains available for
-compatibility and existing host receipts; a compatible custom OpenCode can also
-use `--opencode-claude-hooks`. These options are not required for the recommended
-new-project flow. Review the complete preview before applying:
+compatibility and existing host receipts; it is repeatable and selects only the
+named hosts. A compatible custom OpenCode can also use
+`--opencode-claude-hooks`. These options are not required for the recommended
+new-project flow. The current guidance entry, Skill discovery, hook, read-only
+permission and fallback matrix is in
+[supported coding agents](supported-tools.md#support-matrix). Review the
+complete preview before applying:
 
 ```sh
 specgit setup --dry-run --json
@@ -241,6 +245,23 @@ receipt. In the real host, verify that managed read-only commands no longer
 prompt and that write commands still prompt. Unsupported hosts keep
 per-invocation approval for each read-only command. These rules are prompt
 reduction, not a sandbox or an authorization boundary.
+
+Claude Code is the only supported host in this release. Preview and apply the
+managed allowlist with:
+
+```sh
+specgit setup --agent claude --readonly-permissions --dry-run --json
+specgit setup --agent claude --readonly-permissions --json
+specgit setup --agent claude --remove-readonly-permissions --dry-run --json
+specgit setup --agent claude --remove-readonly-permissions --json
+```
+
+Both flags require an explicit `--agent`, are mutually exclusive and conflict
+with `--uninstall`, `--rollback` and `--catalog`. Removal requires an already
+recorded Claude registration and deletes only managed rules. OpenCode, Codex and
+generic are reported as declined and keep per-invocation approval: OpenCode
+allows tools by default, Codex approval and sandbox configuration is
+experimental, and generic has no host permission configuration.
 
 See the [maintenance guide](agent-project-refresh.md#5-review-the-full-host-refresh-scope)
 for refreshing existing host choices and ownership.
