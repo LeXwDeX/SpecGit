@@ -157,6 +157,16 @@ fn rejected_issue_creation_clears_only_proven_non_creation() {
     }
 }
 
+fn gitlab_search_route(summary: &str, closed: bool) -> String {
+    format!(
+        "projects/fixture%2Frepo/issues?state={}&search={}&in=title&per_page={}{}",
+        if closed { "closed" } else { "opened" },
+        specgit::forge_read::encode(summary),
+        if closed { 20 } else { 100 },
+        if closed { "" } else { "&page=1" },
+    )
+}
+
 fn candidate_route(provider: &str, closed: bool) -> String {
     if provider == "github" {
         format!(
@@ -165,12 +175,8 @@ fn candidate_route(provider: &str, closed: bool) -> String {
             if closed { 20 } else { 100 },
         )
     } else {
-        format!(
-            "projects/fixture%2Frepo/issues?state={}&search=fix%3A+history&in=title&per_page={}{}",
-            if closed { "closed" } else { "opened" },
-            if closed { 20 } else { 100 },
-            if closed { "" } else { "&page=1" },
-        )
+        // GitLab searches the summary after a recognized title header.
+        gitlab_search_route("history", closed)
     }
 }
 
@@ -2321,6 +2327,88 @@ fn plain_title_duplicate_query_remains_byte_identical() {
         queries,
         expected.iter().map(String::as_str).collect::<Vec<_>>()
     );
+}
+
+fn gitlab_duplicate_queries(f: &Fixture) -> Vec<String> {
+    f.state()["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|call| call["endpoint"].as_str())
+        .filter(|route| route.contains("/issues?") && route.contains("search="))
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn gitlab_duplicate_search_strips_the_whole_scoped_header() {
+    let f = Fixture::new("gitlab");
+    let result = f.run(&["issue", "--inspect", "feat(dag)!: scoped summary only"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    let queries = gitlab_duplicate_queries(&f);
+    assert!(!queries.is_empty());
+    for query in queries {
+        assert!(query.contains("search=scoped+summary+only"), "{query}");
+        assert!(!query.contains("feat") && !query.contains("dag"), "{query}");
+    }
+}
+
+#[test]
+fn gitlab_duplicate_search_matches_the_summary_across_types_and_scopes() {
+    // GitLab search is full-text: every term is required, so a whole-title
+    // query misses the same summary under another type or scope.
+    let f = Fixture::new("gitlab");
+    f.edit(|state| {
+        let mut fix = native_issue("gitlab", 1, false);
+        fix["title"] = json!("fix: shared summary");
+        let mut scoped = native_issue("gitlab", 2, false);
+        scoped["title"] = json!("feat(dag): shared summary");
+        state["request_fixture"] = json!(true);
+        state["read_routes"][gitlab_search_route("shared summary", false)] = json!([fix, scoped]);
+    });
+    let report = f.run(&["issue", "--inspect", "feat: shared summary"]);
+    assert_eq!(report["exit"], 0, "{report}");
+    let ids: Vec<_> = report["evidence"]["candidates"][0]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|issue| issue["id"].clone())
+        .collect();
+    assert_eq!(ids, vec![json!(1), json!(2)], "{report}");
+    let queries = gitlab_duplicate_queries(&f);
+    assert!(queries.len() >= 2, "{queries:?}");
+    for query in queries {
+        assert!(query.contains("search=shared+summary"), "{query}");
+        assert!(!query.contains("feat"), "{query}");
+    }
+}
+
+#[test]
+fn gitlab_duplicate_search_falls_back_to_the_whole_unrecognized_title() {
+    let f = Fixture::new("gitlab");
+    f.edit(|state| state["lose_issue_response"] = json!(true));
+    assert_eq!(
+        f.run(&["issue", "--create-labels", "fix: history"])["exit"],
+        3
+    );
+    let checkpoint = checkpoint_path(&f);
+    let mut selection: serde_json::Value =
+        serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+    selection["intents"][0]["title"] = json!("unknown: history");
+    fs::write(&checkpoint, serde_json::to_vec(&selection).unwrap()).unwrap();
+    let calls = f.state()["calls"].as_array().unwrap().len();
+    let result = f.run(&["issue", "--discard-uncertain", "--dry-run"]);
+    assert_eq!(result["exit"], 3, "{result}");
+    let queries: Vec<_> = f.state()["calls"].as_array().unwrap()[calls..]
+        .iter()
+        .filter_map(|call| call["endpoint"].as_str())
+        .filter(|route| route.contains("/issues?") && route.contains("search="))
+        .map(String::from)
+        .collect();
+    assert_eq!(queries.len(), 3, "{queries:?}");
+    for query in queries {
+        assert!(query.contains("search=unknown%3A+history"), "{query}");
+    }
 }
 
 #[test]
