@@ -40,8 +40,8 @@ project initialization and host registration.
 It works with Codex, Claude Code and OpenCode through their supported integrations;
 other agents can use the CLI and project guidance directly.
 
-SpecGit is distributed **only through GitHub Releases** as native macOS arm64,
-Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and its
+The `specgit` CLI is distributed **only through GitHub Releases** as native macOS
+arm64, Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and its
 Sigstore signature bundle. The signature covers `SHA256SUMS` only; because that
 manifest lists the ZIP hashes, it covers the ZIP bytes, but not the source commit,
 version, build run or internal `native-release.json`. Verify the tag commit and
@@ -50,6 +50,28 @@ npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `gl
 `specgit update` upgrades the shared executable from GitHub Releases with signature
 and checksum verification and keeps a backup. One user-level executable serves all
 repositories and worktrees; initialize each clone or worktree separately.
+
+## Install as a plugin
+
+The repository also hosts a plugin marketplace. The plugin is a thin wrapper that
+bundles the `specgit-native` Skill and onboarding guidance only: it contains no
+native binary, hooks or global state, and the user-level CLI from GitHub Releases
+is still required.
+
+```sh
+# Claude Code: self-hosted marketplace
+claude plugin marketplace add LeXwDeX/SpecGit
+claude plugin install specgit@specgit-marketplace
+
+# Codex: self-hosted marketplace; browse and install in the host's /plugins view
+codex plugin marketplace add LeXwDeX/SpecGit
+```
+
+Pi, OpenCode and other skill-only hosts read `.agents/skills`: run `specgit init`,
+install the user-level Skill with `specgit skill --user`, or copy
+`plugin/skills/specgit-native/` into the project's `.agents/skills/` directory.
+The [plugin installation guide](plugin/README.md) lists host-specific commands,
+requirements, verification and data disclosure.
 
 ## Supported hosts
 
