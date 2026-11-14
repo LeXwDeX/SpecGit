@@ -9,7 +9,13 @@
 - CodeQL: GitHub-managed default setup; its repository setting selects the standard
   GitHub runner independently of these tracked workflow files.
 
-All CI, security, and release jobs use GitHub-hosted standard runners: `ubuntu-24.04`,
-`macos-15` (ARM64), and `windows-2025` for the tracked workflows. CodeQL routing is
-read from its native setting separately. No v1 verifier or completion controller remains.
-GitHub owns native auto-merge and Issue closure. See [CI scope](../../docs/ci-scope.md).
+Runner routing depends on the event. On pull requests the Rust matrix runs Linux
+only. Pushes to main route Linux and Windows to the owner's self-hosted Azure
+runners and macOS to GitHub-hosted `macos-15` (ARM64); same-repository PRs use the
+same Linux route. Fork PRs use GitHub-hosted runners for the Linux job; merge
+groups and manual runs use GitHub-hosted runners for all three platforms. Other
+CI jobs and release builds use GitHub-hosted runners. CodeQL routing is selected
+by its native repository setting, independently of these tracked workflow files.
+No v1 verifier or completion controller remains. GitHub owns native auto-merge
+and Issue closure. [CI scope](../../docs/ci-scope.md) is the only source for
+routing details.

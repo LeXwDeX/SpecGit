@@ -101,7 +101,7 @@ and [release procedure](runtime/distribution/README.md).
 - Report a delivered-checkpoint persistence failure as `ok:false` with a nonzero exit while keeping verified native request and Issue facts. Effects distinguish `not_applied` from `unknown`; watch keeps the completed event and adds a retry diagnostic. A later writable retry records delivery once, under the existing exit precedence. (#804)
 - Bound watch action previews to the 1024-byte persistence limit by listing whole Issue IDs with an omitted count, while keeping the complete deduplicated `issue_ids`. Large association sets can publish and reread without truncating identifiers or splitting UTF-8. (#805)
 - Serialize updater installation with a persistent installation-directory lock and recheck the captured target baseline. Backups are created exclusively, and competing or partial files are preserved. A failed or cancelled update no longer restores automatically; target and backup evidence remain for verified manual recovery, and `.specgit-update.lock` must not be removed while active. Windows publishes from a unique backup directory without overwriting a recreated target. (#806)
-- Align the maintenance write callback index with the changed-only `pending` prefix. Legal plans with retained observations can no longer slice past `pending` or compare a dependency against an unwritten postimage. This is an internal module repair; no live CLI panic was reproduced. Reachability details are in `docs/maintenance-observation-index.md`. (#807)
+- Align the maintenance write callback index with the changed-only `pending` prefix. Legal plans with retained observations can no longer slice past `pending` or compare a dependency against an unwritten postimage. This is an internal module repair; no live CLI panic was reproduced. Reachability details are in `docs/history/audits/maintenance-observation-index.md`. (#807)
 
 # 2.15.1
 
@@ -259,7 +259,7 @@ Architecture and acceptance scope: [runtime architecture](docs/architecture.md).
 - Resolve native `patchText`, supported patch-tool aliases and rename destinations to their actual repositories before checkpoint decisions.
 - Serialize Issue creation across linked worktrees using common Git metadata; independent clones no longer share a user-global creation lock.
 
-Scope and pending delivery/publication gates: [2.4 preparation ledger](docs/release-2.4.md),
+Scope and pending delivery/publication gates: [2.4 preparation ledger](docs/history/releases/release-2.4.md),
 [#660](https://github.com/LeXwDeX/SpecGit/issues/660).
 
 # 2.3.0
@@ -271,7 +271,7 @@ Scope and pending delivery/publication gates: [2.4 preparation ledger](docs/rele
 - Keep checkpoint inspection read-only, including Git index stat drift, and cover project setup/removal through native source and installed regression journeys.
 - Update installation, upgrade and release guidance for the 2.3 command contract.
 
-Scope and delivery evidence: [2.3 preparation ledger](docs/release-2.3.md).
+Scope and delivery evidence: [2.3 preparation ledger](docs/history/releases/release-2.3.md).
 Signed publication and final readback are tracked separately in
 [#651](https://github.com/LeXwDeX/SpecGit/issues/651).
 
@@ -293,7 +293,7 @@ Signed publication and final readback are tracked separately in
 - Validate source and installed native regressions on standard GitHub-hosted Linux, macOS ARM64 and Windows runners.
 
 Implementation and acceptance: [PR #643](https://github.com/LeXwDeX/SpecGit/pull/643),
-[2.2 audit ledger](docs/release-2.2.md).
+[2.2 audit ledger](docs/history/releases/release-2.2.md).
 
 # 2.1.2
 
