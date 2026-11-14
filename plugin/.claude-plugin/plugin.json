@@ -1,0 +1,10 @@
+{
+  "name": "specgit",
+  "version": "2.20.2",
+  "description": "SpecGit delivery workflow Skill for GitHub and GitLab: native Issue specifications, PR/MR delivery, checkpoints, and verified completion.",
+  "author": {
+    "name": "SpecGit Contributors"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/LeXwDeX/SpecGit"
+}
