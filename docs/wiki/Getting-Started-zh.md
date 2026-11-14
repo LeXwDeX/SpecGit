@@ -85,4 +85,9 @@ setup 会刷新全部已记录宿主及 `--agent` 指定的宿主；显式用途
 原生 Git pre-commit/pre-push 检查；依赖宿主集成前先验证实际加载和行为。宿主选择与
 卸载见[项目维护指南](https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md#5-review-the-full-host-refresh-scope)。
 
+各宿主的指导入口、Skill 位置与 hooks 支持不同，见[支持的宿主](Supported-Hosts-zh)
+的支持矩阵和快速上手。受管只读白名单是可选的 Claude Code 能力：
+`specgit setup --agent claude --readonly-permissions`（先用 `--dry-run` 预览）。
+OpenCode、Codex 和 generic 保持逐次审批。
+
 参阅[老项目升级](Upgrading-Existing-Projects-zh)、[团队工作流](Team-Workflow-zh)和[CLI 参考](CLI-Reference-zh)。

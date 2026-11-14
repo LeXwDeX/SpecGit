@@ -1,6 +1,6 @@
 # Team Workflow
 
-The Agent plans independently verifiable goals in Issues and larger goals in a Milestone. Inspect duplicate WHYs and select complete Issues before commit/push; ordinary editing has no checkpoint gate. Replace the example IDs below with native IDs. User installation/enablement delegates the current task's required workflow; previews do not expand that scope.
+The Agent plans independently verifiable goals in Issues and larger goals in a Milestone. Inspect duplicate WHYs and select complete Issues before commit/push; ordinary editing has no checkpoint gate. Replace the example IDs below with native IDs. User installation/enablement delegates the current task's required workflow; previews do not expand that scope. New Issue and PR/MR titles use `type[(scope)][!]: summary`; the type must match the configured catalog exactly, and scope and `!` derive no labels.
 
 ```sh
 specgit issue 21 22 --dry-run --json
