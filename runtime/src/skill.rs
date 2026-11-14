@@ -301,6 +301,7 @@ fn apply(
             .as_secs();
         // create-new publication prevents overwriting a previous backup, including
         // same-second refreshes and dangling links with the same name.
+        #[cfg(feature = "test-fixtures")]
         let mut injected = false;
         for suffix in 0..1000 {
             let name = if suffix == 0 {
