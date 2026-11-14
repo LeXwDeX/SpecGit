@@ -38,7 +38,12 @@ fully with zero host integration. Host hooks only provide prompts and context;
 they do not carry business rules. Each host adaptation states its support
 status and fallback in the installation catalog (`setup --catalog`). Distributed
 Skills and guidance text contain no host-specific tool names. Host-specific
-code lives only in setup adapters.
+code lives only in setup adapters. `runtime/tests/architecture.rs` enforces this
+boundary on production source: host names and paths may appear only in the
+current host access surface (`setup`, `project_receipt`, `migration_assets`,
+`guidance`, `local_exclude`, `remove`, `migrate`, `init`, `cli`), hook event
+names additionally in `hook`, and host tool names nowhere in runtime source or
+distributed text. A new host adaptation must join that surface explicitly.
 
 ## Module dependency DAG
 
