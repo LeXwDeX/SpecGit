@@ -1,7 +1,7 @@
 //! Verify runtime component dependencies from every production Rust source file.
 //! Parse every platform's code. Unit-test modules and internal component edges
 //! are outside this contract; integration and installed tests verify behavior.
-use proc_macro2::{TokenStream, TokenTree};
+use proc_macro2::{Literal, TokenStream, TokenTree};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -126,11 +126,7 @@ impl Dependencies {
 }
 impl<'ast> Visit<'ast> for Dependencies {
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
-        let unit_test = module.attrs.iter().any(|attr| {
-            attr.path().is_ident("cfg")
-                && matches!(&attr.meta, syn::Meta::List(meta) if meta.tokens.to_string() == "test")
-        });
-        if !unit_test {
+        if !unit_test_module(module) {
             self.module_path.push(module.ident.to_string());
             syn::visit::visit_item_mod(self, module);
             self.module_path.pop();
@@ -173,6 +169,202 @@ fn component(path: &Path) -> String {
         .to_str()
         .unwrap();
     first.strip_suffix(".rs").unwrap_or(first).to_owned()
+}
+
+fn unit_test_module(module: &syn::ItemMod) -> bool {
+    module.attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg")
+            && matches!(&attr.meta, syn::Meta::List(meta) if meta.tokens.to_string() == "test")
+    })
+}
+
+// docs/architecture.md "Host-neutral product principle" says host-specific
+// code lives only in setup adapters. These are this checkout's host access
+// surface modules; a new host integration must be declared here.
+const HOST_ACCESS_SURFACE: [&str; 9] = [
+    "setup",
+    "project_receipt",
+    "migration_assets",
+    "guidance",
+    "local_exclude",
+    "remove",
+    "migrate",
+    "init",
+    "cli",
+];
+// Case-insensitive substrings also cover `.claude/`, `CLAUDE.md`, `.codex/`,
+// `.opencode/`, and `.graphagent/`; the override file has its own name.
+const HOST_NAMES: [&str; 4] = ["claude", "codex", "opencode", "graphagent"];
+const HOST_OVERRIDE: &str = "agents.override.md";
+const HOOK_EVENTS: [&str; 4] = ["SessionStart", "PreToolUse", "PostToolUse", "Stop"];
+const HOST_TOOL_NAMES: [&str; 13] = [
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Grep",
+    "Glob",
+    "Task",
+    "TodoWrite",
+    "WebFetch",
+    "NotebookEdit",
+    "SlashCommand",
+    "AskUserQuestion",
+];
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum HostIdentifier {
+    Name,
+    Event,
+    Tool,
+}
+
+impl HostIdentifier {
+    fn allows(self, component: &str) -> bool {
+        match self {
+            // Distributed Skills and guidance never name a host tool.
+            Self::Tool => false,
+            Self::Name => HOST_ACCESS_SURFACE.contains(&component),
+            // The hook entry point is itself a host adaptation.
+            Self::Event => HOST_ACCESS_SURFACE.contains(&component) || component == "hook",
+        }
+    }
+
+    fn boundary(self) -> &'static str {
+        match self {
+            Self::Name => "host names and paths belong to the host access surface",
+            Self::Event => "host hook events belong to the host access surface and hook",
+            Self::Tool => "host tool names are forbidden in runtime source and distributed text",
+        }
+    }
+}
+
+#[derive(Default)]
+struct HostVocabulary {
+    found: BTreeSet<(HostIdentifier, String)>,
+}
+impl HostVocabulary {
+    fn text(&mut self, text: &str) {
+        let lowercase = text.to_lowercase();
+        if HOST_NAMES.iter().any(|name| lowercase.contains(name))
+            || lowercase.contains(HOST_OVERRIDE)
+        {
+            self.found.insert((HostIdentifier::Name, text.to_owned()));
+        }
+        // Event names are exact literals: "Stop" is also an English word, so a
+        // substring match would report ordinary prose.
+        if HOOK_EVENTS.contains(&text) {
+            self.found.insert((HostIdentifier::Event, text.to_owned()));
+        }
+        // Tool names in code are exact literals too; business prose such as
+        // "Read the current selection" is not a host tool reference.
+        if HOST_TOOL_NAMES.contains(&text) {
+            self.found.insert((HostIdentifier::Tool, text.to_owned()));
+        }
+    }
+    fn literal(&mut self, literal: &Literal) {
+        if let syn::Lit::Str(text) = syn::Lit::new(literal.clone()) {
+            self.text(&text.value());
+        }
+    }
+    // syn leaves macro arguments opaque. Scan their token trees as well so
+    // json!, format!, and matches! cannot hide host identifiers.
+    fn tokens(&mut self, stream: TokenStream) {
+        for token in stream {
+            match token {
+                TokenTree::Group(group) => self.tokens(group.stream()),
+                TokenTree::Literal(literal) => self.literal(&literal),
+                _ => {}
+            }
+        }
+    }
+}
+impl<'ast> Visit<'ast> for HostVocabulary {
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if !unit_test_module(module) {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+    fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+        // `///` comments arrive as `#[doc = "..."]`; prose is not code.
+        if !attribute.path().is_ident("doc") {
+            syn::visit::visit_attribute(self, attribute);
+        }
+    }
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        self.text(&literal.value());
+        syn::visit::visit_lit_str(self, literal);
+    }
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        self.tokens(node.tokens.clone());
+        syn::visit::visit_macro(self, node);
+    }
+}
+
+fn host_references(syntax: &syn::File) -> BTreeSet<(HostIdentifier, String)> {
+    let mut vocabulary = HostVocabulary::default();
+    vocabulary.visit_file(syntax);
+    vocabulary.found
+}
+
+fn host_violations(component: &str, relative: &Path, syntax: &syn::File) -> Vec<String> {
+    host_references(syntax)
+        .into_iter()
+        .filter(|(identifier, _)| !identifier.allows(component))
+        .map(|(identifier, literal)| {
+            format!(
+                "{}: {component} contains {:?}; {}",
+                relative.display(),
+                literal,
+                identifier.boundary()
+            )
+        })
+        .collect()
+}
+
+// Tool names that are also ordinary English words count as host tool
+// references only when marked up as code or quoted. "Read project-root" is
+// product prose; `Read` and `"Bash"` name host tools.
+const PROSE_TOOL_NAMES: [&str; 7] = ["Bash", "Read", "Write", "Edit", "Grep", "Glob", "Task"];
+
+fn word_occurrences(text: &str, word: &str) -> Vec<usize> {
+    let boundary = |character: Option<char>| {
+        character.is_none_or(|character| !character.is_alphanumeric() && character != '_')
+    };
+    let mut indices = Vec::new();
+    let mut offset = 0;
+    while let Some(index) = text[offset..].find(word) {
+        let start = offset + index;
+        let end = start + word.len();
+        if boundary(text[..start].chars().next_back()) && boundary(text[end..].chars().next()) {
+            indices.push(start);
+        }
+        offset = end;
+    }
+    indices
+}
+
+fn marked_up(text: &str, start: usize, end: usize) -> bool {
+    let quote = |character: Option<char>| matches!(character, Some('`' | '"'));
+    quote(text[..start].chars().next_back()) && quote(text[end..].chars().next())
+}
+
+fn tool_name_mentions(text: &str) -> Vec<&'static str> {
+    HOST_TOOL_NAMES
+        .iter()
+        .copied()
+        .filter(|name| {
+            let occurrences = word_occurrences(text, name);
+            if PROSE_TOOL_NAMES.contains(name) {
+                occurrences
+                    .iter()
+                    .any(|start| marked_up(text, *start, start + name.len()))
+            } else {
+                !occurrences.is_empty()
+            }
+        })
+        .collect()
 }
 
 fn cycle(graph: &Graph) -> Option<Vec<String>> {
@@ -425,6 +617,111 @@ fn dependency_scanner_covers_grouped_aliases_macros_and_platform_code() {
         cycle(&graph),
         Some(vec!["a".into(), "b".into(), "a".into()])
     );
+}
+
+#[test]
+fn host_specific_identifiers_stay_inside_the_host_access_surface() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![];
+    source_files(&root, &mut files);
+    files.sort();
+    let mut violations = Vec::new();
+    for path in &files {
+        let relative = path.strip_prefix(&root).unwrap();
+        let owner = component(relative);
+        let source = fs::read_to_string(path).unwrap();
+        let syntax = syn::parse_file(&source).unwrap_or_else(|error| {
+            panic!(
+                "Parse every platform's runtime source {}: {error}",
+                path.display()
+            )
+        });
+        violations.extend(host_violations(&owner, relative, &syntax));
+    }
+    assert!(
+        violations.is_empty(),
+        "Host-specific identifiers escaped the host access surface ({}). Hook event names additionally belong to hook; host tool names are forbidden in runtime source and distributed text. docs/architecture.md \"Host-neutral product principle\": add new host adaptations to a host access surface module and declare it here.\n{}",
+        HOST_ACCESS_SURFACE.join(", "),
+        violations.join("\n")
+    );
+    println!("Verified host-neutral source in {} files", files.len());
+}
+
+#[test]
+fn distributed_skills_and_generated_guidance_name_no_host_tools() {
+    let guidance = specgit::guidance::render(&specgit::declaration::Declaration::default());
+    // prompts::project returns the embedded host entry for every language, so
+    // this asset check covers both En and Zh generated guidance.
+    let sources = [
+        ("assets/SKILL.md", include_str!("../assets/SKILL.md")),
+        (
+            "assets/prompts/host-entry.md",
+            include_str!("../assets/prompts/host-entry.md"),
+        ),
+        ("guidance::render", guidance.as_str()),
+    ];
+    let mut violations = Vec::new();
+    for (name, text) in sources {
+        for tool in tool_name_mentions(text) {
+            violations.push(format!("{name} names host tool {tool}"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "Distributed Skills and guidance text contain no host-specific tool names (docs/architecture.md \"Host-neutral product principle\").\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn host_vocabulary_scanner_reports_violations_and_exempts_adapters_tests_and_docs() {
+    let fixture = syn::parse_file(
+        r#"
+        /// `AGENTS.override.md` in documentation is prose, not code.
+        fn business() {
+            let host = ".codex/agents";
+            let event = "PreToolUse";
+            let stop = "Stop";
+            let prose = "Stop before the second write.";
+            let tool = "Bash";
+            json!({"path": ".claude/settings.json", "tool": "AskUserQuestion"});
+        }
+        #[cfg(test)] mod tests { const FIXTURE: &str = ".graphagent/fixture"; }
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        host_references(&fixture),
+        BTreeSet::from([
+            (HostIdentifier::Name, ".claude/settings.json".into()),
+            (HostIdentifier::Name, ".codex/agents".into()),
+            (HostIdentifier::Event, "PreToolUse".into()),
+            (HostIdentifier::Event, "Stop".into()),
+            (HostIdentifier::Tool, "AskUserQuestion".into()),
+            (HostIdentifier::Tool, "Bash".into()),
+        ])
+    );
+    let relative = Path::new("fixture.rs");
+    assert_eq!(host_violations("assets", relative, &fixture).len(), 6);
+    assert_eq!(host_violations("spec", relative, &fixture).len(), 6);
+    assert_eq!(host_violations("setup", relative, &fixture).len(), 2);
+    // hook adapts hook events, not host names or tools.
+    assert_eq!(host_violations("hook", relative, &fixture).len(), 4);
+    assert_eq!(host_violations("guidance", relative, &fixture).len(), 2);
+}
+
+#[test]
+fn guidance_tool_scanner_ignores_prose_and_reports_marked_up_tool_names() {
+    assert!(
+        tool_name_mentions("Read project-root `.agents/skills/specgit-native/SKILL.md`.")
+            .is_empty()
+    );
+    assert_eq!(
+        tool_name_mentions("Use `Read` or \"Bash\"."),
+        vec!["Bash", "Read"]
+    );
+    assert_eq!(tool_name_mentions("TodoWrite"), vec!["TodoWrite"]);
+    assert!(tool_name_mentions("Read/Write access and a Grep-like filter").is_empty());
 }
 
 #[test]
