@@ -174,12 +174,13 @@ specgit setup --agent opencode --json</code></pre><p class="note">Fallback: re-r
       </div>
       <div class="table-scroll reveal" role="region" aria-label="Support matrix" tabindex="0">
         <table>
-          <thead><tr><th scope="col">Host</th><th scope="col">Guidance entry</th><th scope="col">Skill discovery</th><th scope="col">Context hooks</th><th scope="col">Read-only allowlist</th><th scope="col">Fallback</th></tr></thead>
+          <thead><tr><th scope="col">Host</th><th scope="col">Guidance entry</th><th scope="col">Skill discovery</th><th scope="col">SpecGit-installed context hooks</th><th scope="col">Read-only allowlist</th><th scope="col">Fallback</th></tr></thead>
           <tbody>
             <tr><td><code>generic</code></td><td><code>AGENTS.md</code></td><td><code>.agents/skills/specgit-native/SKILL.md</code> when the host reads <code>.agents</code></td><td>none; declined</td><td>declined: no host permission configuration</td><td>Read guidance and the Skill directly</td></tr>
+            <tr><td>Pi</td><td><code>AGENTS.md</code> (also reads <code>CLAUDE.md</code> and <code>AGENTS.override.md</code>; <code>-nc</code>/<code>--no-context-files</code> disables discovery)</td><td><code>.agents/skills</code> from the working directory through ancestors to the repository root, plus <code>~/.agents/skills</code></td><td>none; not adapted (host has TypeScript extensions, SpecGit installs no hook)</td><td>declined</td><td>Re-read guidance and Skill; <code>--agent generic</code> records the coverage</td></tr>
             <tr><td>Claude Code</td><td><code>CLAUDE.md</code></td><td>Canonical <code>.agents</code> Skill plus <code>.claude/skills/specgit-native/SKILL.md</code></td><td><code>.claude/settings.json</code> SessionStart/PreToolUse</td><td><code>.claude/settings.json</code> <code>permissions.allow</code> with <code>--readonly-permissions</code></td><td>Re-read guidance and Skill</td></tr>
             <tr><td>Codex</td><td><code>AGENTS.md</code>, or an existing nonempty <code>AGENTS.override.md</code></td><td>Canonical <code>.agents</code> Skill; scans working directory to repo root and <code>~/.agents/skills</code></td><td><code>.codex/hooks.json</code>; requires host <code>/hooks</code> trust review</td><td>declined: experimental approval and sandbox</td><td>Re-read guidance and Skill</td></tr>
-            <tr><td>OpenCode (official)</td><td><code>AGENTS.md</code></td><td><code>.agents</code> Skill; host also reads project <code>.opencode/</code> and <code>.claude/</code> skills</td><td>none; declined</td><td>declined: default-allow, no portable allowlist</td><td>Re-read guidance and Skill; bounded <code>watch</code>/<code>inbox</code></td></tr>
+            <tr><td>OpenCode (official)</td><td><code>AGENTS.md</code></td><td><code>.agents</code> Skill; host also reads project <code>.opencode/</code> and <code>.claude/</code> skills</td><td>none; not adapted (host has plugins, SpecGit installs no hook)</td><td>declined: default-allow, no portable allowlist</td><td>Re-read guidance and Skill; bounded <code>watch</code>/<code>inbox</code></td></tr>
             <tr><td>OpenCode custom fork</td><td><code>AGENTS.md</code></td><td>Same as official OpenCode</td><td><code>.opencode/hooks.json</code> with <code>inputFormat: claude-code</code>; requires <code>--agent opencode --opencode-claude-hooks</code> plus an explicit hook purpose</td><td>declined</td><td>Same as official OpenCode</td></tr>
           </tbody>
         </table>
@@ -211,10 +212,11 @@ specgit setup --agent opencode --json</code></pre><p class="note">Fallback: re-r
 claude plugin marketplace add LeXwDeX/SpecGit
 claude plugin install specgit@specgit-marketplace
 
-# Codex: add the marketplace, then browse and install in /plugins
+# Codex: add the marketplace, then browse and install in /plugins.
+# Not yet exercised with a local Codex installation.
 codex plugin marketplace add LeXwDeX/SpecGit
 
-# Pi, OpenCode and other skill-only hosts
+# Pi, OpenCode and other hosts without SpecGit-installed hooks
 specgit init
 specgit skill --user</code></pre>
       </div>

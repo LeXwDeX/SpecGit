@@ -159,8 +159,16 @@ Contract version: 2.21.0.
 
 本 Skill 由 `specgit` 插件分发，插件不含原生二进制。开始任务前运行 `specgit --version`；缺失或不可执行时，先给出下面的安装引导，不要猜测命令、参数或改用项目内二进制：
 
-1. 从 [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases) 取最新稳定版：macOS Apple Silicon 用 `specgit-<version>-darwin-arm64.zip`，Linux x64 glibc 用 `specgit-<version>-linux-x64-gnu.zip`，Windows x64 用 `specgit-<version>-win32-x64.zip`；同时下载 `SHA256SUMS`。
-2. 用 `shasum -a 256`、`sha256sum` 或 `Get-FileHash -Algorithm SHA256` 计算 ZIP 摘要，必须与 `SHA256SUMS` 中对应行一致；不一致、缺少行或无法验证时停止安装并报告。
-3. 解压后把根目录的 `specgit`（Windows 为 `specgit.exe`）放到用户级 PATH 目录，Unix 加可执行权限，再运行 `specgit --version` 确认。
+1. 从 [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releases) 取最新稳定版：macOS Apple Silicon 用 `specgit-<version>-darwin-arm64.zip`，Linux x64 glibc 用 `specgit-<version>-linux-x64-gnu.zip`，Windows x64 用 `specgit-<version>-win32-x64.zip`；同时从同一 Release 下载 `SHA256SUMS` 和 `SHA256SUMS.sigstore.json`。
+2. 用 [Cosign](https://docs.sigstore.dev/cosign/system_config/installation/)（3.1.3 或兼容的新版本）验证 `SHA256SUMS` 的签名；缺少 `.sigstore.json`、验签失败或无法验证时停止安装并报告：
+
+   ```sh
+   cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity 'https://github.com/LeXwDeX/SpecGit/.github/workflows/release-prepare.yml@refs/heads/main' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' SHA256SUMS
+   ```
+
+3. 用 `shasum -a 256`、`sha256sum` 或 `Get-FileHash -Algorithm SHA256` 计算 ZIP 摘要，必须与已验签的 `SHA256SUMS` 中对应行一致；不一致、缺少行或无法验证时停止安装并报告。
+4. 解压后把根目录的 `specgit`（Windows 为 `specgit.exe`）放到用户级 PATH 目录，Unix 加可执行权限，再运行 `specgit --version` 确认。
+
+完整校验契约见[发布资产校验参考](https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md)。
 
 GitHub Releases 是唯一分发渠道；不要使用 npm、非官方镜像或旧版裸二进制。安装后按项目说明运行 `specgit init` 或 `specgit setup` 接入仓库。
