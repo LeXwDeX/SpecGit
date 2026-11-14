@@ -6,7 +6,7 @@ on:
       release_version:
         description: Exact stable Cargo/workspace/package version
         type: string
-        default: 2.20.2
+        default: 2.21.0
         required: true
 permissions:
   contents: read
