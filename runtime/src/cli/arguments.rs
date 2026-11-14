@@ -75,7 +75,7 @@ pub(super) enum Commands {
     /// Discover integration capabilities, or install shared project guidance and preserve recorded integrations.
     Setup {
         /// List offline installation capabilities without reading a project, probing hosts or writing files.
-        #[arg(long, conflicts_with_all = ["agent", "opencode_claude_hooks", "hook_purpose", "remove_hook_purpose", "opencode_async_rewake", "uninstall", "dry_run", "rollback"])]
+        #[arg(long, conflicts_with_all = ["agent", "opencode_claude_hooks", "hook_purpose", "remove_hook_purpose", "opencode_async_rewake", "uninstall", "dry_run", "rollback", "readonly_permissions", "remove_readonly_permissions"])]
         catalog: bool,
         /// Project is the only supported scope, permanently; the shared CLI is installed separately.
         #[arg(long, value_enum, default_value = "project")]
@@ -89,6 +89,12 @@ pub(super) enum Commands {
         /// Explicitly add native Git guard or SessionStart/PreToolUse context to selected agents (all recorded agents if omitted); none preserves choices.
         #[arg(long, value_enum, action = clap::ArgAction::Append, conflicts_with_all = ["uninstall", "rollback"])]
         hook_purpose: Vec<specgit::setup::HookPurpose>,
+        /// Install the managed read-only command allowlist for an explicitly selected supported host.
+        #[arg(long, requires = "agent", conflicts_with = "remove_readonly_permissions", conflicts_with_all = ["uninstall", "rollback"])]
+        readonly_permissions: bool,
+        /// Remove the managed read-only command allowlist from explicitly selected recorded hosts.
+        #[arg(long, requires = "agent", conflicts_with = "readonly_permissions", conflicts_with_all = ["uninstall", "rollback"])]
+        remove_readonly_permissions: bool,
         /// Remove guard or context from selected recorded agents (all recorded agents if omitted), preserving other integrations.
         #[arg(long, value_enum, action = clap::ArgAction::Append, conflicts_with_all = ["uninstall", "rollback"])]
         remove_hook_purpose: Vec<specgit::setup::RemovableHookPurpose>,
@@ -245,6 +251,92 @@ pub(super) fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
 mod catalog_contract_tests {
     use super::Cli;
     use clap::CommandFactory;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn every_subcommand_has_exactly_one_side_effect_classification() {
+        // A new subcommand must be classified here before it can be added.
+        let read_only = ["status"];
+        let mutating = [
+            "migrate", "remove", "issue", "pr", "watch", "inbox", "init", "setup", "guard",
+            "doctor", "update", "skill",
+        ];
+        let host_internal = ["hook"];
+        let mut classified = BTreeSet::new();
+        for name in read_only.into_iter().chain(mutating).chain(host_internal) {
+            assert!(classified.insert(name.to_owned()), "{name} appears twice");
+        }
+        let defined: BTreeSet<String> = Cli::command()
+            .get_subcommands()
+            .map(|command| command.get_name().to_owned())
+            .filter(|name| name != "help")
+            .collect();
+        assert_eq!(defined, classified);
+    }
+
+    #[test]
+    fn managed_read_only_rules_never_match_mutating_invocations() {
+        let rules = specgit::setup::permissions::claude_allow_rules();
+        let prefixes: Vec<&str> = rules
+            .iter()
+            .map(|rule| {
+                rule.strip_prefix("Bash(")
+                    .and_then(|rule| rule.strip_suffix(')'))
+                    .and_then(|rule| rule.strip_suffix(" *"))
+                    .expect("managed rule shape")
+            })
+            .collect();
+        for invocation in [
+            "specgit setup",
+            "specgit setup --uninstall",
+            "specgit setup --agent claude --readonly-permissions",
+            "specgit setup --agent claude --remove-readonly-permissions",
+            "specgit init",
+            "specgit issue 42",
+            "specgit pr",
+            "specgit pr --status",
+            "specgit remove --apply",
+            "specgit migrate --apply",
+            "specgit update",
+            "specgit guard --install",
+            "specgit guard --uninstall",
+            "specgit skill --user",
+            "specgit watch --request 1 --session session --goal checks",
+            "specgit inbox --request 1 --session session --goal checks",
+            "specgit doctor --fix",
+        ] {
+            for prefix in &prefixes {
+                assert!(
+                    invocation != *prefix && !invocation.starts_with(&format!("{prefix} ")),
+                    "{invocation} is matched by {prefix}"
+                );
+            }
+        }
+        // A command with both read and write modes must pin the read-only flag.
+        for (subcommand, flags) in [
+            ("setup", &["--catalog", "--dry-run"][..]),
+            ("init", &["--dry-run", "--inspect"][..]),
+            ("issue", &["--dry-run", "--inspect"][..]),
+            ("pr", &["--dry-run", "--inspect"][..]),
+            ("remove", &["--dry-run"][..]),
+            (
+                "guard",
+                &["--install --dry-run", "--uninstall --dry-run"][..],
+            ),
+            ("skill", &["--user --dry-run"][..]),
+            ("update", &["--check"][..]),
+            ("doctor", &["--offline"][..]),
+        ] {
+            for flag in flags {
+                let rule = format!("Bash(specgit {subcommand} {flag} *)");
+                assert!(rules.contains(&rule), "missing {rule}");
+            }
+        }
+        // A verified merged request makes `pr --status` write the checkpoint.
+        assert!(rules.iter().all(|rule| !rule.contains("pr --status")));
+        assert!(rules.contains("Bash(specgit --help *)"));
+        assert!(rules.contains("Bash(specgit status *)"));
+    }
 
     #[test]
     fn catalog_commands_parse_and_publish_every_flag() {

@@ -405,6 +405,8 @@ async fn typed_guard_plan_rejects_changed_git_layout_before_any_setup_write() {
         uninstall: false,
         dry_run: false,
         rollback: None,
+        readonly_permissions: false,
+        remove_readonly_permissions: false,
     };
     let hooks = specgit::setup::HookOptions {
         purposes: vec![specgit::setup::HookPurpose::Guard],
@@ -1020,6 +1022,8 @@ async fn typed_install_rollback_is_rejected_without_side_effects_for_plain_and_g
             uninstall: false,
             dry_run: false,
             rollback: Some(transaction),
+            readonly_permissions: false,
+            remove_readonly_permissions: false,
         };
         let process = specgit::process::Process::default();
         let private = f.root.join(".git/specgit-v2/agent-assets");

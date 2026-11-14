@@ -11,6 +11,7 @@ pub enum InstallationId {
     ToolContext,
     GitGuard,
     Observation,
+    ReadonlyPermissions,
     LocalExclusions,
     PrivateState,
 }
@@ -23,6 +24,7 @@ impl InstallationId {
             Self::ToolContext => "tool_context",
             Self::GitGuard => "git_guard",
             Self::Observation => "observation",
+            Self::ReadonlyPermissions => "readonly_permissions",
             Self::LocalExclusions => "local_exclusions",
             Self::PrivateState => "private_state",
         }
@@ -227,6 +229,65 @@ fn setup_hook_commands(purpose: &'static str) -> Vec<InstallationCommand> {
     ]
 }
 
+fn readonly_permission_commands() -> Vec<InstallationCommand> {
+    vec![
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--readonly-permissions",
+                "--dry-run",
+                "--json",
+            ],
+            CommandMode::Preview,
+            "只读白名单安装计划；<agent> 替换为受支持的 claude；不读宿主、不写文件。",
+            false,
+        ),
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--readonly-permissions",
+                "--json",
+            ],
+            CommandMode::Apply,
+            "为显式选择的受支持宿主写入受管只读规则；保留用户规则和顺序。",
+            false,
+        ),
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--remove-readonly-permissions",
+                "--dry-run",
+                "--json",
+            ],
+            CommandMode::Preview,
+            "只读移除计划；只作用于显式选择且已记录的宿主。",
+            false,
+        ),
+        command(
+            &[
+                "specgit",
+                "setup",
+                "--agent",
+                "<agent>",
+                "--remove-readonly-permissions",
+                "--json",
+            ],
+            CommandMode::Apply,
+            "仅移除受管只读规则与受管空容器；保留第三方规则、hooks 和其他字段。",
+            false,
+        ),
+    ]
+}
+
 fn host_item(id: InstallationId, event: &'static str, purpose: &'static str) -> InstallationItem {
     InstallationItem {
         id,
@@ -367,6 +428,44 @@ pub fn catalog() -> InstallationCatalog {
                 refresh: "独立 guard 用 guard --install；setup 管理的 guard 用 setup --agent <agent> --hook-purpose guard；均核实所有权、加锁并复核计划快照。",
                 remove: "独立 guard 用 guard --uninstall；setup 管理的 guard 用 setup --agent <agent> --remove-hook-purpose guard。保留人工正文、第三方 hook 与仍被 sibling 消费的共享块；最后消费者释放共享 guard。",
                 rollback: "保留并检查原生事务恢复证据；当前无独立 guard rollback 命令，不手写旧块或猜测所有权。",
+            },
+        },
+        InstallationItem {
+            id: InstallationId::ReadonlyPermissions,
+            purpose: "为显式选择的受支持宿主写入受管只读命令白名单，减少只读命令的逐次审批；不授予写入权限，也不构成沙箱。",
+            requirement: Requirement::Optional,
+            scope: "项目内宿主权限配置（仅 Claude Code）",
+            owner: "SpecGit managed exact allow rules; user-owned rules, order and other settings preserved",
+            bundle: None,
+            locations: vec![
+                ".claude/settings.json 中受管 permissions.allow 规则（仅 Claude Code）",
+            ],
+            recommendations: vec![
+                "只纳入当前运行时编译的确定性只读命令；写入、应用和状态变更命令保持逐次审批。",
+                "用 setup 刷新或移除受管规则；不手工复制、改写或扩大白名单。",
+            ],
+            conditions: vec![
+                "仅 Claude Code 受支持：写入项目 .claude/settings.json 的 permissions.allow；规则减少提示，不是沙箱或授权边界。",
+                "Codex 本期不支持：审批与沙箱仍为实验性，allow 规则可被绕过；回退为逐次审批。",
+                "OpenCode 本期不支持：默认允许工具，白名单需要全局 deny-by-default 配置并涉及 JSONC 与多路径所有权；回退为逐次审批。",
+                "必须显式 --agent；安装与移除不能与 --uninstall 或 --rollback 组合，移除只作用于已记录且显式选择的宿主。",
+            ],
+            depends_on: vec![
+                InstallationId::ProjectSkill,
+                InstallationId::InstructionEntry,
+            ],
+            commands: readonly_permission_commands(),
+            protocol: "固定规则集由当前运行时编译；只追加缺失的受管规则、不移除或重排用户规则；收据记录受管规则与创建的空容器，刷新幂等。",
+            verification: Verification {
+                written: "回读宿主设置中的受管规则、用户规则顺序与收据；再次 dry-run 确认计划收敛。",
+                loading: "启动真实 Claude Code 会话，确认宿主读取项目设置。",
+                effect: "逐一运行受管只读命令确认不再逐次提示，并运行写命令确认仍提示；文件存在或规则写入不证明宿主加载或授权。",
+            },
+            fallback: "未安装或不支持的宿主（generic/Codex/OpenCode）由用户逐次审批只读命令；命令本身仍可直接运行。",
+            lifecycle: Lifecycle {
+                refresh: "setup --agent <agent> --readonly-permissions 刷新受管规则；保留用户规则和其他设置。",
+                remove: "setup --agent <agent> --remove-readonly-permissions 只移除受管规则和本工具创建的空容器；卸载和整个项目移除一并处理。",
+                rollback: "按原生 setup 事务恢复设置文件与收据；后续人工编辑或权限漂移须先解决。",
             },
         },
         InstallationItem {
