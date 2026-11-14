@@ -1,3 +1,5 @@
+> Historical archive. Not current version status or active instructions.
+
 # SpecGit 2.3.0 Preparation Ledger
 
 Preparation date: 2026-10-02. This ledger describes the merged scope and remaining
@@ -45,7 +47,7 @@ project setup or removal options. Ownership conflicts preserve user files.
 publication and final repository readback; the preparation PR must not close it.
 At this preparation snapshot, publication is still pending. The release must:
 
-- Dispatch the [Release workflow](../.github/workflows/release-prepare.yml) on the
+- Dispatch the [Release workflow](../../../.github/workflows/release-prepare.yml) on the
   verified current main with exactly 2.3.0 after its applicable CI passes.
 - Build and smoke-test Linux x64 glibc, macOS arm64 and Windows x64 on the pinned
   hosted runner/toolchain contract; preserve immutable prior tags and assets.
@@ -54,6 +56,6 @@ At this preparation snapshot, publication is still pending. The release must:
 - Read back source provenance, stable/latest release state, linked Issues/PRs,
   synchronized Wiki content and any preserved cleanup blockers.
 
-See the [release procedure](../runtime/distribution/README.md) for publication
+See the [release procedure](../../../runtime/distribution/README.md) for publication
 and interrupted-publication recovery. Recorded feature checks or previews do
 not substitute for these release receipts.

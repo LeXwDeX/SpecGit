@@ -1,3 +1,5 @@
+> Historical archive. Not current version status or active instructions.
+
 # Maintenance observation index
 
 Investigation for [#807](https://github.com/LeXwDeX/SpecGit/issues/807).
@@ -15,7 +17,7 @@ The defect produced three outcomes:
 - Between observations compared an overlapping dependency against a postimage that
   was not written yet, returning `ConcurrentEdit`.
 
-The repair in [runtime/src/assets.rs](../runtime/src/assets.rs) builds the same
+The repair in [runtime/src/assets.rs](../../../runtime/src/assets.rs) builds the same
 `filtered` sequence used by the transaction and counts changed entries in the
 filtered prefix for the current callback, before its corresponding write. The public `before_write` callback keeps its existing index
 meaning. No clamp or panic catch is used.
