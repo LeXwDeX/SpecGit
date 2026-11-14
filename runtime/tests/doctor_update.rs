@@ -360,6 +360,8 @@ fn fix_repairs_real_owned_project_assets_without_upgrading_runtime() {
             uninstall: false,
             dry_run: false,
             rollback: None,
+            readonly_permissions: false,
+            remove_readonly_permissions: false,
         },
         &fixture.root,
         &private.join("agent-assets"),

@@ -553,6 +553,8 @@ fn canonical_library_guard_rollback_revokes_receipt_and_hooks_together() {
                     uninstall: false,
                     dry_run: false,
                     rollback: None,
+                    readonly_permissions: false,
+                    remove_readonly_permissions: false,
                 },
                 &HookOptions {
                     purposes: vec![HookPurpose::Guard],
