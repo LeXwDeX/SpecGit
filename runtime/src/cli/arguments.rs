@@ -249,9 +249,30 @@ pub(super) fn argument_diagnostic(raw: &[std::ffi::OsString]) -> Diagnostic {
 
 #[cfg(test)]
 mod catalog_contract_tests {
-    use super::Cli;
-    use clap::CommandFactory;
+    use super::{Cli, Commands};
+    use clap::{CommandFactory, Parser};
     use std::collections::BTreeSet;
+
+    /// True when the parsed command still pins a preview/check mode that
+    /// suppresses writes after a matched read-only prefix.
+    fn preview_mode(cli: &Cli) -> bool {
+        match &cli.command {
+            Commands::Setup {
+                catalog, dry_run, ..
+            } => *catalog || *dry_run,
+            Commands::Init {
+                dry_run, inspect, ..
+            } => *dry_run || *inspect,
+            Commands::Issue(options) => options.dry_run || options.inspect,
+            Commands::Pr(options) => options.dry_run || options.inspect,
+            Commands::Remove(options) => options.dry_run,
+            Commands::Update(options) => options.check || options.dry_run,
+            Commands::Skill(options) => options.dry_run,
+            Commands::Guard { dry_run, .. } => *dry_run,
+            // Doctor has no safe read-only mode: `--offline` does not block `--fix`.
+            _ => false,
+        }
+    }
 
     #[test]
     fn every_subcommand_has_exactly_one_side_effect_classification() {
@@ -286,6 +307,18 @@ mod catalog_contract_tests {
                     .expect("managed rule shape")
             })
             .collect();
+        assert_eq!(rules.len(), 17);
+        let matched = |invocation: &str| {
+            prefixes.iter().any(|prefix| {
+                invocation == *prefix || invocation.starts_with(&format!("{prefix} "))
+            })
+        };
+        // `doctor --offline --fix` parses and writes, so doctor is not allowlisted
+        // in any mode: a prefix rule would authorize the repair.
+        for prefix in &prefixes {
+            assert!(!prefix.contains("doctor"), "{prefix}");
+        }
+        assert!(!matched("specgit doctor --offline --fix"));
         for invocation in [
             "specgit setup",
             "specgit setup --uninstall",
@@ -303,14 +336,14 @@ mod catalog_contract_tests {
             "specgit skill --user",
             "specgit watch --request 1 --session session --goal checks",
             "specgit inbox --request 1 --session session --goal checks",
+            "specgit doctor --offline",
+            "specgit doctor --offline --fix",
             "specgit doctor --fix",
         ] {
-            for prefix in &prefixes {
-                assert!(
-                    invocation != *prefix && !invocation.starts_with(&format!("{prefix} ")),
-                    "{invocation} is matched by {prefix}"
-                );
-            }
+            assert!(
+                !matched(invocation),
+                "{invocation} is matched by a managed rule prefix"
+            );
         }
         // A command with both read and write modes must pin the read-only flag.
         for (subcommand, flags) in [
@@ -325,7 +358,6 @@ mod catalog_contract_tests {
             ),
             ("skill", &["--user --dry-run"][..]),
             ("update", &["--check"][..]),
-            ("doctor", &["--offline"][..]),
         ] {
             for flag in flags {
                 let rule = format!("Bash(specgit {subcommand} {flag} *)");
@@ -336,6 +368,67 @@ mod catalog_contract_tests {
         assert!(rules.iter().all(|rule| !rule.contains("pr --status")));
         assert!(rules.contains("Bash(specgit --help *)"));
         assert!(rules.contains("Bash(specgit status *)"));
+
+        // A rule prefix accepts any trailing argument, so appending a write-capable
+        // flag must be rejected by clap or still pin a preview mode. This covers
+        // `prefix + write flag` combinations, not only canonical write commands.
+        const WRITE_FLAGS: &[&str] = &[
+            "--fix",
+            "--apply",
+            "--uninstall",
+            "--rollback",
+            "--remove",
+            "--status",
+            "--install",
+            "--discard-uncertain",
+        ];
+        let mut accepted = Vec::new();
+        for prefix in &prefixes {
+            for flag in WRITE_FLAGS {
+                let invocation = format!("{prefix} {flag}");
+                assert!(matched(&invocation), "{invocation} escapes its own prefix");
+                if let Ok(cli) = Cli::try_parse_from(invocation.split_whitespace()) {
+                    assert!(
+                        preview_mode(&cli),
+                        "{invocation} parses after a read-only prefix without a preview mode"
+                    );
+                    accepted.push(invocation);
+                }
+            }
+        }
+        // Only a preview mode that suppresses the appended write may parse.
+        assert_eq!(
+            accepted,
+            [
+                "specgit issue --dry-run --discard-uncertain",
+                "specgit pr --dry-run --discard-uncertain",
+                "specgit setup --dry-run --uninstall",
+                "specgit skill --user --dry-run --remove",
+            ],
+            "unexpected accepted prefix + write flag combinations"
+        );
+        // `--discard-uncertain` clears a checkpoint write flag, so its only safe
+        // mode is the dry-run preview (bounded native reads plus a transaction
+        // lock marker; no checkpoint, project or native writes). `--inspect`
+        // conflicts and must stay rejected.
+        for invocation in [
+            "specgit issue --inspect --discard-uncertain",
+            "specgit pr --inspect --discard-uncertain",
+        ] {
+            assert!(matched(invocation), "{invocation} escapes its own prefix");
+            assert!(
+                Cli::try_parse_from(invocation.split_whitespace()).is_err(),
+                "{invocation} must be rejected"
+            );
+        }
+        for invocation in [
+            "specgit issue --dry-run --discard-uncertain",
+            "specgit pr --dry-run --discard-uncertain",
+        ] {
+            let cli = Cli::try_parse_from(invocation.split_whitespace())
+                .unwrap_or_else(|error| panic!("{invocation}: {error}"));
+            assert!(preview_mode(&cli), "{invocation} must stay a preview");
+        }
     }
 
     #[test]

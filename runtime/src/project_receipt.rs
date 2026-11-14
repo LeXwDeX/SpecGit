@@ -91,11 +91,19 @@ pub(crate) struct ProjectReceipt {
 
 /// A rule is only the exact `Bash(specgit <argv> *)` shape this runtime writes.
 /// Layer 0 cannot know the current rule set; it rejects anything that could be
-/// re-pointed at another executable or inject another shell command.
+/// re-pointed at another executable or inject another shell command. The argv
+/// must be non-empty and free of parentheses, so `Bash(specgit *)` and
+/// concatenated rules such as `Bash(specgit status *) Bash(npm *)` are invalid.
 fn valid_rule(rule: &str) -> bool {
+    let Some(argv) = rule
+        .strip_prefix("Bash(specgit ")
+        .and_then(|rule| rule.strip_suffix(" *)"))
+    else {
+        return false;
+    };
     rule.chars().count() <= 256
-        && rule.starts_with("Bash(specgit ")
-        && rule.ends_with(')')
+        && !argv.is_empty()
+        && !argv.contains(['(', ')'])
         && !rule
             .chars()
             .any(|c| matches!(c, '\n' | '\r' | ';' | '|' | '&' | '$' | '`' | '\'' | '"'))
@@ -380,6 +388,41 @@ mod tests {
                 .code,
             Code::OwnershipConflict
         );
+    }
+
+    #[test]
+    fn managed_rule_shape_rejects_empty_argv_and_concatenated_rules() {
+        for rule in [
+            "Bash(specgit *)",
+            "Bash(specgit  *)",
+            "Bash(specgit status *) Bash(npm *)",
+            "Bash(specgit (status) *)",
+        ] {
+            let mut value = readonly_receipt();
+            value["readonly_permissions"]["claude"]["rules"] = serde_json::json!([rule]);
+            value["readonly_permissions"]["claude"]["created_rules"] = serde_json::json!([rule]);
+            assert_eq!(
+                decode(&serde_json::to_vec(&value).unwrap())
+                    .unwrap_err()
+                    .code,
+                Code::OwnershipConflict,
+                "{rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_current_managed_rule_decodes() {
+        let rules: Vec<String> = crate::setup::permissions::claude_allow_rules()
+            .into_iter()
+            .collect();
+        assert_eq!(rules.len(), 17);
+        let mut value = readonly_receipt();
+        value["readonly_permissions"]["claude"]["rules"] = serde_json::json!(&rules);
+        value["readonly_permissions"]["claude"]["created_rules"] = serde_json::json!(&rules);
+        // The fixture's preexisting `doctor --offline` rule is no longer in the
+        // current set, but receipts recorded by older CLIs must still decode.
+        assert!(decode(&serde_json::to_vec(&value).unwrap()).is_ok());
     }
 
     #[test]
