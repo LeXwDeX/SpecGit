@@ -348,6 +348,8 @@ fn codex_generated_command_runs_shared_executable_with_shell_metacharacters() {
         uninstall: false,
         dry_run: false,
         rollback: None,
+        readonly_permissions: false,
+        remove_readonly_permissions: false,
     };
     let hooks = HookOptions {
         purposes: vec![HookPurpose::Context, HookPurpose::Observe],

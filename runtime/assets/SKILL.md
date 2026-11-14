@@ -137,6 +137,7 @@ commit/push 前，用 `issue --inspect` 查找重复的 WHY，并用 `issue` 选
 唯一的用户级资产是用户显式用 `specgit skill --user` 安装的 Skill，位于 `~/.agents/skills/specgit-native/SKILL.md`（Windows 为 `%USERPROFILE%`）。`specgit update` 仅在其受管时刷新它，默认不安装。不安装全局 hooks 或全局状态。
 
 用 `--agent` 选择的新宿主只获得指导和 Skill；受支持的 hooks 需显式选择。只选当前任务所需的最少 hook 用途。`setup --hook-purpose guard` 配置原生 pre-commit/pre-push 检查；`specgit guard --install --dry-run` 和 `specgit guard --uninstall --dry-run` 预览独立 guard 的变更。
+可选能力 `readonly_permissions`：对显式指定的受支持宿主，setup 可写入受管只读命令白名单，减少只读命令的逐次审批；不支持该能力的宿主仍逐次审批。白名单只是提示收敛，不是沙箱或授权边界，写命令仍需确认；写入文件不证明宿主已加载或不再提示。
 setup 验证并复用独立 guard，但不接管其归属。保留不受支持的非 shell hooks。卸载保留仍在使用的消费者；已退役的 setup-guard 归属留在共享 Git 元数据中，直到最后一个 setup 消费者离开。
 
 init/setup 在 Git 本地 `info/exclude` 中维护一个块，覆盖 `.specgit.yaml` 和生成的 SpecGit Skill 文件。人工指导和其他 Skill 保持可见；从不排除整个 agent 目录。检查仓库/用户忽略规则；`local_exclusion` 报告已跟踪文件，从不修改索引。
@@ -150,6 +151,6 @@ PostToolUse/Stop 和空闲唤醒已退役；旧回调在读取输入前静默返
 
 替换 CLI 后，先预览 init 或已记录的 setup，再刷新 Skill 和稳定入口。刷新会替换已记录的资产和完整唯一的块，包括被编辑过的正文；保留块外字节、声明、checkpoint 和其他 hooks。
 标记缺失、损坏或重复，或归属未知，都按冲突处理；仅在有证明时恢复缺失的生成 Skill。刷新（包括无变化）、卸载和整个项目移除都会核对成对归属和已记录权限；不匹配时保留资产和收据，并阻止整个计划。
-只用评审过的 `preview_sha256` 执行 remove。从不采纳权限漂移，从不手写或恢复标记块；使用有证明的修复和事务恢复。收据使用 v4；迁移后使用 CLI 2.13 或更新版本。卸载/回滚保留之后的编辑。更新后运行 status/doctor 并重复预览。
+只用评审过的 `preview_sha256` 执行 remove。从不采纳权限漂移，从不手写或恢复标记块；使用有证明的修复和事务恢复。收据使用 v4；存在受管只读权限时为 v5，移除最后一条受管规则后回到 v4；迁移后使用 CLI 2.13 或更新版本。卸载/回滚保留之后的编辑。更新后运行 status/doctor 并重复预览。
 
 Contract version: {{version}}.

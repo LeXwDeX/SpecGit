@@ -125,6 +125,8 @@ fn options(agents: Vec<Agent>, custom: bool) -> project::Options {
         uninstall: false,
         dry_run: false,
         rollback: None,
+        readonly_permissions: false,
+        remove_readonly_permissions: false,
     }
 }
 fn install(

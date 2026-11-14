@@ -56,6 +56,8 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
             agent,
             opencode_claude_hooks,
             hook_purpose,
+            readonly_permissions,
+            remove_readonly_permissions,
             remove_hook_purpose,
             opencode_async_rewake,
             uninstall,
@@ -72,6 +74,8 @@ pub(super) async fn run(command: Commands, process: Process, cwd: PathBuf) -> Re
                     uninstall,
                     dry_run,
                     rollback,
+                    readonly_permissions,
+                    remove_readonly_permissions,
                 },
                 specgit::setup::HookOptions {
                     purposes: hook_purpose,

@@ -225,7 +225,10 @@ to their existing choices. `none` cannot combine with other purposes and adds no
 new purposes. It preserves valid purposes and native Git guard; refresh still
 removes owned retired PostToolUse/Stop registrations under the current mapping.
 See the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes).
-Current refresh uses v4 receipts, which require CLI 2.13 or newer. Recovery of
+Current refresh uses v4 or v5 receipts (v5 only while managed read-only
+permissions are recorded). V4 receipts require CLI 2.13 or newer; v5 receipts
+require the CLI release that introduced managed read-only permissions, newer
+than 2.20.2, because CLI 2.13–2.20.x reject v5 as a newer receipt. Recovery of
 version 3 transaction journals requires CLI 2.14 or newer. Preserve both receipts
 and journals, and check recovery compatibility before any deliberate binary downgrade.
 

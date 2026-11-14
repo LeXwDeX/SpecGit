@@ -15,6 +15,7 @@ use std::{
 };
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod catalog;
+pub mod permissions;
 pub mod project;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -502,170 +503,378 @@ fn opencode_manifest_for(
     }).collect())
 }
 
-/// Exact recorded groups are ownership; names alone do not permit adoption.
-fn registration_change(
-    host: &str,
-    path: &Path,
-    old: Option<&Registration>,
-    new: Option<&BTreeMap<String, Value>>,
-) -> Result<Change, Diagnostic> {
-    registration_change_recovering(host, path, old, new, &std::collections::BTreeSet::new())
+struct HostSettingsChange {
+    change: Change,
+    hooks: Option<Registration>,
+    permissions: Option<crate::project_receipt::ReadonlyPermissionRegistration>,
+    preexisting: std::collections::BTreeSet<String>,
 }
 
-fn registration_change_recovering(
+/// Exact recorded groups are ownership; names alone do not permit adoption.
+///
+/// Hooks and read-only permissions share one settings document, so they are
+/// applied to the same value and serialized once. A shared path therefore
+/// yields exactly one `Change`, which the asset store requires.
+fn host_settings_change(
     host: &str,
     path: &Path,
-    old: Option<&Registration>,
-    new: Option<&BTreeMap<String, Value>>,
+    old_hooks: Option<&Registration>,
+    new_hooks: Option<&BTreeMap<String, Value>>,
     recover_missing: &std::collections::BTreeSet<String>,
-) -> Result<Change, Diagnostic> {
+    old_permissions: Option<&crate::project_receipt::ReadonlyPermissionRegistration>,
+    desired_permissions: Option<&std::collections::BTreeSet<String>>,
+) -> Result<HostSettingsChange, Diagnostic> {
     let before = Snapshot::read(path)?;
-    let mut settings = match &before.bytes {
-        Some(bytes) => input::json(bytes, 1_048_576, 32)?,
-        None => json!({}),
+    if before.bytes.is_none() && (old_hooks.is_some() || old_permissions.is_some()) {
+        // A recorded settings file may have contained user fields. Recreating
+        // only managed content would silently discard that ownership evidence.
+        return Err(conflict_at(
+            host,
+            path,
+            None,
+            "Recorded host settings were removed and cannot be reconstructed.",
+        ));
+    }
+    let original = match &before.bytes {
+        Some(bytes) => Some(input::json(bytes, 1_048_576, 32)?),
+        None => None,
     };
+    let mut settings = original.clone().unwrap_or_else(|| json!({}));
     let top_level = host == "opencode";
-    let map = settings
-        .as_object_mut()
-        .ok_or_else(|| conflict_at(host, path, None, "Host settings must be a JSON object."))?;
-    if let Some(old) = old {
-        if old.settings != path {
-            return Err(conflict_at(
-                host,
-                &old.settings,
-                None,
-                "Registration targets another settings path.",
-            ));
+    // A settings file is one path-level fact. Both managed sections agree on
+    // whether this tool created it so a later removal can delete it safely.
+    let created_file = match (old_hooks, old_permissions) {
+        (None, None) => before.bytes.is_none(),
+        _ => {
+            old_hooks.is_some_and(|old| old.created_file)
+                || old_permissions.is_some_and(|old| old.created_file)
         }
-        if !top_level
-            && map.get("hooks").is_none()
-            && old.created_hook_map
-            && old
-                .entries
-                .keys()
-                .all(|event| recover_missing.contains(event))
-        {
-            // Only a map created by this receipt may be reconstructed. Every
-            // recorded event must also be individually proven absent.
-            map.insert("hooks".into(), json!({}));
-        }
-        let hooks = if top_level {
-            &mut *map
-        } else {
-            map.get_mut("hooks")
-                .and_then(Value::as_object_mut)
-                .ok_or_else(|| {
-                    conflict_at(
-                        host,
-                        path,
-                        None,
-                        "Recorded host hooks were removed or changed.",
-                    )
-                })?
-        };
-        for (event, entry) in &old.entries {
-            if recover_missing.contains(event) {
-                if !old.created_event_keys.contains(event) || hooks.contains_key(event) {
+    };
+    let mut permissions_registration = None;
+    let mut observed_preexisting = std::collections::BTreeSet::new();
+    {
+        let map = settings
+            .as_object_mut()
+            .ok_or_else(|| conflict_at(host, path, None, "Host settings must be a JSON object."))?;
+        if let Some(old) = old_hooks {
+            if old.settings != path {
+                return Err(conflict_at(
+                    host,
+                    &old.settings,
+                    None,
+                    "Registration targets another settings path.",
+                ));
+            }
+            if !top_level
+                && map.get("hooks").is_none()
+                && old.created_hook_map
+                && old
+                    .entries
+                    .keys()
+                    .all(|event| recover_missing.contains(event))
+            {
+                // Only a map created by this receipt may be reconstructed. Every
+                // recorded event must also be individually proven absent.
+                map.insert("hooks".into(), json!({}));
+            }
+            let hooks = if top_level {
+                &mut *map
+            } else {
+                map.get_mut("hooks")
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| {
+                        conflict_at(
+                            host,
+                            path,
+                            None,
+                            "Recorded host hooks were removed or changed.",
+                        )
+                    })?
+            };
+            for (event, entry) in &old.entries {
+                if recover_missing.contains(event) {
+                    if !old.created_event_keys.contains(event) || hooks.contains_key(event) {
+                        return Err(conflict_at(
+                            host,
+                            path,
+                            Some(event),
+                            "Missing hook entry cannot be safely recovered.",
+                        ));
+                    }
+                    continue;
+                }
+                let array = hooks
+                    .get_mut(event)
+                    .and_then(Value::as_array_mut)
+                    .ok_or_else(|| {
+                        conflict_at(
+                            host,
+                            path,
+                            Some(event),
+                            "Recorded host event is missing or is not an array.",
+                        )
+                    })?;
+                let positions: Vec<_> = array
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, v)| *v == entry)
+                    .map(|(i, _)| i)
+                    .collect();
+                if positions.len() != 1 {
                     return Err(conflict_at(
                         host,
                         path,
                         Some(event),
-                        "Missing hook entry cannot be safely recovered.",
+                        if positions.is_empty() {
+                            "Owned host registration was edited or removed."
+                        } else {
+                            "Owned host registration is duplicated."
+                        },
                     ));
                 }
-                continue;
+                if let Some(replacement) = new_hooks.and_then(|entries| entries.get(event)) {
+                    array[positions[0]] = replacement.clone();
+                } else {
+                    array.remove(positions[0]);
+                }
+                if array.is_empty() && old.created_event_keys.contains(event) {
+                    hooks.remove(event);
+                }
             }
-            let array = hooks
-                .get_mut(event)
-                .and_then(Value::as_array_mut)
-                .ok_or_else(|| {
-                    conflict_at(
+            if !top_level && hooks.is_empty() && old.created_hook_map {
+                map.remove("hooks");
+            }
+        }
+        if let Some(new) = new_hooks {
+            let hooks = if top_level {
+                &mut *map
+            } else {
+                map.entry("hooks")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .ok_or_else(|| conflict_at(host, path, None, "Host hooks is not an object."))?
+            };
+            for (event, entry) in new {
+                if old_hooks.is_some_and(|old| old.entries.contains_key(event))
+                    && !recover_missing.contains(event)
+                {
+                    continue;
+                }
+                let array = hooks
+                    .entry(event)
+                    .or_insert_with(|| json!([]))
+                    .as_array_mut()
+                    .ok_or_else(|| {
+                        conflict_at(host, path, Some(event), "Host hook event is not an array.")
+                    })?;
+                if array.contains(entry) {
+                    return Err(conflict_at(
                         host,
                         path,
                         Some(event),
-                        "Recorded host event is missing or is not an array.",
-                    )
+                        "An identical unowned host hook already exists; reconcile it explicitly.",
+                    ));
+                }
+                array.push(entry.clone());
+            }
+        }
+        if host == "claude" && (old_permissions.is_some() || desired_permissions.is_some()) {
+            let permissions_absent = map.get("permissions").is_none();
+            let allow_absent = map
+                .get("permissions")
+                .and_then(|permissions| permissions.get("allow"))
+                .is_none();
+            let created_permissions_object =
+                old_permissions.map_or(permissions_absent, |old| old.created_permissions_object);
+            let created_allow_array =
+                old_permissions.map_or(allow_absent, |old| old.created_allow_array);
+            let permissions = map
+                .entry("permissions")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| {
+                    conflict_at(host, path, None, "Host permissions must be a JSON object.")
                 })?;
-            let positions: Vec<_> = array
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| *v == entry)
-                .map(|(i, _)| i)
-                .collect();
-            if positions.len() != 1 {
+            if permissions
+                .get("allow")
+                .is_some_and(|allow| !allow.is_array())
+            {
                 return Err(conflict_at(
                     host,
                     path,
-                    Some(event),
-                    if positions.is_empty() {
-                        "Owned host registration was edited or removed."
-                    } else {
-                        "Owned host registration is duplicated."
-                    },
+                    None,
+                    "Host permissions.allow must be an array.",
                 ));
             }
-            if let Some(replacement) = new.and_then(|entries| entries.get(event)) {
-                array[positions[0]] = replacement.clone();
-            } else {
-                array.remove(positions[0]);
-            }
-            if array.is_empty() && old.created_event_keys.contains(event) {
-                hooks.remove(event);
-            }
-        }
-        if !top_level && hooks.is_empty() && old.created_hook_map {
-            map.remove("hooks");
-        }
-    }
-    if let Some(new) = new {
-        let hooks = if top_level {
-            &mut *map
-        } else {
-            map.entry("hooks")
-                .or_insert_with(|| json!({}))
-                .as_object_mut()
-                .ok_or_else(|| conflict_at(host, path, None, "Host hooks is not an object."))?
-        };
-        for (event, entry) in new {
-            if old.is_some_and(|old| old.entries.contains_key(event))
-                && !recover_missing.contains(event)
+            // A deleted array is recoverable only when this tool created it and
+            // every recorded rule was written by this tool.
+            if allow_absent
+                && old_permissions.is_some_and(|old| {
+                    !(old.created_allow_array && old.rules.is_subset(&old.created_rules))
+                })
             {
-                continue;
+                return Err(conflict_at(
+                    host,
+                    path,
+                    None,
+                    "Recorded read-only permissions were removed or changed.",
+                ));
             }
-            let array = hooks
-                .entry(event)
+            let mut rules = old_permissions
+                .map(|old| old.rules.clone())
+                .unwrap_or_default();
+            let mut preexisting = old_permissions
+                .map(|old| old.preexisting.clone())
+                .unwrap_or_default();
+            let mut created_rules = old_permissions
+                .map(|old| old.created_rules.clone())
+                .unwrap_or_default();
+            let allow = permissions
+                .entry("allow")
                 .or_insert_with(|| json!([]))
                 .as_array_mut()
                 .ok_or_else(|| {
-                    conflict_at(host, path, Some(event), "Host hook event is not an array.")
+                    conflict_at(host, path, None, "Host permissions.allow must be an array.")
                 })?;
-            if array.contains(entry) {
+            if allow.iter().any(|value| !value.is_string()) {
                 return Err(conflict_at(
                     host,
                     path,
-                    Some(event),
-                    "An identical unowned host hook already exists; reconcile it explicitly.",
+                    None,
+                    "Host permissions.allow must contain only strings.",
                 ));
             }
-            array.push(entry.clone());
+            if allow_absent {
+                allow.extend(rules.iter().cloned().map(Value::String));
+            }
+            for rule in &rules {
+                if allow
+                    .iter()
+                    .filter(|value| value.as_str() == Some(rule))
+                    .count()
+                    != 1
+                {
+                    return Err(conflict_at(
+                        host,
+                        path,
+                        None,
+                        "A recorded read-only permission rule was edited, removed or duplicated.",
+                    ));
+                }
+            }
+            let desired = desired_permissions.cloned().unwrap_or_default();
+            for rule in &desired {
+                if rules.contains(rule) || preexisting.contains(rule) {
+                    continue;
+                }
+                if allow.iter().any(|value| value.as_str() == Some(rule)) {
+                    // A matching rule that predates this receipt stays user-owned.
+                    preexisting.insert(rule.clone());
+                    continue;
+                }
+                allow.push(Value::String(rule.clone()));
+                rules.insert(rule.clone());
+                created_rules.insert(rule.clone());
+            }
+            let stale: Vec<_> = rules.difference(&desired).cloned().collect();
+            for rule in stale {
+                let position = allow
+                    .iter()
+                    .position(|value| value.as_str() == Some(&rule))
+                    .expect("recorded rule is unique");
+                allow.remove(position);
+                rules.remove(&rule);
+                created_rules.remove(&rule);
+            }
+            observed_preexisting = preexisting.clone();
+            let allow_empty = allow.is_empty();
+            if allow_empty && created_allow_array {
+                permissions.remove("allow");
+            }
+            if permissions.is_empty() && created_permissions_object {
+                map.remove("permissions");
+            }
+            if !rules.is_empty() {
+                permissions_registration =
+                    Some(crate::project_receipt::ReadonlyPermissionRegistration {
+                        settings: path.into(),
+                        rules,
+                        preexisting,
+                        created_file,
+                        created_permissions_object,
+                        created_allow_array,
+                        created_rules,
+                    });
+            }
         }
     }
-    if new.is_none()
-        && old.is_some_and(|old| old.created_file)
-        && settings.as_object().is_some_and(|o| o.is_empty())
+    let hooks_registration = new_hooks.and_then(|new| {
+        if new.is_empty() {
+            return None;
+        }
+        Some(match old_hooks {
+            Some(old) => {
+                let mut registration = old.clone();
+                for event in new.keys() {
+                    let before_hooks = if top_level {
+                        original.as_ref()
+                    } else {
+                        original.as_ref().and_then(|document| document.get("hooks"))
+                    };
+                    if before_hooks.and_then(|hooks| hooks.get(event)).is_none()
+                        && !registration.created_event_keys.contains(event)
+                    {
+                        registration.created_event_keys.push(event.clone());
+                    }
+                }
+                registration.entries = new.clone();
+                registration.created_file = created_file;
+                registration
+            }
+            None => {
+                let before_hooks = if top_level {
+                    original.as_ref()
+                } else {
+                    original.as_ref().and_then(|document| document.get("hooks"))
+                };
+                Registration {
+                    settings: path.into(),
+                    entries: new.clone(),
+                    created_file,
+                    created_hook_map: !top_level
+                        && original
+                            .as_ref()
+                            .and_then(|document| document.get("hooks"))
+                            .is_none(),
+                    created_event_keys: new
+                        .keys()
+                        .filter(|event| before_hooks.and_then(|hooks| hooks.get(*event)).is_none())
+                        .cloned()
+                        .collect(),
+                    skill: None,
+                }
+            }
+        })
+    });
+    if new_hooks.is_none()
+        && permissions_registration.is_none()
+        && (old_hooks.is_some() || old_permissions.is_some())
+        && created_file
+        && settings.as_object().is_some_and(|object| object.is_empty())
     {
-        return Ok(Change {
-            path: path.into(),
-            permissions: before.permissions.clone(),
-            before,
-            after: None,
+        return Ok(HostSettingsChange {
+            change: Change {
+                path: path.into(),
+                permissions: before.permissions.clone(),
+                before,
+                after: None,
+            },
+            hooks: None,
+            permissions: None,
+            preexisting: observed_preexisting,
         });
     }
-    let after = if before
-        .bytes
-        .as_ref()
-        .is_some_and(|bytes| input::json(bytes, 1_048_576, 32).ok().as_ref() == Some(&settings))
-    {
+    let after = if before.bytes.is_some() && original.as_ref() == Some(&settings) {
         before.bytes.clone().unwrap()
     } else {
         [
@@ -675,11 +884,16 @@ fn registration_change_recovering(
         ]
         .concat()
     };
-    Ok(Change {
-        path: path.into(),
-        permissions: before.permissions.clone(),
-        before,
-        after: Some(after),
+    Ok(HostSettingsChange {
+        change: Change {
+            path: path.into(),
+            permissions: before.permissions.clone(),
+            before,
+            after: Some(after),
+        },
+        hooks: hooks_registration,
+        permissions: permissions_registration,
+        preexisting: observed_preexisting,
     })
 }
 

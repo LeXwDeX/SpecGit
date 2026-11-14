@@ -2,13 +2,17 @@
 use super::*;
 use std::collections::BTreeSet;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Options {
     pub agents: Vec<Agent>,
     pub opencode_claude_hooks: bool,
     pub uninstall: bool,
     pub dry_run: bool,
     pub rollback: Option<String>,
+    /// Install the managed read-only command allowlist on explicitly selected hosts.
+    pub readonly_permissions: bool,
+    /// Remove the managed read-only command allowlist from explicitly selected hosts.
+    pub remove_readonly_permissions: bool,
 }
 
 use crate::project_receipt::ProjectReceipt;
@@ -76,6 +80,9 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             };
             registration.settings = root.join(relative);
         }
+        for registration in r.readonly_permissions.values_mut() {
+            registration.settings = root.join(".claude/settings.json");
+        }
         r
     } else {
         ProjectReceipt {
@@ -89,6 +96,7 @@ fn read(root: &Path, private: &Path) -> Result<(Snapshot, ProjectReceipt), Diagn
             instructions: BTreeMap::new(),
             hooks: BTreeMap::new(),
             purposes: BTreeMap::new(),
+            readonly_permissions: BTreeMap::new(),
         }
     };
     Ok((snapshot, receipt))
@@ -307,12 +315,34 @@ pub(crate) fn removal(root: &Path, private: &Path) -> Result<Vec<Change>, Diagno
             host,
         )?;
     }
+    let mut hosted: BTreeMap<
+        &str,
+        (
+            Option<&Registration>,
+            Option<&crate::project_receipt::ReadonlyPermissionRegistration>,
+        ),
+    > = BTreeMap::new();
     for (host, old) in &receipt.hooks {
-        add_proven_change(
-            registration_change(host, &old.settings, Some(old), None)?,
-            None,
+        hosted.entry(host.as_str()).or_default().0 = Some(old);
+    }
+    for (host, old) in &receipt.readonly_permissions {
+        hosted.entry(host.as_str()).or_default().1 = Some(old);
+    }
+    for (host, (old_hooks, old_permissions)) in hosted {
+        let path = old_hooks
+            .map(|old| old.settings.clone())
+            .or_else(|| old_permissions.map(|old| old.settings.clone()))
+            .expect("a recorded host has a settings path");
+        let outcome = host_settings_change(
             host,
+            &path,
+            old_hooks,
+            None,
+            &BTreeSet::new(),
+            old_permissions,
+            None,
         )?;
+        add_proven_change(outcome.change, None, host)?;
     }
     changes.push(Change {
         path: receipt_path,
@@ -340,6 +370,15 @@ pub fn install_with_hooks(
     source: &Path,
 ) -> Result<Value, Diagnostic> {
     install_plan(options, hooks, root, private, source, None, None)
+}
+
+fn host_for(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Generic => "generic",
+        Agent::Claude => "claude",
+        Agent::Codex => "codex",
+        Agent::Opencode => "opencode",
+    }
 }
 
 fn purposes_for(previous: &ProjectReceipt, host: &str) -> (BTreeSet<HookPurpose>, bool) {
@@ -551,6 +590,8 @@ pub(crate) fn initialization_changes(
         uninstall: false,
         dry_run: false,
         rollback: None,
+        readonly_permissions: false,
+        remove_readonly_permissions: false,
     };
     let source = std::env::current_exe()
         .map_err(|_| Diagnostic::input("Current executable is unavailable."))?;
@@ -646,6 +687,25 @@ fn install_plan_with_removals(
             "Uninstall and rollback cannot be combined with hook selection.",
         ));
     }
+    if options.readonly_permissions && options.remove_readonly_permissions {
+        return Err(Diagnostic::input(
+            "Read-only permission installation and removal cannot be combined.",
+        ));
+    }
+    if (options.readonly_permissions || options.remove_readonly_permissions)
+        && options.agents.is_empty()
+    {
+        return Err(Diagnostic::input(
+            "Read-only permissions require an explicit --agent selection.",
+        ));
+    }
+    if (options.readonly_permissions || options.remove_readonly_permissions)
+        && (options.uninstall || options.rollback.is_some())
+    {
+        return Err(Diagnostic::input(
+            "Read-only permissions cannot be combined with uninstall or rollback.",
+        ));
+    }
     if options.dry_run && options.rollback.is_some()
         || options.uninstall && options.rollback.is_some()
     {
@@ -737,6 +797,17 @@ fn install_plan_with_removals(
     if options.opencode_claude_hooks && !selected.contains(&Agent::Opencode) {
         return Err(Diagnostic::input(
             "Custom OpenCode Claude-compatible hooks require --agent opencode.",
+        ));
+    }
+    if options.remove_readonly_permissions
+        && (snapshot.bytes.is_none()
+            || options.agents.iter().any(|agent| {
+                *agent != Agent::Claude
+                    || !previous.readonly_permissions.contains_key(host_for(*agent))
+            }))
+    {
+        return Err(Diagnostic::input(
+            "Read-only permission removal requires recorded permissions on every selected agent.",
         ));
     }
     if !removed.is_empty()
@@ -833,6 +904,7 @@ fn install_plan_with_removals(
         instructions: BTreeMap::new(),
         hooks: BTreeMap::new(),
         purposes: BTreeMap::new(),
+        readonly_permissions: BTreeMap::new(),
     };
     receipt.purposes = receipt_purposes;
     let mut changes = migration;
@@ -972,6 +1044,45 @@ fn install_plan_with_removals(
         changes.retain(|c| c.path != change.path);
         changes.push(change);
     }
+    let permission_requested: BTreeSet<&str> = if options.readonly_permissions {
+        options
+            .agents
+            .iter()
+            .filter(|agent| **agent == Agent::Claude)
+            .map(|_| "claude")
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    let permission_declined: Vec<Value> = if options.readonly_permissions {
+        options
+            .agents
+            .iter()
+            .filter_map(|agent| {
+                super::permissions::decline_reason(*agent).map(|reason| {
+                    json!({"host": host_for(*agent), "status": "unsupported", "reason": reason})
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let permission_removal_requested: BTreeSet<&str> = if options.remove_readonly_permissions {
+        options
+            .agents
+            .iter()
+            .filter(|agent| **agent == Agent::Claude)
+            .map(|_| "claude")
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    let permission_removed: BTreeSet<&str> = permission_removal_requested
+        .iter()
+        .filter(|host| previous.readonly_permissions.contains_key(**host))
+        .copied()
+        .collect();
+    let mut permission_preexisting: BTreeSet<String> = BTreeSet::new();
     for (agent, host, relative) in [
         (Agent::Claude, "claude", ".claude/settings.json"),
         (Agent::Codex, "codex", ".codex/hooks.json"),
@@ -981,13 +1092,37 @@ fn install_plan_with_removals(
             continue;
         }
         let path = root.join(relative);
-        let old = previous.hooks.get(host);
+        let old_hooks = previous.hooks.get(host);
         let entries = plans.get(host);
-        if entries.is_none() && old.is_none() {
+        let old_permissions = previous.readonly_permissions.get(host);
+        let targeted = options.agents.contains(&agent);
+        let desired = if options.uninstall || (options.remove_readonly_permissions && targeted) {
+            None
+        } else if old_permissions.is_some()
+            || (options.readonly_permissions && targeted && agent == Agent::Claude)
+        {
+            Some(super::permissions::claude_allow_rules())
+        } else {
+            None
+        };
+        if entries.is_none()
+            && old_hooks.is_none()
+            && old_permissions.is_none()
+            && desired.is_none()
+        {
             continue;
         }
-        let change = registration_change(host, &path, old, entries)?;
-        if old.is_some() {
+        let outcome = host_settings_change(
+            host,
+            &path,
+            old_hooks,
+            entries,
+            &BTreeSet::new(),
+            old_permissions,
+            desired.as_ref(),
+        )?;
+        let change = outcome.change;
+        if old_hooks.is_some() || old_permissions.is_some() {
             let proofs = owned_pair(
                 private,
                 &receipt_path,
@@ -1010,57 +1145,22 @@ fn install_plan_with_removals(
                 }
             }
         }
-        if let Some(entries) = entries {
-            let mut registration = if let Some(old) = old {
-                old.clone()
-            } else {
-                let before = match &change.before.bytes {
-                    Some(bytes) => input::json(bytes, 1_048_576, 32)?,
-                    None => json!({}),
-                };
-                Registration {
-                    settings: path,
-                    entries: BTreeMap::new(),
-                    created_file: change.before.bytes.is_none(),
-                    created_hook_map: host != "opencode" && before.get("hooks").is_none(),
-                    created_event_keys: entries
-                        .keys()
-                        .filter(|event| {
-                            (if host == "opencode" {
-                                Some(&before)
-                            } else {
-                                before.get("hooks")
-                            })
-                            .and_then(|hooks| hooks.get(*event))
-                            .is_none()
-                        })
-                        .cloned()
-                        .collect(),
-                    skill: None,
-                }
-            };
-            // Newly introduced events are owned only when no event key existed before.
-            let before = match &change.before.bytes {
-                Some(bytes) => input::json(bytes, 1_048_576, 32)?,
-                None => json!({}),
-            };
-            for event in entries.keys() {
-                let map = if host == "opencode" {
-                    Some(&before)
-                } else {
-                    before.get("hooks")
-                };
-                if map.and_then(|m| m.get(event)).is_none()
-                    && !registration.created_event_keys.contains(event)
-                {
-                    registration.created_event_keys.push(event.clone());
-                }
-            }
-            registration.entries = entries.clone();
+        if let Some(registration) = outcome.hooks {
             receipt.hooks.insert(host.into(), registration);
         }
+        if let Some(registration) = outcome.permissions {
+            receipt
+                .readonly_permissions
+                .insert(host.into(), registration);
+        }
+        permission_preexisting.extend(outcome.preexisting);
         changes.push(change);
     }
+    receipt.version = if receipt.readonly_permissions.is_empty() {
+        4
+    } else {
+        5
+    };
     // Mint an identity only after every existing asset proved its ownership.
     // Refresh keeps it stable; a later reinstall starts a distinct history.
     if !options.uninstall && receipt.generation.is_none() {
@@ -1087,6 +1187,22 @@ fn install_plan_with_removals(
     let summary: Vec<_> = changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
     let mut evidence = json!({"schema_version":2,"version":VERSION,"scope":"project","root":root,"private":private,"agents":selected,"opencode_claude_hooks":custom_opencode,"assets":summary,"written":false,"manifest_exported":false,"operation":if options.uninstall{"uninstall"}else if snapshot.bytes.is_some(){"update"}else{"install"},"registration":if options.uninstall{"removal_planned"}else{"write_planned"},"codex_trust":if selected.contains(&Agent::Codex){"review_in_host_required"}else{"not_applicable"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}});
     evidence["hook_purposes"] = Value::Object(purpose_evidence);
+    let installed_permissions: BTreeSet<&str> = receipt
+        .readonly_permissions
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let preexisting_permissions: BTreeSet<&str> =
+        permission_preexisting.iter().map(String::as_str).collect();
+    evidence["readonly_permissions"] = json!({
+        "requested": permission_requested,
+        "installed": installed_permissions,
+        "preexisting": preexisting_permissions,
+        "removal_requested": permission_removal_requested,
+        "removed": permission_removed,
+        "removal_status": if permission_removed.is_empty() { "unchanged" } else { "removed" },
+        "declined": permission_declined,
+    });
     if let Some(planned) = planned {
         *planned = Some(Prepared {
             changes,
@@ -1341,6 +1457,7 @@ fn health_plan_inner(
         instructions: BTreeMap::new(),
         hooks: BTreeMap::new(),
         purposes: BTreeMap::new(),
+        readonly_permissions: BTreeMap::new(),
     };
     for (agent, host) in [
         (Agent::Generic, "generic"),
@@ -1430,72 +1547,103 @@ fn health_plan_inner(
     } else {
         Some(shared_executable(source, root)?)
     };
+    let mut hosted: BTreeMap<
+        &str,
+        (
+            Option<&Registration>,
+            Option<&crate::project_receipt::ReadonlyPermissionRegistration>,
+        ),
+    > = BTreeMap::new();
     for (host, old) in &previous.hooks {
-        let path = &old.settings;
-        let current = Snapshot::read(path)?;
+        hosted.entry(host.as_str()).or_default().0 = Some(old);
+    }
+    for (host, old) in &previous.readonly_permissions {
+        hosted.entry(host.as_str()).or_default().1 = Some(old);
+    }
+    for (host, (old_hooks, old_permissions)) in hosted {
+        let path = old_hooks
+            .map(|old| old.settings.clone())
+            .or_else(|| old_permissions.map(|old| old.settings.clone()))
+            .expect("a recorded host has a settings path");
+        let current = Snapshot::read(&path)?;
         if current.bytes.is_none() {
             return Err(conflict_at(
                 host,
-                path,
+                &path,
                 None,
                 "Missing host settings may contain manual content and cannot be reconstructed.",
             ));
         }
-        let proof = owned_pair(private, &receipt_path, &snapshot, path, &current, None)?
+        let proof = owned_pair(private, &receipt_path, &snapshot, &path, &current, None)?
             .ok_or_else(|| {
                 conflict_at(
                     host,
-                    path,
+                    &path,
                     None,
                     "Host settings ownership or permissions cannot be proved.",
                 )
             })?;
         add_proofs(proof);
-        let (mut purposes, _) = purposes_for(&previous, host);
-        purposes.remove(&HookPurpose::Observe);
-        next.purposes.insert(host.clone(), purposes.clone());
-        let agent = match host.as_str() {
-            "claude" => Agent::Claude,
-            "codex" => Agent::Codex,
-            "opencode" => Agent::Opencode,
-            _ => {
-                return Err(conflict_at(
-                    host,
-                    path,
-                    None,
-                    "Unsupported recorded hook host.",
-                ));
-            }
-        };
-        let entries = purpose_manifest(source, agent, &purposes, false)?;
-        let document = input::json(current.bytes.as_deref().expect("checked"), 1_048_576, 32)?;
-        let hooks = if host == "opencode" {
-            &document
-        } else {
-            &document["hooks"]
-        };
-        let recover_missing: BTreeSet<String> = old
-            .entries
-            .keys()
-            .filter(|event| {
-                hooks.get(event.as_str()).is_none() && old.created_event_keys.contains(*event)
-            })
-            .cloned()
-            .collect();
-        let change = registration_change_recovering(
-            host,
-            path,
-            Some(old),
-            (!entries.is_empty()).then_some(&entries),
-            &recover_missing,
-        )?;
-        let mut registration = old.clone();
-        registration.entries = entries;
-        if !registration.entries.is_empty() {
-            next.hooks.insert(host.clone(), registration);
+        let mut entries = None;
+        let mut recover_missing = BTreeSet::new();
+        if let Some(old) = old_hooks {
+            let (mut purposes, _) = purposes_for(&previous, host);
+            purposes.remove(&HookPurpose::Observe);
+            next.purposes.insert(host.to_owned(), purposes.clone());
+            let agent = match host {
+                "claude" => Agent::Claude,
+                "codex" => Agent::Codex,
+                "opencode" => Agent::Opencode,
+                _ => {
+                    return Err(conflict_at(
+                        host,
+                        &path,
+                        None,
+                        "Unsupported recorded hook host.",
+                    ));
+                }
+            };
+            let manifest = purpose_manifest(source, agent, &purposes, false)?;
+            let document = input::json(current.bytes.as_deref().expect("checked"), 1_048_576, 32)?;
+            let hooks = if host == "opencode" {
+                &document
+            } else {
+                &document["hooks"]
+            };
+            recover_missing = old
+                .entries
+                .keys()
+                .filter(|event| {
+                    hooks.get(event.as_str()).is_none() && old.created_event_keys.contains(*event)
+                })
+                .cloned()
+                .collect();
+            entries = (!manifest.is_empty()).then_some(manifest);
         }
-        changes.push(change);
+        let desired = old_permissions.map(|_| super::permissions::claude_allow_rules());
+        let outcome = host_settings_change(
+            host,
+            &path,
+            old_hooks,
+            entries.as_ref(),
+            &recover_missing,
+            old_permissions,
+            desired.as_ref(),
+        )?;
+        if let Some(registration) = outcome.hooks {
+            next.hooks.insert(host.to_owned(), registration);
+        }
+        if let Some(registration) = outcome.permissions {
+            next.readonly_permissions
+                .insert(host.to_owned(), registration);
+        }
+        changes.push(outcome.change);
     }
+    next.version = if next.readonly_permissions.is_empty() {
+        4
+    } else {
+        5
+    };
     if let Some(executable) = executable {
         dependencies.push(Change {
             path: source.into(),
@@ -1736,7 +1884,7 @@ pub async fn run_with_hook_removals(
         let exclude = crate::local_exclude::path(&process, &root).await?;
         let private = git_dir.join("specgit-v2/agent-assets");
         if let Some(id) = &options.rollback {
-            if options.dry_run || options.uninstall || !options.agents.is_empty() || options.opencode_claude_hooks || !hooks.purposes.is_empty() || !removals.is_empty() || hooks.opencode_async_rewake {
+            if options.dry_run || options.uninstall || !options.agents.is_empty() || options.opencode_claude_hooks || !hooks.purposes.is_empty() || !removals.is_empty() || hooks.opencode_async_rewake || options.readonly_permissions || options.remove_readonly_permissions {
                 return Err(Diagnostic::input("Rollback restores a recorded transaction; omit installation changes."));
             }
             if !id.starts_with("tx-") || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
