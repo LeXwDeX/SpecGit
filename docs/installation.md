@@ -144,8 +144,10 @@ migrates consistent legacy receipts locally to v4, or to v5 while a managed
 read-only permission registration exists, without reading or writing the
 retired global root. Version 5 appears only with managed read-only permissions;
 removing the last managed rule returns the receipt to v4. V4 receipts require
-CLI 2.13 or newer; recovering version 3 transaction journals requires CLI 2.14
-or newer. A receipt newer than v5 requires an upgraded CLI; to downgrade, remove
+CLI 2.13 or newer. V5 receipts require the CLI release that introduced managed
+read-only permissions, newer than 2.20.2; CLI 2.13–2.20.x reject v5 as a newer
+receipt. Recovering version 3 transaction journals requires CLI 2.14 or newer.
+A receipt newer than v5 requires an upgraded CLI; to downgrade, remove
 the managed read-only permissions with the newer CLI first. Check both formats
 before a binary downgrade, which does not undo receipt, journal or asset changes.
 Do not use v1 `init --force`, `finish` or npm installation instructions with v2.

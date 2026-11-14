@@ -41,10 +41,6 @@ const READ_ONLY_COMMANDS: &[ReadOnlyCommand] = &[
         safety: "Plans project assets without creating files, locks or transactions.",
     },
     ReadOnlyCommand {
-        argv: &["doctor", "--offline"],
-        safety: "Runs local static checks without authentication or network probes.",
-    },
-    ReadOnlyCommand {
         argv: &["init", "--dry-run"],
         safety: "Previews project initialization without writes.",
     },
@@ -54,7 +50,7 @@ const READ_ONLY_COMMANDS: &[ReadOnlyCommand] = &[
     },
     ReadOnlyCommand {
         argv: &["issue", "--dry-run"],
-        safety: "Previews Issue preparation without local or native writes.",
+        safety: "Previews Issue preparation with bounded native reads and a transaction lock marker, without checkpoint, project or native writes.",
     },
     ReadOnlyCommand {
         argv: &["issue", "--inspect"],
@@ -62,7 +58,7 @@ const READ_ONLY_COMMANDS: &[ReadOnlyCommand] = &[
     },
     ReadOnlyCommand {
         argv: &["pr", "--dry-run"],
-        safety: "Previews request preparation without local or native writes.",
+        safety: "Previews request preparation with bounded native reads and a transaction lock marker, without checkpoint, project or native writes.",
     },
     ReadOnlyCommand {
         argv: &["pr", "--inspect"],
@@ -92,6 +88,8 @@ const READ_ONLY_COMMANDS: &[ReadOnlyCommand] = &[
 
 /// Commands that stay outside the allowlist. `pr --status` is excluded because a
 /// verified merged request makes it write `delivered_request` to the checkpoint.
+/// `doctor` is excluded in every mode: `--offline` only skips probes and does not
+/// conflict with the writing `--fix`, so no safe doctor prefix exists.
 pub fn read_only_commands() -> &'static [ReadOnlyCommand] {
     READ_ONLY_COMMANDS
 }
@@ -145,6 +143,7 @@ mod tests {
             assert!(!rule.contains("--status"), "{rule}");
             assert!(!rule.contains("--apply"), "{rule}");
             assert!(!rule.contains("--fix"), "{rule}");
+            assert!(!rule.contains("doctor"), "{rule}");
             assert!(!rule.contains("watch"), "{rule}");
             assert!(!rule.contains("inbox"), "{rule}");
             assert!(!rule.contains("migrate"), "{rule}");

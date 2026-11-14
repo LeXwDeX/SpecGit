@@ -1120,12 +1120,14 @@ write command are also excluded. The set is a compile-time security asset, not
 user configuration, so neither a receipt nor a refresh can widen write
 authority.
 
-The 18 managed rules are `status`, `--help`, `--version`, `--schema`,
-`setup --catalog`, `setup --dry-run`, `doctor --offline`, `init --dry-run`,
+The 17 managed rules are `status`, `--help`, `--version`, `--schema`,
+`setup --catalog`, `setup --dry-run`, `init --dry-run`,
 `init --inspect`, `issue --dry-run`, `issue --inspect`, `pr --dry-run`,
 `pr --inspect`, `update --check`, `skill --user --dry-run`,
 `guard --install --dry-run`, `guard --uninstall --dry-run` and
-`remove --dry-run`.
+`remove --dry-run`. `doctor` is not allowlisted in any mode: `--offline` only
+skips probes and does not conflict with `--fix`, which repairs recorded project
+assets, so a `doctor --offline` prefix would authorize writes.
 
 Installation appends only missing managed rules at the end of the existing
 array and preserves user rules and their order. An existing same-named rule is
@@ -1163,8 +1165,9 @@ permission registration exists; otherwise the receipt stays at version 4, and
 removing the last managed rule returns it to version 4. A v5 receipt has the
 single key `claude`, which must also be a selected agent; its settings path must
 be `root/.claude/settings.json`; `rules` is non-empty, at most 64 entries and at
-most 256 characters per entry; rules have the `Bash(specgit ...)` shape without
-line breaks, `;`, `|`, `&`, `$`, backticks or quotes; `created_rules` is a
+most 256 characters per entry; rules have the exact `Bash(specgit <argv> *)`
+shape with non-empty argv and no parentheses, and without line breaks, `;`, `|`,
+`&`, `$`, backticks or quotes; `created_rules` is a
 subset of `rules`; `rules` and `preexisting` are disjoint; and a same-host hooks
 registration uses the same settings path and `created_file`. Decoding does not
 check that recorded rules belong to the current constant set. Valid v1-v3
