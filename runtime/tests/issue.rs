@@ -2172,6 +2172,158 @@ fn duplicate_search_quotes_title_syntax_and_rejects_foreign_repository_rows() {
 }
 
 #[test]
+fn scoped_and_breaking_titles_prepare_under_both_providers() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let title = "feat(dag)!: scoped breaking summary";
+        let preview = f.run(&["issue", title, "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{provider}: {preview}");
+        assert_eq!(
+            preview["evidence"]["prepared"][0]["title"], title,
+            "{provider}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["prepared"][0]["labels"],
+            json!(["kind::feat"]),
+            "{provider}: {preview}"
+        );
+        assert_eq!(f.writes(), 0, "{provider}");
+    }
+}
+
+#[test]
+fn invalid_scope_is_rejected_without_writes_under_both_providers() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        let rejected = f.run(&["issue", "feat(): x", "--dry-run"]);
+        assert_eq!(rejected["exit"], 2, "{provider}: {rejected}");
+        assert_eq!(
+            rejected["diagnostics"][0]["code"], "invalid_input",
+            "{provider}: {rejected}"
+        );
+        assert_eq!(
+            rejected["diagnostics"][0]["operation"], "input",
+            "{provider}: {rejected}"
+        );
+        assert!(
+            rejected["diagnostics"][0]["remedy"]
+                .as_str()
+                .unwrap()
+                .contains("type[(scope)][!]: summary"),
+            "{provider}: {rejected}"
+        );
+        assert_eq!(f.writes(), 0, "{provider}");
+    }
+}
+
+#[test]
+fn off_mode_accepts_scoped_titles_but_still_rejects_unknown_types() {
+    for provider in ["github", "gitlab"] {
+        let f = Fixture::new(provider);
+        fs::write(
+            f.root.join(".specgit.yaml"),
+            format!(
+                "version: 2\nremote: origin\nprovider: {provider}\nvalidation:\n  labels: off\n"
+            ),
+        )
+        .unwrap();
+        let preview = f.run(&["issue", "feat(dag): off mode summary", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{provider}: {preview}");
+        assert_eq!(
+            preview["evidence"]["prepared"][0]["title"], "feat(dag): off mode summary",
+            "{provider}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["prepared"][0]["labels"],
+            json!([]),
+            "{provider}: {preview}"
+        );
+        let rejected = f.run(&["issue", "unknown(dag): off mode summary", "--dry-run"]);
+        assert_eq!(rejected["exit"], 2, "{provider}: {rejected}");
+        assert_eq!(
+            rejected["diagnostics"][0]["code"], "invalid_input",
+            "{provider}: {rejected}"
+        );
+        assert_eq!(f.writes(), 0, "{provider}");
+    }
+}
+
+#[test]
+fn github_duplicate_search_strips_the_whole_scoped_header() {
+    let f = Fixture::new("github");
+    let result = f.run(&["issue", "--inspect", "feat(dag)!: scoped summary only"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    let state = f.state();
+    let queries: Vec<_> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["endpoint"].as_str())
+        .filter(|route| route.starts_with("search/issues?"))
+        .collect();
+    assert!(!queries.is_empty());
+    for query in queries {
+        assert!(
+            query.contains("in%3Atitle+%22scoped+summary+only%22"),
+            "{query}"
+        );
+        assert!(!query.contains("feat") && !query.contains("dag"), "{query}");
+    }
+}
+
+#[test]
+fn duplicate_search_matches_the_summary_across_scopes() {
+    let f = Fixture::new("github");
+    for title in ["feat(dag): shared summary", "fix(other)!: shared summary"] {
+        let result = f.run(&["issue", "--inspect", title]);
+        assert_eq!(result["exit"], 0, "{title}: {result}");
+    }
+    let state = f.state();
+    let queries: Vec<_> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["endpoint"].as_str())
+        .filter(|route| route.starts_with("search/issues?") && route.contains("is%3Aopen"))
+        .collect();
+    // The header is stripped to the summary, so different scopes intentionally
+    // share one open-search query and widen the candidate set.
+    assert_eq!(queries.len(), 2, "{queries:?}");
+    assert_eq!(queries[0], queries[1], "{queries:?}");
+    assert!(
+        queries[0].contains("in%3Atitle+%22shared+summary%22"),
+        "{queries:?}"
+    );
+    assert!(
+        !queries[0].contains("dag") && !queries[0].contains("other"),
+        "{queries:?}"
+    );
+}
+
+#[test]
+fn plain_title_duplicate_query_remains_byte_identical() {
+    let f = Fixture::new("github");
+    let result = f.run(&["issue", "--inspect", "fix: history"]);
+    assert_eq!(result["exit"], 0, "{result}");
+    let state = f.state();
+    let queries: Vec<_> = state["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["endpoint"].as_str())
+        .filter(|route| route.starts_with("search/issues?"))
+        .collect();
+    let expected = [
+        candidate_route("github", false),
+        candidate_route("github", true),
+    ];
+    assert_eq!(
+        queries,
+        expected.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn github_uses_existing_label_case_for_pool_and_issue_readback() {
     let f = Fixture::new("github");
     f.edit(|s| s["labels"] = json!([{"name":"Kind::Feat","color":"112233"}]));

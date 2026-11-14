@@ -449,7 +449,7 @@ fn session_rules_state_the_declared_label_mode() {
             "en",
             "kind",
             "",
-            "Label mode kind: omit --tags so the title derives one kind::<type>",
+            "Label mode kind: omit --tags so the type of the `type[(scope)][!]` header derives one kind::<type>",
         ),
         (
             "en",
@@ -467,7 +467,7 @@ fn session_rules_state_the_declared_label_mode() {
             "zh",
             "kind",
             "",
-            "Label 模式 kind：省略 --tags，由标题派生唯一 kind::<type>",
+            "Label 模式 kind：省略 --tags，由标题头 `type[(scope)][!]` 的 type 派生唯一 kind::<type>",
         ),
         (
             "zh",
