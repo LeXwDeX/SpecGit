@@ -3,208 +3,239 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SpecGit — 从 Issue 规格到已验证交付</title>
-<meta name="description" content="SpecGit 为 GitHub 与 GitLab 上的编码 Agent 提供统一的交付工作流：Issue 承载规格，原生 PR/MR 汇集实现，交付以验证结果为准。">
+<title>SpecGit — 从 Issue 规格到验证交付</title>
+<meta name="description" content="SpecGit 为编码 agent 提供 GitHub 与 GitLab 共享的交付工作流：规格写在 Issue，实现汇聚于原生 PR/MR，并以平台实时状态验证完成。">
 <link rel="stylesheet" href="../assets/style.css">
 <link rel="alternate" hreflang="en" href="../">
 <link rel="alternate" hreflang="zh-Hans" href="./">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" stop-color="#ff6a3d"/><stop offset="0.5" stop-color="#e85d9e"/><stop offset="1" stop-color="#4d9fff"/>
+</linearGradient>
+</defs></svg>
+
 <header class="site-header">
   <div class="wrap header-inner">
-    <a class="brand" href="../">SpecGit</a>
+    <a class="brand" href="../" aria-label="SpecGit 首页">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect class="mark-bg" x="2" y="2" width="28" height="28" rx="8"/><path d="M10 16.5l4 4 8-9" fill="none" stroke="#0a0e16" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      SpecGit
+    </a>
     <nav aria-label="主导航">
-      <a href="#overview">概览</a>
-      <a href="#install">安装</a>
+      <a href="#workflow">工作流</a>
       <a href="#hosts">宿主</a>
-      <a href="#matrix">支持矩阵</a>
+      <a href="#matrix">矩阵</a>
       <a href="#download">下载</a>
       <a href="#docs">文档</a>
-      <a class="language" href="../" hreflang="en" lang="en">English</a>
+      <a class="language" href="../" hreflang="en" lang="en">EN</a>
+      <a class="gh-cta" href="https://github.com/LeXwDeX/SpecGit">GitHub</a>
     </nav>
   </div>
 </header>
 
 <main>
   <section class="hero" id="overview">
+    <div class="wrap hero-grid">
+      <div>
+        <p class="eyebrow">规格 · 实现 · 验证 · 交付</p>
+        <h1>从 Issue 规格到<span class="grad">验证交付。</span></h1>
+        <p class="lead">SpecGit 为编码 agent 提供 GitHub 与 GitLab 共享的交付工作流。规格写在 Issue，原生 PR/MR 汇聚所选 Issue 与实现，SpecGit 读取平台实时状态，让 agent 能修复失败、区分待办与已完成的交付。</p>
+        <p class="actions">
+          <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>
+            下载最新版
+          </a>
+          <a class="button" href="#workflow">查看交付管道</a>
+          <a class="button" href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">阅读 README</a>
+        </p>
+      </div>
+      <div class="hero-stage">
+        <span class="chip-float c1"><span class="dot" style="background:var(--green)"></span>已验证</span>
+        <span class="chip-float c2"><span class="dot" style="background:var(--amber)"></span>checkpoint</span>
+        <span class="chip-float c3"><span class="dot" style="background:var(--cyan)"></span>CI 通过</span>
+        <div class="terminal" role="img" aria-label="终端展示 SpecGit 从 Issue 到验证合并的交付过程">
+          <div class="term-bar"><span class="term-dot r"></span><span class="term-dot y"></span><span class="term-dot g"></span><span class="term-title">specgit — 交付</span></div>
+          <div class="term-body">
+            <span class="term-line"><span class="term-prompt">$</span> <span class="term-cmd">specgit issue 906 --branch feat/title-scope</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">已选 checkpoint ·</span> <span class="term-key">Issue #906</span></span>
+            <span class="term-line"><span class="term-prompt">$</span> <span class="term-cmd">specgit pr --ready</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">PR #909 ready · 目标</span> <span class="term-key">main</span></span>
+            <span class="term-line"><span class="term-prompt">$</span> <span class="term-cmd">specgit watch --checks</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">Required verification ·</span> <span class="term-ok">success</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">SpecGit Acceptance ·</span> <span class="term-ok">success</span></span>
+            <span class="term-line"><span class="term-ok">✓</span> <span class="term-out">已合并 ·</span> <span class="term-key">#906</span> <span class="term-out">已关闭 ·</span> <span class="term-ok">已验证</span><span class="cursor"></span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="workflow" class="pipeline">
     <div class="wrap">
-      <p class="eyebrow">Issue 规格 → 代码改动 → 原生 PR/MR → 已验证完成</p>
-      <h1>SpecGit</h1>
-      <p class="lead">SpecGit 为 GitHub 与 GitLab 上的编码 Agent 提供统一的交付工作流。Issue 承载规格；原生 PR/MR 汇集选中的 Issue 与实现。SpecGit 读取代码托管平台的当前状态，让 Agent 可以修复失败，并区分待处理工作与已完成的交付。</p>
-      <p class="actions">
-        <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">下载最新版本</a>
-        <a class="button" href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">阅读 README</a>
-        <a class="button" href="https://github.com/LeXwDeX/SpecGit/wiki/Home-zh">浏览 Wiki</a>
-      </p>
+      <div class="section-head reveal">
+        <p class="section-tag">交付管道</p>
+        <h2>一个 Issue，一条可追溯的上线路径。</h2>
+        <p>每个提交通过本地 checkpoint 绑定所选 Issue。SpecGit 汇聚原生 PR/MR 并观察平台，交付以实时状态验证——绝不靠假设。</p>
+      </div>
+      <div class="pipe-track">
+        <div class="stage s-issue reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/></svg><span class="stage-num">01</span></div>
+          <div class="stage-card"><h3>Issue 规格 <span class="pill">spec</span></h3><p>Issue 承载 原因 / 范围 / 方案 / 验收。<code>specgit issue --inspect</code> 在创建前对 WHY 查重。</p></div>
+        </div>
+        <div class="stage s-check reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6-5.2-6-10a6 6 0 1112 0c0 4.8-6 10-6 10z"/><circle cx="12" cy="11" r="2.4"/></svg><span class="stage-num">02</span></div>
+          <div class="stage-card"><h3>本地 checkpoint <span class="pill">bind</span></h3><p>checkpoint 在分支上记录所选 Issue。原生 Git guard 在每次 commit/push 检查它与 <code>Issue: #N</code> trailer。</p></div>
+        </div>
+        <div class="stage s-pr reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M6 8.6v6.8M18 15.4V9a3 3 0 00-3-3h-3"/></svg><span class="stage-num">03</span></div>
+          <div class="stage-card"><h3>原生 PR / MR <span class="pill">build</span></h3><p>agent 实施后由 <code>specgit pr</code> 把所选 Issue 汇聚为一个原生请求，保留关闭引用与 PR 模板。</p></div>
+        </div>
+        <div class="stage s-ci reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg><span class="stage-num">04</span></div>
+          <div class="stage-card"><h3>CI 与评审 <span class="pill">observe</span></h3><p><code>specgit watch</code> 与 <code>pr --status</code> 读取当前 head 的检查与评审。失败在范围内修复，绝不弱化保护。</p></div>
+        </div>
+        <div class="stage s-merge reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="12" r="2.6"/><path d="M6 8.6v6.8M8.6 6H12a3 3 0 013 3v.4"/></svg><span class="stage-num">05</span></div>
+          <div class="stage-card"><h3>合并 <span class="pill">ship</span></h3><p>必需检查通过且 head 干净时在平台合并。SpecGit 回读合并结果——退出码 0 本身从不等于完成。</p></div>
+        </div>
+        <div class="stage s-verify reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span class="stage-num">06</span></div>
+          <div class="stage-card"><h3>验证关闭 <span class="pill">verify</span></h3><p>仅当目标分支已合并、每个关联 Issue 以原生证据关闭时才确认交付——不靠本地猜测。</p></div>
+        </div>
+        <div class="stage s-release reveal">
+          <div class="stage-node"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M14 4c3-2 7-2 7-2s0 4-2 7l-7 7-5-5z"/><circle cx="15" cy="9" r="1.6"/></svg><span class="stage-num">07</span></div>
+          <div class="stage-card"><h3>签名发布 <span class="pill">release</span></h3><p>独立的签名 GitHub Release 发布三平台 ZIP 与 Cosign 签名的 <code>SHA256SUMS</code>。合并不等于发布。</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="principles">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <p class="section-tag">产品原则</p>
+        <h2>生而宿主中立。</h2>
+        <p>能力首先在 CLI 与原生 Git guard 中实现。宿主只增加提示与上下文——绝不承载业务规则。</p>
+      </div>
+      <div class="grid">
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><h3>零宿主可用</h3><p>项目无需任何宿主集成即可工作。共享 CLI 与 Git guard 独立交付完整工作流。</p></article>
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg></div><h3>原生 Git guard</h3><p>pre-commit/pre-push 检查把每个提交绑定到所选 Issue。不用 <code>--no-verify</code>，不弱化保护。</p></article>
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div><h3>实时状态验证</h3><p>SpecGit 读取平台当前状态，区分待办与已完成交付，并在范围内修复失败。</p></article>
+        <article class="card reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg></div><h3>受管宿主资产</h3><p>宿主指导、hooks 与只读白名单都是显式、受管、可刷新、可移除的——绝不写全局状态。</p></article>
+      </div>
     </div>
   </section>
 
   <section id="install">
     <div class="wrap">
-      <h2>安装</h2>
-      <p>在目标仓库中打开你的编码 Agent，让它阅读并遵循 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">Agent 安装指南</a>。指南会下载最新的已签名稳定 GitHub Release，校验签名与 SHA-256，安装共享 CLI，并初始化项目。</p>
-      <p>一个用户级可执行文件服务所有仓库与 worktree。最终用户安装不需要 Node.js、npm 或 Rust 编译器；仓库操作需要 Git 以及已认证的 <code>gh</code> 或 <code>glab</code>。GitHub Releases 是唯一分发渠道。</p>
-      <p>安装后，请对每个 clone 或 worktree 分别初始化，并查看离线能力清单：</p>
-      <pre><code>specgit init --provider github --remote origin --check --json
+      <div class="section-head reveal">
+        <p class="section-tag">安装</p>
+        <h2>一个可执行文件，服务所有仓库。</h2>
+        <p>在仓库中打开你的编码 agent，让它遵循 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">agent 安装指南</a>：下载最新签名 GitHub Release，校验签名与 SHA-256，安装共享 CLI 并初始化项目。无需 Node.js、npm 或 Rust 编译器。</p>
+      </div>
+      <div class="reveal">
+        <pre><code>specgit init --provider github --remote origin --check --json
 specgit init --provider github --remote origin --dry-run --json
 specgit init --provider github --remote origin --json
 specgit setup --catalog --json</code></pre>
-      <p>已安装？请使用 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">项目维护指南</a>，不要重复首次安装流程。</p>
+        <p class="note">已安装？请使用<a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">项目维护指南</a>。GitHub Releases 是唯一分发渠道。</p>
+      </div>
     </div>
   </section>
 
   <section id="hosts">
     <div class="wrap">
-      <h2>宿主快速上手</h2>
-      <p>SpecGit 的能力位于共享 CLI 与原生 Git guard 中，因此项目即使零宿主集成也能工作。用 <code>--agent</code> 选择宿主时只添加该宿主的指导与 Skill；hooks 与受管只读白名单是各自独立的显式选择。先用 <code>--dry-run</code> 预览，再执行不带该参数的命令应用。</p>
+      <div class="section-head reveal">
+        <p class="section-tag">宿主快速上手</p>
+        <h2>带上你自己的 agent。</h2>
+        <p>用 <code>--agent</code> 指定宿主只增加其指导与 Skill；hooks 与受管只读权限是独立的显式选择。先用 <code>--dry-run</code> 预览，再去掉它重复执行以应用。</p>
+      </div>
       <div class="grid">
-        <article class="card">
-          <h3>Generic</h3>
-          <p>指导入口写入 <code>AGENTS.md</code>，并使用规范 <code>.agents/skills/specgit-native/SKILL.md</code>。没有宿主回调；原生 Git guard 仍在 commit/push 时生效。</p>
-          <pre><code>specgit setup --agent generic --dry-run --json
-specgit setup --agent generic --json</code></pre>
-          <p class="note">回退：直接阅读指导与 Skill。详见：<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts-zh#generic">支持的宿主</a>。</p>
-        </article>
-
-        <article class="card">
-          <h3>Claude Code</h3>
-          <p>根 <code>CLAUDE.md</code> 入口、规范 <code>.agents</code> Skill，以及供宿主发现的 <code>.claude/skills/specgit-native/SKILL.md</code> 副本。上下文 hooks 与受管只读白名单均为可选项。</p>
-          <pre><code>specgit setup --agent claude --dry-run --json
+        <article class="card h-generic reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><h3>Generic</h3><p>指导写在 <code>AGENTS.md</code> 与规范的 <code>.agents/skills/specgit-native/SKILL.md</code>。无宿主回调；Git guard 仍生效。</p><pre><code>specgit setup --agent generic --dry-run --json
+specgit setup --agent generic --json</code></pre><p class="note">回退：直接阅读指导与 Skill。<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#generic">Supported Hosts</a>。</p></article>
+        <article class="card h-claude reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg></div><h3>Claude Code</h3><p>根 <code>CLAUDE.md</code>、规范 <code>.agents</code> Skill 加 <code>.claude/skills</code> 副本。上下文 hooks 与受管只读白名单可选。</p><pre><code>specgit setup --agent claude --dry-run --json
 specgit setup --agent claude --json
-specgit setup --agent claude --hook-purpose context --dry-run --json
-specgit setup --agent claude --hook-purpose context --json
-specgit setup --agent claude --readonly-permissions --dry-run --json
-specgit setup --agent claude --readonly-permissions --json</code></pre>
-          <p class="note">白名单只减少提示，不是沙箱或授权边界。详见：<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts-zh#claude-code">支持的宿主</a>。</p>
-        </article>
-
-        <article class="card">
-          <h3>Codex</h3>
-          <p>获得规范 <code>.agents</code> Skill，指导入口写入 <code>AGENTS.md</code>；若已存在非空的 <code>AGENTS.override.md</code>，则写入该文件。上下文 hooks 写入 <code>.codex/hooks.json</code>。</p>
-          <pre><code>specgit setup --agent codex --hook-purpose context --dry-run --json
-specgit setup --agent codex --hook-purpose context --json</code></pre>
-          <p class="note">须在宿主 <code>/hooks</code> 中信任项目 <code>.codex/</code> 层；在宿主实际导入前，注册状态为 <code>written_not_verified</code>。详见：<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts-zh#codex">支持的宿主</a>。</p>
-        </article>
-
-        <article class="card">
-          <h3>OpenCode</h3>
-          <p>官方构建获得根 <code>AGENTS.md</code> 入口与 <code>.agents</code> Skill；上下文 hooks 不支持。支持 Claude 兼容命令 hooks 的自定义 fork 可显式选择。</p>
-          <pre><code>specgit setup --agent opencode --dry-run --json
-specgit setup --agent opencode --json
-# 仅自定义 fork：
-specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --dry-run --json
-specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --json</code></pre>
-          <p class="note">回退：直接重读指导与 Skill，并使用有界 <code>watch</code>/<code>inbox</code>；Git guard 独立生效。详见：<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts-zh#opencode">支持的宿主</a>。</p>
-        </article>
+specgit setup --agent claude --readonly-permissions --json</code></pre><p class="note">白名单减少提示，不是沙箱。<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#claude-code">Supported Hosts</a>。</p></article>
+        <article class="card h-codex reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg></div><h3>Codex</h3><p>规范 <code>.agents</code> Skill，指导写在 <code>AGENTS.md</code> 或已存在的非空 <code>AGENTS.override.md</code>。上下文 hooks 写入 <code>.codex/hooks.json</code>。</p><pre><code>specgit setup --agent codex --hook-purpose context --dry-run --json
+specgit setup --agent codex --hook-purpose context --json</code></pre><p class="note">在宿主 <code>/hooks</code> 复核中信任 <code>.codex/</code> 层。<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#codex">Supported Hosts</a>。</p></article>
+        <article class="card h-opencode reveal"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></div><h3>OpenCode</h3><p>官方构建获得 <code>AGENTS.md</code> 入口与 <code>.agents</code> Skill；上下文 hooks 被拒绝。自定义 fork 可显式选用 Claude 兼容 hooks。</p><pre><code>specgit setup --agent opencode --dry-run --json
+specgit setup --agent opencode --json</code></pre><p class="note">回退：重读指导并用有界 <code>watch</code>/<code>inbox</code>。<a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts#opencode">Supported Hosts</a>。</p></article>
       </div>
     </div>
   </section>
 
   <section id="matrix">
     <div class="wrap">
-      <h2>支持矩阵</h2>
-      <p>维护中的汇总见 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">支持的编码 Agent</a> 与 <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts-zh">支持的宿主</a>；链接文档为准。</p>
-      <div class="table-scroll" role="region" aria-label="支持矩阵" tabindex="0">
+      <div class="section-head reveal">
+        <p class="section-tag">支持矩阵</p>
+        <h2>每个宿主获得什么。</h2>
+        <p>维护中的摘要见 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">Supported coding agents</a> 与 <a href="https://github.com/LeXwDeX/SpecGit/wiki/Supported-Hosts">Supported Hosts</a>；以链接文档为准。</p>
+      </div>
+      <div class="table-scroll reveal" role="region" aria-label="支持矩阵" tabindex="0">
         <table>
-          <thead>
-            <tr>
-              <th scope="col">宿主</th>
-              <th scope="col">指导入口</th>
-              <th scope="col">Skill 发现</th>
-              <th scope="col">上下文 hooks</th>
-              <th scope="col">受管只读白名单</th>
-              <th scope="col">回退</th>
-            </tr>
-          </thead>
+          <thead><tr><th scope="col">宿主</th><th scope="col">指导入口</th><th scope="col">Skill 发现</th><th scope="col">上下文 hooks</th><th scope="col">只读白名单</th><th scope="col">回退</th></tr></thead>
           <tbody>
-            <tr>
-              <td><code>generic</code></td>
-              <td><code>AGENTS.md</code></td>
-              <td>宿主读取 <code>.agents</code> 时使用 <code>.agents/skills/specgit-native/SKILL.md</code></td>
-              <td>无；不支持</td>
-              <td>不支持：宿主没有权限配置</td>
-              <td>直接阅读指导与 Skill</td>
-            </tr>
-            <tr>
-              <td>Claude Code</td>
-              <td><code>CLAUDE.md</code></td>
-              <td>规范 <code>.agents</code> Skill，另有 <code>.claude/skills/specgit-native/SKILL.md</code></td>
-              <td><code>.claude/settings.json</code> 的 SessionStart/PreToolUse</td>
-              <td>用 <code>--readonly-permissions</code> 写入 <code>.claude/settings.json</code> 的 <code>permissions.allow</code></td>
-              <td>重读指导与 Skill</td>
-            </tr>
-            <tr>
-              <td>Codex</td>
-              <td><code>AGENTS.md</code>，或已存在的非空 <code>AGENTS.override.md</code></td>
-              <td>规范 <code>.agents</code> Skill；Codex 从工作目录向上扫描到仓库根，并读取 <code>~/.agents/skills</code></td>
-              <td><code>.codex/hooks.json</code>；须在宿主 <code>/hooks</code> 中信任项目层</td>
-              <td>不支持：审批与沙箱仍属实验性</td>
-              <td>重读指导与 Skill</td>
-            </tr>
-            <tr>
-              <td>OpenCode（官方）</td>
-              <td><code>AGENTS.md</code></td>
-              <td><code>.agents</code> Skill；宿主还读取项目 <code>.opencode/</code> 与 <code>.claude/</code> skills</td>
-              <td>无；不支持</td>
-              <td>不支持：默认放行，无可移植白名单</td>
-              <td>重读指导与 Skill；使用有界 <code>watch</code>/<code>inbox</code></td>
-            </tr>
-            <tr>
-              <td>OpenCode 自定义 fork</td>
-              <td><code>AGENTS.md</code></td>
-              <td>同官方 OpenCode</td>
-              <td><code>.opencode/hooks.json</code>，<code>inputFormat: claude-code</code>；须 <code>--agent opencode --opencode-claude-hooks</code> 并显式指定 hook 用途</td>
-              <td>不支持</td>
-              <td>同官方 OpenCode</td>
-            </tr>
+            <tr><td><code>generic</code></td><td><code>AGENTS.md</code></td><td>宿主读取 <code>.agents</code> 时用 <code>.agents/skills/specgit-native/SKILL.md</code></td><td>无；declined</td><td>declined：无宿主权限配置</td><td>直接阅读指导与 Skill</td></tr>
+            <tr><td>Claude Code</td><td><code>CLAUDE.md</code></td><td>规范 <code>.agents</code> Skill 加 <code>.claude/skills/specgit-native/SKILL.md</code></td><td><code>.claude/settings.json</code> SessionStart/PreToolUse</td><td><code>.claude/settings.json</code> <code>permissions.allow</code> 配 <code>--readonly-permissions</code></td><td>重读指导与 Skill</td></tr>
+            <tr><td>Codex</td><td><code>AGENTS.md</code>，或已存在的非空 <code>AGENTS.override.md</code></td><td>规范 <code>.agents</code> Skill；从工作目录扫描到仓库根并读 <code>~/.agents/skills</code></td><td><code>.codex/hooks.json</code>；需宿主 <code>/hooks</code> 信任复核</td><td>declined：实验性审批与沙箱</td><td>重读指导与 Skill</td></tr>
+            <tr><td>OpenCode（官方）</td><td><code>AGENTS.md</code></td><td><code>.agents</code> Skill；宿主还读项目 <code>.opencode/</code> 与 <code>.claude/</code> skills</td><td>无；declined</td><td>declined：默认放行，无可移植白名单</td><td>重读指导与 Skill；有界 <code>watch</code>/<code>inbox</code></td></tr>
+            <tr><td>OpenCode 自定义 fork</td><td><code>AGENTS.md</code></td><td>同官方 OpenCode</td><td><code>.opencode/hooks.json</code> 配 <code>inputFormat: claude-code</code>；需 <code>--agent opencode --opencode-claude-hooks</code> 加显式 hook 用途</td><td>declined</td><td>同官方 OpenCode</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="note"><code>guard</code> 是原生 Git pre-commit/pre-push 检查，不是宿主回调。它对所有宿主生效，包括 generic：用 <code>setup --hook-purpose guard</code> 或 <code>specgit guard --install</code> 安装。上下文 hooks 是可选项，只负责提示和上下文，不承载业务规则。</p>
+      <p class="note reveal"><code>guard</code> 是原生 Git pre-commit/pre-push 检查，不是宿主回调。它对每个宿主（含 generic）生效，通过 <code>setup --hook-purpose guard</code> 或 <code>specgit guard --install</code> 安装。上下文 hooks 只提示与提供上下文，绝不承载业务规则。</p>
     </div>
   </section>
 
   <section id="download">
     <div class="wrap">
-      <h2>下载</h2>
-      <p>SpecGit 仅通过 <a href="https://github.com/LeXwDeX/SpecGit/releases/latest">GitHub Releases</a> 分发。最新稳定版提供：</p>
-      <ul>
-        <li><code>specgit-&lt;version&gt;-darwin-arm64.zip</code> — macOS arm64</li>
-        <li><code>specgit-&lt;version&gt;-linux-x64-gnu.zip</code> — Linux x64 glibc</li>
-        <li><code>specgit-&lt;version&gt;-win32-x64.zip</code> — Windows x64</li>
-        <li><code>SHA256SUMS</code> 与 <code>SHA256SUMS.sigstore.json</code> — 校验和清单及其 Sigstore 签名包</li>
-      </ul>
-      <p>用 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">发布产物校验参考</a> 校验签名与 SHA-256。签名只覆盖 <code>SHA256SUMS</code>，并由此覆盖 ZIP 字节；请另外交叉核对 tag commit 与原生构建工作流运行。</p>
-      <p class="actions">
-        <a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">打开发布页</a>
-      </p>
+      <div class="section-head reveal">
+        <p class="section-tag">下载</p>
+        <h2>签名的三平台发布。</h2>
+        <p>SpecGit 仅通过 <a href="https://github.com/LeXwDeX/SpecGit/releases/latest">GitHub Releases</a> 分发。最新稳定版提供：</p>
+      </div>
+      <div class="dl-grid">
+        <div class="dl-card reveal"><div class="os"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.8c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.7-.1 0-2.5-1-2.5-3.7zM14.1 5.9c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.8 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.8-1.3z"/></svg></div><h3>macOS</h3><p class="arch">specgit-&lt;version&gt;-darwin-arm64.zip</p></div>
+        <div class="dl-card reveal"><div class="os"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2c-2.2 0-3.5 1.6-3.5 4 0 1.5.4 2.6.4 4 0 1-.6 1.8-1.4 3-.9 1.3-2 2.8-2 4.6 0 .6.2 1.1.5 1.5-.3.2-.5.5-.5.9 0 .8 1 1.3 2.6 1.6.5.1 1 .4 1.4.7.5.4 1.2.7 2.5.7s2-.3 2.5-.7c.4-.3.9-.6 1.4-.7 1.6-.3 2.6-.8 2.6-1.6 0-.4-.2-.7-.5-.9.3-.4.5-.9.5-1.5 0-1.8-1.1-3.3-2-4.6-.8-1.2-1.4-2-1.4-3 0-1.4.4-2.5.4-4 0-2.4-1.3-4-3.5-4z"/></svg></div><h3>Linux</h3><p class="arch">specgit-&lt;version&gt;-linux-x64-gnu.zip</p></div>
+        <div class="dl-card reveal"><div class="os"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.5l7.5-1v7H3zM11.5 4.3L21 3v8.5h-9.5zM3 12.5h7.5v7L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg></div><h3>Windows</h3><p class="arch">specgit-&lt;version&gt;-win32-x64.zip</p></div>
+      </div>
+      <div class="verify-box reveal">
+        <p class="label"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>安装前先校验</p>
+        <p style="margin:0;color:var(--muted);font-size:0.92rem">每个发布附带 <code>SHA256SUMS</code> 与 <code>SHA256SUMS.sigstore.json</code>。Cosign 签名覆盖 <code>SHA256SUMS</code> 从而覆盖 ZIP 字节；请另行交叉核对 tag 提交与原生构建工作流运行。见<a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">发布资产校验参考</a>。</p>
+      </div>
+      <p class="actions reveal"><a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">打开最新 release</a></p>
     </div>
   </section>
 
   <section id="docs">
     <div class="wrap">
-      <h2>文档</h2>
-      <ul class="docs-list">
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md">README：产品、安装与工作流</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md">Agent 安装与初始化</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">已安装 CLI 的项目维护</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix">支持的编码 Agent 与发现边界</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">发布产物校验参考</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md">原生命令、配置与 JSON 契约</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/assets/SKILL.md">SpecGit Skill 工作流</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md">从 v1 迁移</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/distribution/README.md">发布流程与恢复</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/blob/main/CONTEXT.md">当前术语表</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/wiki">英文 Wiki</a></li>
-        <li><a href="https://github.com/LeXwDeX/SpecGit/wiki/Home-zh">中文 Wiki</a></li>
-      </ul>
+      <div class="section-head reveal">
+        <p class="section-tag">文档</p>
+        <h2>深入了解。</h2>
+      </div>
+      <div class="docs-grid reveal">
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/README.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12v18H6a2 2 0 01-2-2z"/><path d="M8 7h8M8 11h8"/></svg></span>README：产品、安装与工作流<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-install.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg></span>Agent 安装与初始化<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 11-2.3-5.6M20 4v4h-4"/></svg></span>已安装 CLI 的项目维护<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg></span>支持的编码 agent 与发现边界<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/></svg></span>发布资产校验参考<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/REFERENCE.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg></span>原生命令、配置与 JSON 契约<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/assets/SKILL.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5z"/></svg></span>SpecGit Skill 工作流<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/migration-v2.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h12l-3-3M20 17H8l3 3"/></svg></span>从 v1 迁移<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/runtime/distribution/README.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15c-1.5 1.5-2 5-2 5s3.5-.5 5-2M14 4c3-2 7-2 7-2s0 4-2 7l-7 7-5-5z"/></svg></span>发布流程与恢复<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/blob/main/CONTEXT.md"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>当前术语表<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/wiki"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12v18H6a2 2 0 01-2-2z"/></svg></span>英文 Wiki<span class="arr">→</span></a>
+        <a href="https://github.com/LeXwDeX/SpecGit/wiki/Home-zh"><span class="di"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12v18H6a2 2 0 01-2-2z"/></svg></span>中文 Wiki<span class="arr">→</span></a>
+      </div>
     </div>
   </section>
 </main>
 
 <footer class="site-footer">
   <div class="wrap">
-    <p>SpecGit 以 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/LICENSE">MIT License</a> 发布。本静态站点不包含分析、跟踪脚本或第三方资源；链接的仓库文档是唯一事实来源。</p>
+    <span class="foot-brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="mark-bg" x="2" y="2" width="28" height="28" rx="8"/><path d="M10 16.5l4 4 8-9" fill="none" stroke="#0a0e16" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>SpecGit</span>
+    <p>以 <a href="https://github.com/LeXwDeX/SpecGit/blob/main/LICENSE">MIT 许可证</a>发布。本静态站点无分析、跟踪脚本或第三方资产；以链接的仓库文档为准。</p>
   </div>
 </footer>
 </body>
