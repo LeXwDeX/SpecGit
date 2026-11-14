@@ -141,6 +141,11 @@ Missing title/body/label evidence is unknown; known invalid content is rejected.
 The agent still evaluates whether the content adequately explains the work.
 
 Keep the Conventional Commit type vocabulary used by the existing catalog.
+A title header is `type[(scope)][!]: summary`: the type must exactly match one
+catalog entry and is case-sensitive; the optional scope must be nonempty after
+trimming and cannot contain `(`, `)` or `:`; at most one `!` may immediately
+follow the type or scope before `: `. Only the type derives a label; scope and
+`!` do not.
 In `kind` label mode require exactly one `kind::<type>` and only declared extras;
 in `project` mode require a nonempty selection from the declared `tags` vocabulary.
 Select at most one member per scoped axis. Default `off` does not silently seed
@@ -333,7 +338,8 @@ adopt known issue/request IDs even when the original local checkpoint is gone.
 
 The native issue entry point accepts `specgit issue <id-or-title>...`, optional
 `--body-file <path>` once per new title, `--tags <a,b>`, `--branch <new-name>` and
-`--inspect`. The normalized option schema is
+`--inspect`. New titles use the `type[(scope)][!]: summary` header above. The
+normalized option schema is
 `runtime/schemas/issue-options.schema.json`; it describes CLI options and does not
 introduce a JSON-input transport. Inspect prepares specs and expands native
 duplicate candidates without creating a checkpoint or branch. New branches are

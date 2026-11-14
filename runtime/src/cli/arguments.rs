@@ -35,7 +35,7 @@ pub(super) enum Commands {
     Migrate(specgit::migrate::Options),
     /// Preview or reversibly remove only this project's proven owned integrations.
     Remove(specgit::remove::Options),
-    /// Prepare, create or adopt complete specs using native issues and a local checkpoint.
+    /// Prepare, create or adopt complete specs from `type[(scope)][!]: summary` titles and native issues.
     Issue(specgit::issue::Options),
     /// Create or adopt a native request after real pushed changes, preserving issue references.
     Pr(specgit::pr::Options),

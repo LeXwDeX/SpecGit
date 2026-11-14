@@ -112,7 +112,7 @@ Agent 补充关闭默认关闭。在任务内选择时，回读合并、预期�
 ## 原生 Issue 选择与请求
 
 commit/push 前，用 `issue --inspect` 查找重复的 WHY，并用 `issue` 选择完整相关的 Issue。确属不同工作时，比较候选，并用 `--reviewed-candidates` 提供每个精确的 `review_digest`；内容变化后需重新比较。
-标签遵循 `validation.labels`：`kind` 从标题推导一个 `kind::<type>`；`project` 要求声明的 `tags`；`off` 仅在被要求时传 `--tags`。不添加未声明的旧标签；缺失标签需显式 `--create-labels`。
+标签遵循 `validation.labels`：`kind` 从标题头 `type[(scope)][!]: summary` 的 type 推导一个 `kind::<type>`；scope 和 `!` 不产生标签；`project` 要求声明的 `tags`；`off` 仅在被要求时传 `--tags`。不添加未声明的旧标签；缺失标签需显式 `--create-labels`。
 普通编辑、规划类 Issue 操作、只读检查、审计和评审不需要编辑 checkpoint。纯文档仍需 Issue 和请求；仓库策略只能缩短其验证。本地 init/setup 属于维护，不选择 Issue，也不确立平台完成。
 
 先尝试正常的 SpecGit inspect/dry-run。若可复现的 SpecGit 缺陷阻碍 Issue 选择，记录命令、版本、退出码和诊断。

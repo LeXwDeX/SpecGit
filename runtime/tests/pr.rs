@@ -133,11 +133,16 @@ fn installed_guard_accepts_commit_and_push(f: &Fixture, provider: &str) {
     );
 }
 fn fixture(provider: &str, count: usize) -> Fixture {
-    let f = Fixture::new(provider);
-    let mut args = vec!["issue", "--create-labels", "feat: first spec"];
     if count == 2 {
-        args.push("fix: second spec");
+        fixture_titled(provider, &["feat: first spec", "fix: second spec"])
+    } else {
+        fixture_titled(provider, &["feat: first spec"])
     }
+}
+fn fixture_titled(provider: &str, titles: &[&str]) -> Fixture {
+    let f = Fixture::new(provider);
+    let mut args = vec!["issue", "--create-labels"];
+    args.extend_from_slice(titles);
     let r = f.run(&args);
     assert_eq!(r["exit"], 0, "{r}");
     let head = String::from_utf8(
@@ -972,6 +977,27 @@ fn kind_mode_request_tags_must_match_the_title_type() {
             "--dry-run",
         ]);
         assert_eq!(matching["exit"], 0, "{matching}");
+    }
+}
+
+#[test]
+fn kind_mode_request_inherits_a_scoped_issue_title_without_rewriting_it() {
+    for provider in ["github", "gitlab"] {
+        let title = "feat(dag): scoped issue title";
+        let f = fixture_titled(provider, &[title]);
+        let writes = f.writes();
+        let preview = f.run(&["pr", "--dry-run"]);
+        assert_eq!(preview["exit"], 0, "{provider}: {preview}");
+        assert_eq!(
+            preview["evidence"]["intent"]["title"], title,
+            "{provider}: {preview}"
+        );
+        assert_eq!(
+            preview["evidence"]["intent"]["labels"],
+            json!(["kind::feat"]),
+            "{provider}: {preview}"
+        );
+        assert_eq!(f.writes(), writes, "{provider}");
     }
 }
 

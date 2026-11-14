@@ -167,10 +167,9 @@ fn milestone_context(raw: &Value, repo: &Repository) -> crate::delivery_model::M
         .unwrap_or_else(unknown)
 }
 fn title_query(query: &str) -> String {
-    let summary = if crate::spec::kind(query).is_ok() {
-        query.split_once(':').map_or(query, |(_, summary)| summary)
-    } else {
-        query
+    let summary = match crate::spec::title_header(query) {
+        Ok(header) => header.summary,
+        Err(_) => query,
     };
     let summary: String = summary
         .chars()

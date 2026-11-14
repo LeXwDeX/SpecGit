@@ -17,7 +17,7 @@ use std::{
 
 #[derive(Debug, clap::Args)]
 pub struct Options {
-    /// Exact issue IDs to adopt or complete Conventional Commit titles to create.
+    /// Exact issue IDs to adopt or complete `type[(scope)][!]: summary` titles to create.
     #[arg(required_unless_present = "discard_uncertain", num_args = 1..)]
     pub specs: Vec<String>,
     /// One final Markdown body file per new title, in title order.
