@@ -421,8 +421,12 @@ participate. GitHub candidates with a deleted source repository are skipped.
 
 GitHub duplicate queries remove a recognized `type[(scope)][!]` header, neutralize
 qualifier syntax in the remaining summary, and search it as a quoted `in:title`
-phrase; a title without a recognized header is searched whole. Open and
-historical search rows must identify the configured repository.
+phrase; a title without a recognized header is searched whole. GitLab duplicate
+queries remove the same recognized header and search the remaining summary with
+`in=title`, because its full-text search requires every term and a whole title
+would miss other types or scopes with the same summary; a title without a
+recognized header is searched whole. Open and historical search rows must
+identify the configured repository.
 GitHub label pool lookup and write readback compare ASCII case without changing
 native label spelling in reports. New labels use the selected canonical spelling.
 GitLab label comparisons remain case-sensitive.

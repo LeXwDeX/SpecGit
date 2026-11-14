@@ -199,6 +199,15 @@ pub(crate) async fn recent_issues(
     }
     Ok(issues)
 }
+/// GitLab issue search is full-text: every term is required, so a whole title's
+/// type and scope would exclude other kinds and scopes with the same summary.
+/// Search the summary instead; an unrecognized header keeps the whole title.
+fn title_query(query: &str) -> &str {
+    match crate::spec::title_header(query) {
+        Ok(header) => header.summary,
+        Err(_) => query,
+    }
+}
 pub(crate) async fn candidates(
     reader: &ForgeRead,
     repo: &Repository,
@@ -208,7 +217,7 @@ pub(crate) async fn candidates(
     let route = format!(
         "{}/issues?state=opened&search={}&in=title",
         prefix(repo),
-        encode(query)
+        encode(title_query(query))
     );
     let page_result = reader.list_report(&route, None, 10).await?;
     if !page_result.pagination.complete {
@@ -254,7 +263,7 @@ async fn history(
         .get(&format!(
             "{}/issues?state=closed&search={}&in=title&per_page=20",
             prefix(repo),
-            encode(query)
+            encode(title_query(query))
         ))
         .await?;
     let rows = value.as_array().ok_or_else(malformed)?;
@@ -353,7 +362,7 @@ pub(crate) async fn has_open_issue_search_rows(
     let route = format!(
         "{}/issues?state=opened&search={}&in=title",
         prefix(repo),
-        encode(query)
+        encode(title_query(query))
     );
     Ok(!reader.list(&route, None, 10).await?.is_empty())
 }
