@@ -81,6 +81,80 @@ fn language_rules_preserve_unicode_han_semantics_and_are_opt_in() {
 }
 
 #[test]
+fn title_headers_accept_scopes_breaking_markers_and_unicode_scopes() {
+    for (title, kind, scope, breaking, summary) in [
+        ("feat(dag): x", "feat", Some("dag"), false, "x"),
+        ("feat!: x", "feat", None, true, "x"),
+        ("feat(dag)!: x", "feat", Some("dag"), true, "x"),
+        ("feat(中文/A,b): x", "feat", Some("中文/A,b"), false, "x"),
+        ("feat( dag ): x", "feat", Some(" dag "), false, "x"),
+        ("fix: first: second", "fix", None, false, "first: second"),
+    ] {
+        let header = spec::title_header(title).unwrap();
+        assert_eq!(
+            (header.kind, header.scope, header.breaking, header.summary),
+            (kind, scope, breaking, summary),
+            "{title}"
+        );
+        assert_eq!(spec::kind(title).unwrap(), kind, "{title}");
+    }
+    let mut d = Declaration::default();
+    d.validation.labels = Labels::Kind;
+    assert_eq!(
+        spec::selected_labels(&d, "feat(dag)!: x", None, &[]).unwrap(),
+        ["kind::feat"]
+    );
+    let mismatch =
+        spec::selected_labels(&d, "feat(dag)!: x", Some(&["kind::fix".into()]), &[]).unwrap_err();
+    assert!(mismatch.message.contains("`kind::feat`"), "{mismatch:?}");
+}
+
+#[test]
+fn title_headers_reject_malformed_forms_with_actionable_diagnostics() {
+    for (title, message) in [
+        ("feat x", "missing a Conventional Commit header"),
+        ("unknown(x): y", "type is not in the catalog"),
+        ("Feat: x", "type is not in the catalog"),
+        ("feat(): x", "invalid scope or breaking marker"),
+        ("feat( ): x", "invalid scope or breaking marker"),
+        ("feat(dag: x", "invalid scope or breaking marker"),
+        ("feat(a)(b): x", "invalid scope or breaking marker"),
+        ("feat(a:b): x", "invalid scope or breaking marker"),
+        ("feat (dag): x", "type is not in the catalog"),
+        ("feat(dag) : x", "invalid scope or breaking marker"),
+        ("feat!(dag): x", "invalid scope or breaking marker"),
+        ("feat!!: x", "invalid scope or breaking marker"),
+        ("feat: ", "missing a nonempty summary"),
+        ("feat(dag)!:  ", "missing a nonempty summary"),
+    ] {
+        let error = spec::title_header(title).unwrap_err();
+        assert_eq!(
+            error.code,
+            specgit::diagnostic::Code::InvalidInput,
+            "{title}"
+        );
+        assert_eq!(error.operation, "input", "{title}");
+        assert_eq!(error.exit(), 2, "{title}");
+        assert!(error.message.contains(message), "{title}: {error:?}");
+        assert!(
+            error.remedy.contains("type[(scope)][!]: summary"),
+            "{title}: {error:?}"
+        );
+        for (kind, _) in spec::KINDS {
+            assert!(
+                error.remedy.contains(kind),
+                "{title} remedy omits {kind}: {error:?}"
+            );
+        }
+        assert!(
+            !error.message.contains(title),
+            "{title}: diagnostic echoes the title"
+        );
+        assert!(spec::kind(title).is_err(), "{title}");
+    }
+}
+
+#[test]
 fn required_bodies_ignore_comments_and_fenced_fake_headings_but_accept_code_evidence() {
     let mut d = Declaration::default();
     d.templates.issue.required_sections = Some(vec!["Why".into(), "Evidence".into()]);

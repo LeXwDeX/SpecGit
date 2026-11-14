@@ -142,14 +142,14 @@ fn label_rule(language: Language, labels: Labels) -> &'static str {
     match (language, labels) {
         (Language::Zh, Labels::Off) => "Label 模式 off：仅在用户或项目要求时传 --tags。",
         (Language::Zh, Labels::Kind) => {
-            "Label 模式 kind：省略 --tags，由标题派生唯一 kind::<type>；不加未声明的旧 label。"
+            "Label 模式 kind：省略 --tags，由标题头 `type[(scope)][!]` 的 type 派生唯一 kind::<type>；不加未声明的旧 label。"
         }
         (Language::Zh, Labels::Project) => "Label 模式 project：--tags 只能取声明的 tags。",
         (Language::En, Labels::Off) => {
             "Label mode off: pass --tags only when the user or project asks."
         }
         (Language::En, Labels::Kind) => {
-            "Label mode kind: omit --tags so the title derives one kind::<type>; add no undeclared legacy labels."
+            "Label mode kind: omit --tags so the type of the `type[(scope)][!]` header derives one kind::<type>; add no undeclared legacy labels."
         }
         (Language::En, Labels::Project) => {
             "Label mode project: pass --tags only from declared tags."
