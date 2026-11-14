@@ -5,15 +5,20 @@
 | 命令 | 用途 |
 | --- | --- |
 | `init` | 初始化或检查单个项目的声明和本地指导；新项目安装原生 Git guard，不安装宿主 hooks |
-| `setup` | 安装/刷新项目 Skill 和指导基线；新选 `--agent` 只添加指导，hooks 须显式指定 `--hook-purpose guard` 和/或 `--hook-purpose context` |
+| `setup` | 安装/刷新项目 Skill 和指导基线；新选 `--agent` 只添加指导，hooks 须显式指定 `--hook-purpose guard` 和/或 `--hook-purpose context`；`--readonly-permissions`/`--remove-readonly-permissions` 为显式指定的宿主管理 Claude Code 只读白名单 |
 | `update` | 检查、验证或应用签名 GitHub Release，以更新共享可执行文件 |
-| `issue` / `pr` | 选择完整规格 / 汇聚原生草稿请求；写入须已有授权 |
+| `issue` / `pr` | 选择完整规格 / 汇聚原生草稿请求；新标题使用 `type[(scope)][!]: summary`；写入须已有授权 |
 | `pr --status` / `watch` | 当前原生状态 / 有界观察；不合并或关闭 Issue |
 | `status` / `doctor` | 离线本地证据 / 原生能力诊断 |
 | `guard` / `hook` / `inbox` | 本地检查、宿主事件与通知收据 |
 | `migrate` | 显式预览和应用已证明归属的 v1 迁移 |
 
 退出码：0 操作或读取成功；1 失败；2 输入无效或需明确选择；3 必要事实未知；130 取消。读取成功可以同时报告 CI 失败，不能只看退出码。
+
+Issue 与 PR/MR 新标题使用 `type[(scope)][!]: summary`，例如 `feat(dag): ...`、
+`feat!: ...` 或 `feat(dag)!: ...`。type 必须与配置的类型目录完全匹配且区分大小写；
+可选 scope 去除空白后不能为空，且不能包含 `(`、`)` 或 `:`；type 或 scope 后最多只能
+紧跟一个 `!`；scope 和 `!` 都不产生标签。
 
 已有 PR/MR 正文差异只能预览：`pr --update-body --body-file <file> --dry-run`。在平台核对并发修改后编辑，再读 `pr --status`。不能去掉 dry-run 期待无条件覆盖。
 

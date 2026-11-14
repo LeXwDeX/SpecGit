@@ -53,6 +53,13 @@ setup 会刷新全部已记录宿主及任何 `--agent` 指定的新宿主，因
 pre-commit/pre-push checkpoint 检查。写入注册不代表宿主已加载或行为有效；依赖前要验证
 真实宿主和 Git 入口。
 
+受管只读白名单是 Claude Code 的独立显式选项：
+`setup --agent claude --readonly-permissions` 把固定的 `Bash(specgit <argv> *)`
+规则追加到项目 `.claude/settings.json` 的 `permissions.allow`，
+`--remove-readonly-permissions` 只移除受管规则。两者都必须显式传 `--agent`，且不能与
+`--uninstall`、`--rollback` 组合；移除须已有记录，其他宿主保持逐次审批。这些规则只
+减少提示，不是沙箱。矩阵与快速上手见[支持的宿主](Supported-Hosts-zh)。
+
 原生能力不支持或未知，且必须选择运行方式时，可将手动观察作为 init 选项；
 `--manual-observe` 会写入 `native_auto_merge=false`。除非当前任务授权了必要变更，
 否则保留显式 true 偏好。不要为了让初始化通过而修改平台设置。

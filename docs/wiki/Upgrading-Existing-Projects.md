@@ -61,6 +61,15 @@ Stop callbacks and idle wake are retired. `guard` installs native Git pre-commit
 and pre-push checkpoint checks. Written registration does not prove host loading
 or behavior; verify the actual host and Git entry points before relying on them.
 
+Managed read-only permissions are a separate explicit opt-in for Claude Code:
+`setup --agent claude --readonly-permissions` adds fixed
+`Bash(specgit <argv> *)` rules to project `.claude/settings.json`
+`permissions.allow`, and `--remove-readonly-permissions` removes only managed
+rules. Both require `--agent` and conflict with `--uninstall` and `--rollback`;
+removal requires a recorded registration, and other hosts keep per-invocation
+approval. These rules reduce prompts; they are not a sandbox. See
+[Supported Hosts](Supported-Hosts) for the matrix and quick start.
+
 When native capability is unsupported or unknown and an operating choice is required,
 manual observation is an init choice; `--manual-observe` writes `native_auto_merge=false`.
 Keep an explicit true preference unless the current task delegates a necessary change.
