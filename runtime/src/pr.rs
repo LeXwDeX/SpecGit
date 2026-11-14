@@ -18,6 +18,7 @@ pub struct Options {
     /// Read this exact request with --status, or adopt it for delivery; otherwise resume/discover locally.
     #[arg(long)]
     pub request: Option<u64>,
+    /// Complete `type[(scope)][!]: summary` title for a new request; defaults to the first selected Issue title.
     #[arg(long)]
     pub title: Option<String>,
     #[arg(long)]

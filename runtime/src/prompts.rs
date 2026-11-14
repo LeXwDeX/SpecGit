@@ -56,7 +56,8 @@ mod tests {
         let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
         for rule in [
             "标签遵循 `validation.labels`：",
-            "`kind` 从标题推导一个 `kind::<type>`",
+            "`kind` 从标题头 `type[(scope)][!]: summary` 的 type 推导一个 `kind::<type>`",
+            "scope 和 `!` 不产生标签",
             "`project` 要求声明的 `tags`",
             "`off` 仅在被要求时传 `--tags`",
         ] {

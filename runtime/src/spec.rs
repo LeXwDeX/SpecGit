@@ -95,16 +95,76 @@ fn violation(code: &str, message: &str) -> Violation {
         message: message.into(),
     }
 }
-pub fn kind(title: &str) -> Result<&str, Diagnostic> {
-    let (kind, rest) = title.split_once(": ").ok_or_else(|| {
-        Diagnostic::input("Use a catalog Conventional Commit type followed by ': ' and a title.")
+/// A parsed `type[(scope)][!]: summary` title header. Scope text is kept
+/// verbatim; only the fixed punctuation and emptiness are constrained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TitleHeader<'a> {
+    pub kind: &'a str,
+    pub scope: Option<&'a str>,
+    pub breaking: bool,
+    pub summary: &'a str,
+}
+fn title_diagnostic(message: &str) -> Diagnostic {
+    let mut diagnostic = Diagnostic::input(message);
+    diagnostic.remedy = format!(
+        "Use `type[(scope)][!]: summary` with one catalog type: {}.",
+        KINDS
+            .iter()
+            .map(|(kind, _)| *kind)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    diagnostic
+}
+pub fn title_header(title: &str) -> Result<TitleHeader<'_>, Diagnostic> {
+    let (head, summary) = title.split_once(": ").ok_or_else(|| {
+        title_diagnostic("The title is missing a Conventional Commit header followed by ': '.")
     })?;
-    if rest.trim().is_empty() || !KINDS.iter().any(|(k, _)| *k == kind) {
-        return Err(Diagnostic::input(
-            "The title has an unknown type or empty summary.",
+    let type_end = head.find(['(', '!']).unwrap_or(head.len());
+    let kind = &head[..type_end];
+    if !KINDS.iter().any(|(k, _)| *k == kind) {
+        return Err(title_diagnostic("The title type is not in the catalog."));
+    }
+    let mut rest = &head[type_end..];
+    let scope = if let Some(after) = rest.strip_prefix('(') {
+        let (scope, after) = after.split_once(')').ok_or_else(|| {
+            title_diagnostic("The title has an invalid scope or breaking marker in its header.")
+        })?;
+        rest = after;
+        if scope.trim().is_empty() || scope.contains(['(', ')', ':']) {
+            return Err(title_diagnostic(
+                "The title has an invalid scope or breaking marker in its header.",
+            ));
+        }
+        Some(scope)
+    } else {
+        None
+    };
+    let breaking = if let Some(after) = rest.strip_prefix('!') {
+        rest = after;
+        true
+    } else {
+        false
+    };
+    if !rest.is_empty() {
+        return Err(title_diagnostic(
+            "The title has an invalid scope or breaking marker in its header.",
         ));
     }
-    Ok(kind)
+    if summary.trim().is_empty() {
+        return Err(title_diagnostic(
+            "The title is missing a nonempty summary after its header.",
+        ));
+    }
+    Ok(TitleHeader {
+        kind,
+        scope,
+        breaking,
+        summary,
+    })
+}
+pub fn kind(title: &str) -> Result<&str, Diagnostic> {
+    title_header(title).map(|header| header.kind)
 }
 pub fn catalog(d: &Declaration) -> BTreeMap<String, Tag> {
     let mut tags: BTreeMap<_, _> = KINDS
