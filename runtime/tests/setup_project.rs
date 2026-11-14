@@ -9,7 +9,7 @@ use specgit::{
     setup::{Agent, project},
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -435,6 +435,8 @@ fn fixture(agents: Vec<Agent>) -> (Fixture, project::Options) {
             uninstall: false,
             dry_run: false,
             rollback: None,
+            readonly_permissions: false,
+            remove_readonly_permissions: false,
         },
     )
 }
@@ -3816,4 +3818,807 @@ fn cli_setup_uninstall_rechecks_new_current_exclusion_consumers_after_planning()
                 .exists()
         );
     }
+}
+
+fn readonly_options(mut options: project::Options) -> project::Options {
+    options.readonly_permissions = true;
+    options
+}
+
+fn cli_ok(root: &Path, args: &[&str]) -> Value {
+    let value = cli(root, args);
+    assert_eq!(value["ok"], true, "{value}");
+    value
+}
+
+fn managed_readonly_rules() -> BTreeSet<String> {
+    specgit::setup::permissions::claude_allow_rules()
+}
+
+fn allow_rules(value: &Value) -> Vec<&str> {
+    value["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rule| rule.as_str().unwrap())
+        .collect()
+}
+
+fn managed_readonly_fixture() -> (Fixture, PathBuf) {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    let settings = f.root.join(".claude/settings.json");
+    (f, settings)
+}
+
+#[test]
+fn readonly_permissions_install_refresh_and_uninstall_without_a_shared_executable() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    let settings = f.root.join(".claude/settings.json");
+    fs::remove_file(&f.source).unwrap();
+    let mut preview = options.clone();
+    preview.dry_run = true;
+    let preview = install_with_hooks(
+        &preview,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(preview["written"], false);
+    assert_eq!(
+        preview["readonly_permissions"]["installed"],
+        json!(["claude"])
+    );
+    assert!(!settings.exists());
+
+    let evidence = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(
+        evidence["readonly_permissions"]["requested"],
+        json!(["claude"])
+    );
+    assert_eq!(
+        evidence["readonly_permissions"]["removal_status"],
+        "unchanged"
+    );
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    let rules = allow_rules(&value);
+    let expected = managed_readonly_rules();
+    assert_eq!(
+        rules
+            .iter()
+            .map(|rule| rule.to_string())
+            .collect::<BTreeSet<_>>(),
+        expected
+    );
+    assert_eq!(rules.len(), expected.len(), "{value}");
+    assert!(rules.contains(&"Bash(specgit status *)"));
+    for excluded in [
+        "pr --status",
+        "watch",
+        "inbox",
+        "migrate",
+        "remove --apply",
+        "--fix",
+    ] {
+        assert!(
+            rules.iter().all(|rule| !rule.contains(excluded)),
+            "{excluded}: {value}"
+        );
+    }
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 5, "{receipt}");
+    let registration = &receipt["readonly_permissions"]["claude"];
+    assert_eq!(registration["settings"], json!(settings.to_str().unwrap()));
+    assert_eq!(registration["created_file"], true);
+    assert_eq!(registration["created_permissions_object"], true);
+    assert_eq!(registration["created_allow_array"], true);
+    assert_eq!(
+        registration["created_rules"].as_array().unwrap().len(),
+        expected.len()
+    );
+
+    let before = fs::read(&settings).unwrap();
+    let refresh = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(refresh["transaction"]["changes"], 0, "{refresh}");
+    assert_eq!(fs::read(&settings).unwrap(), before);
+
+    let mut uninstall = options.clone();
+    uninstall.agents.clear();
+    uninstall.uninstall = true;
+    uninstall.readonly_permissions = false;
+    install_with_hooks(
+        &uninstall,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert!(!settings.exists());
+    assert!(!f.private.join("ownership.json").exists());
+}
+
+#[test]
+fn readonly_permissions_preserve_user_rules_and_downgrade_to_v4() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let settings = f.root.join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let user_rule = "Bash(npm test)";
+    let preexisting_rule = "Bash(specgit status *)";
+    fs::write(
+        &settings,
+        serde_json::to_vec(&json!({
+            "permissions": {"allow": [user_rule, preexisting_rule], "deny": ["Bash(rm *)"]},
+            "manual": {"keep": true}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let options = readonly_options(options);
+    let evidence = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(
+        evidence["readonly_permissions"]["preexisting"],
+        json!([preexisting_rule])
+    );
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    let rules = allow_rules(&value);
+    assert_eq!(rules[0], user_rule);
+    assert_eq!(rules[1], preexisting_rule);
+    assert_eq!(
+        rules
+            .iter()
+            .filter(|rule| **rule == preexisting_rule)
+            .count(),
+        1
+    );
+    assert_eq!(value["permissions"]["deny"], json!(["Bash(rm *)"]));
+    assert_eq!(value["manual"], json!({"keep": true}));
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 5, "{receipt}");
+    let registration = &receipt["readonly_permissions"]["claude"];
+    assert_eq!(registration["created_file"], false);
+    assert_eq!(registration["created_permissions_object"], false);
+    assert_eq!(registration["created_allow_array"], false);
+    assert_eq!(registration["preexisting"], json!([preexisting_rule]));
+    assert!(
+        registration["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|rule| rule != preexisting_rule)
+    );
+
+    let mut remove = options.clone();
+    remove.readonly_permissions = false;
+    remove.remove_readonly_permissions = true;
+    let evidence = install_with_hooks(
+        &remove,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(
+        evidence["readonly_permissions"]["removed"],
+        json!(["claude"])
+    );
+    assert_eq!(
+        evidence["readonly_permissions"]["removal_status"],
+        "removed"
+    );
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(
+        value["permissions"]["allow"],
+        json!([user_rule, preexisting_rule])
+    );
+    assert_eq!(value["permissions"]["deny"], json!(["Bash(rm *)"]));
+    assert_eq!(value["manual"], json!({"keep": true}));
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 4, "{receipt}");
+    assert!(receipt.get("readonly_permissions").is_none());
+}
+
+#[test]
+fn readonly_permissions_decline_unsupported_hosts_without_writes() {
+    for (agent, host) in [
+        (Agent::Generic, "generic"),
+        (Agent::Codex, "codex"),
+        (Agent::Opencode, "opencode"),
+    ] {
+        let (f, options) = fixture(vec![agent]);
+        let options = readonly_options(options);
+        let evidence = install_with_hooks(
+            &options,
+            &specgit::setup::HookOptions::default(),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap();
+        assert_eq!(evidence["readonly_permissions"]["requested"], json!([]));
+        assert_eq!(evidence["readonly_permissions"]["installed"], json!([]));
+        let declined = evidence["readonly_permissions"]["declined"]
+            .as_array()
+            .unwrap();
+        assert_eq!(declined.len(), 1, "{evidence}");
+        assert_eq!(declined[0]["host"], host);
+        assert_eq!(declined[0]["status"], "unsupported");
+        assert!(!f.root.join(".claude/settings.json").exists());
+        let receipt: Value =
+            serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+        assert_eq!(receipt["version"], 4, "{receipt}");
+        assert!(receipt.get("readonly_permissions").is_none());
+    }
+
+    // A mixed selection installs Claude and still reports every refusal.
+    let (f, options) = fixture(vec![Agent::Claude, Agent::Codex]);
+    let options = readonly_options(options);
+    let evidence = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(
+        evidence["readonly_permissions"]["installed"],
+        json!(["claude"])
+    );
+    let declined = evidence["readonly_permissions"]["declined"]
+        .as_array()
+        .unwrap();
+    assert_eq!(declined.len(), 1);
+    assert_eq!(declined[0]["host"], "codex");
+}
+
+#[test]
+fn readonly_permissions_reject_conflicts_without_overwriting() {
+    for mutate in [
+        |value: &mut Value| {
+            value["permissions"]["allow"][0] = json!("Bash(specgit status --json *)");
+        },
+        |value: &mut Value| {
+            let rule = value["permissions"]["allow"][0].clone();
+            value["permissions"]["allow"]
+                .as_array_mut()
+                .unwrap()
+                .push(rule);
+        },
+        |value: &mut Value| {
+            value["permissions"]["allow"]
+                .as_array_mut()
+                .unwrap()
+                .remove(0);
+        },
+        |value: &mut Value| value["permissions"] = json!([]),
+        |value: &mut Value| value["permissions"]["allow"] = json!("Bash(npm test *)"),
+        |value: &mut Value| {
+            value["permissions"]["allow"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(7));
+        },
+    ] {
+        let (f, settings) = managed_readonly_fixture();
+        let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+        mutate(&mut value);
+        fs::write(&settings, serde_json::to_vec(&value).unwrap()).unwrap();
+        let before = fs::read(&settings).unwrap();
+        let (_, options) = fixture(vec![Agent::Claude]);
+        let options = readonly_options(options);
+        let error = install_with_hooks(
+            &options,
+            &specgit::setup::HookOptions::default(),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, Code::OwnershipConflict, "{error:?}");
+        assert_eq!(fs::read(&settings).unwrap(), before);
+    }
+
+    // A user-owned allow array is not silently recreated when deleted.
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let settings = f.root.join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    fs::write(
+        &settings,
+        serde_json::to_vec(&json!({"permissions": {"allow": ["Bash(npm test)"]}})).unwrap(),
+    )
+    .unwrap();
+    let options = readonly_options(options);
+    install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    value["permissions"]
+        .as_object_mut()
+        .unwrap()
+        .remove("allow");
+    fs::write(&settings, serde_json::to_vec(&value).unwrap()).unwrap();
+    let before = fs::read(&settings).unwrap();
+    let error = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, Code::OwnershipConflict, "{error:?}");
+    assert_eq!(fs::read(&settings).unwrap(), before);
+}
+
+#[test]
+fn readonly_permissions_recover_only_an_owned_deleted_allow_array() {
+    let (f, settings) = managed_readonly_fixture();
+    let before = fs::read(&settings).unwrap();
+    let mut value: Value = serde_json::from_slice(&before).unwrap();
+    value["permissions"]
+        .as_object_mut()
+        .unwrap()
+        .remove("allow");
+    fs::write(&settings, serde_json::to_vec(&value).unwrap()).unwrap();
+    let (_, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    let evidence = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(evidence["transaction"]["changes"], 1, "{evidence}");
+    assert_eq!(fs::read(&settings).unwrap(), before);
+}
+
+#[test]
+fn readonly_permissions_do_not_claim_matching_preexisting_rules() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let settings = f.root.join(".claude/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let rules: Vec<Value> = managed_readonly_rules()
+        .into_iter()
+        .map(Value::String)
+        .collect();
+    fs::write(
+        &settings,
+        serde_json::to_vec(&json!({"permissions": {"allow": rules}})).unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(&settings).unwrap();
+    let options = readonly_options(options);
+    let evidence = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    assert_eq!(evidence["readonly_permissions"]["installed"], json!([]));
+    assert_eq!(
+        evidence["readonly_permissions"]["preexisting"],
+        json!(managed_readonly_rules())
+    );
+    assert_eq!(fs::read(&settings).unwrap(), before);
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 4, "{receipt}");
+    assert!(receipt.get("readonly_permissions").is_none());
+}
+
+#[test]
+fn readonly_permission_flags_require_explicit_recorded_agents_and_isolated_modes() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let settings = f.root.join(".claude/settings.json");
+    for mutate in [
+        |options: &mut project::Options| options.agents.clear(),
+        |options: &mut project::Options| options.uninstall = true,
+        |options: &mut project::Options| {
+            options.readonly_permissions = true;
+            options.remove_readonly_permissions = true;
+        },
+        |options: &mut project::Options| {
+            options.readonly_permissions = false;
+            options.remove_readonly_permissions = true;
+        },
+        |options: &mut project::Options| {
+            options.readonly_permissions = false;
+            options.remove_readonly_permissions = true;
+            options.agents = vec![Agent::Codex];
+        },
+    ] {
+        let mut candidate = options.clone();
+        candidate.readonly_permissions = true;
+        mutate(&mut candidate);
+        let error = install_with_hooks(
+            &candidate,
+            &specgit::setup::HookOptions::default(),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, Code::InvalidInput, "{candidate:?}");
+        assert!(!settings.exists());
+    }
+    // The CLI requires --agent before any project access.
+    let output = executable::command()
+        .current_dir(&f.root)
+        .args(["setup", "--readonly-permissions", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn readonly_permission_evidence_schema_is_typed() {
+    use specgit::report::Report;
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    let validate = |value: &Value| jsonschema::draft202012::validate(&schema, value).is_ok();
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    let report = serde_json::to_value(Report::success(
+        "setup",
+        "installed",
+        install_with_hooks(
+            &options,
+            &selection(&[specgit::setup::HookPurpose::Context], false),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    assert!(validate(&report), "{report}");
+    for (pointer, value) in [
+        ("/evidence/readonly_permissions/requested/0", json!("codex")),
+        (
+            "/evidence/readonly_permissions/removal_status",
+            json!("kept"),
+        ),
+        ("/evidence/readonly_permissions/installed/0", json!("codex")),
+    ] {
+        let mut invalid = report.clone();
+        *invalid.pointer_mut(pointer).unwrap() = value;
+        assert!(!validate(&invalid), "accepted invalid {pointer}");
+    }
+    let (f, options) = fixture(vec![Agent::Codex]);
+    let options = readonly_options(options);
+    let declined = serde_json::to_value(Report::success(
+        "setup",
+        "installed",
+        install_with_hooks(
+            &options,
+            &specgit::setup::HookOptions::default(),
+            &f.root,
+            &f.private,
+            &f.source,
+        )
+        .unwrap(),
+    ))
+    .unwrap();
+    assert!(validate(&declined), "{declined}");
+    for (pointer, value) in [
+        (
+            "/evidence/readonly_permissions/declined/0/host",
+            json!("unknown"),
+        ),
+        (
+            "/evidence/readonly_permissions/declined/0/status",
+            json!("supported"),
+        ),
+    ] {
+        let mut invalid = declined.clone();
+        *invalid.pointer_mut(pointer).unwrap() = value;
+        assert!(!validate(&invalid), "accepted invalid {pointer}");
+    }
+}
+
+#[test]
+fn readonly_permissions_and_hooks_share_one_settings_change_and_remove_independently() {
+    // One transaction, one settings Change.
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    let evidence = install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    let settings = f.root.join(".claude/settings.json");
+    let settings_assets: Vec<_> = evidence["assets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|asset| asset["path"] == json!(settings.to_str().unwrap()))
+        .collect();
+    assert_eq!(settings_assets.len(), 1, "{evidence}");
+    assert_eq!(settings_assets[0]["state"], "created");
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert!(value["hooks"]["SessionStart"].is_array());
+    assert!(!allow_rules(&value).is_empty());
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 5, "{receipt}");
+    assert_eq!(
+        receipt["hooks"]["claude"]["created_file"],
+        receipt["readonly_permissions"]["claude"]["created_file"]
+    );
+
+    // Remove hooks, keep permissions.
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    cli_ok(
+        &f.root,
+        &["--agent", "claude", "--remove-hook-purpose", "context"],
+    );
+    let settings = f.root.join(".claude/settings.json");
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert!(value.get("hooks").is_none(), "{value}");
+    assert_eq!(
+        allow_rules(&value)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>(),
+        managed_readonly_rules()
+    );
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 5, "{receipt}");
+    assert!(
+        receipt["hooks"].as_object().unwrap().is_empty(),
+        "{receipt}"
+    );
+    assert!(receipt["readonly_permissions"]["claude"].is_object());
+
+    // Remove permissions, keep hooks.
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    cli_ok(
+        &f.root,
+        &["--agent", "claude", "--remove-readonly-permissions"],
+    );
+    let settings = f.root.join(".claude/settings.json");
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert!(value.get("permissions").is_none(), "{value}");
+    assert!(value["hooks"]["SessionStart"].is_array(), "{value}");
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 4, "{receipt}");
+    assert!(receipt["hooks"]["claude"].is_object());
+
+    // Remove both while a user field remains.
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    let settings = f.root.join(".claude/settings.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    value["manual"] = json!(true);
+    fs::write(&settings, serde_json::to_vec(&value).unwrap()).unwrap();
+    cli_ok(
+        &f.root,
+        &[
+            "--agent",
+            "claude",
+            "--remove-hook-purpose",
+            "context",
+            "--remove-readonly-permissions",
+        ],
+    );
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(value, json!({"manual": true}), "{value}");
+
+    // Remove both from a file this tool created: the empty file is deleted.
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    cli_ok(
+        &f.root,
+        &[
+            "--agent",
+            "claude",
+            "--remove-hook-purpose",
+            "context",
+            "--remove-readonly-permissions",
+        ],
+    );
+    assert!(!f.root.join(".claude/settings.json").exists());
+}
+
+#[test]
+fn readonly_permissions_rollback_restores_the_v4_receipt_and_removes_rules() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    let settings = f.root.join(".claude/settings.json");
+    let settings_before = fs::read(&settings).unwrap();
+    let receipt_before: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt_before["version"], 4);
+    let options = readonly_options(options);
+    let evidence = install_with_hooks(
+        &options,
+        &selection(&[specgit::setup::HookPurpose::Context], false),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    let transaction = evidence["transaction"]["transaction"].as_str().unwrap();
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 5, "{receipt}");
+    assert!(
+        !allow_rules(&serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap()).is_empty()
+    );
+
+    let rolled_back = cli(&f.root, &["--rollback", transaction]);
+    assert_eq!(rolled_back["ok"], true, "{rolled_back}");
+    assert_eq!(fs::read(&settings).unwrap(), settings_before);
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap();
+    assert_eq!(receipt["version"], 4, "{receipt}");
+    assert!(receipt.get("readonly_permissions").is_none());
+}
+
+#[test]
+fn readonly_permissions_health_plan_refreshes_without_a_shared_executable() {
+    let (f, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    fs::remove_file(&f.source).unwrap();
+    install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap();
+    let settings = f.root.join(".claude/settings.json");
+    let before = fs::read(&settings).unwrap();
+    let settled = health_plan(&f.root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert!(settled.assets().is_empty());
+    assert_eq!(settled.apply().unwrap().changes, 0);
+
+    // Only an array this tool created and every recorded rule of which it
+    // also created is reconstructed.
+    let mut value: Value = serde_json::from_slice(&before).unwrap();
+    value["permissions"]
+        .as_object_mut()
+        .unwrap()
+        .remove("allow");
+    fs::write(&settings, serde_json::to_vec(&value).unwrap()).unwrap();
+    let plan = health_plan(&f.root, &f.private, &f.source)
+        .unwrap()
+        .unwrap();
+    assert!(
+        plan.assets()
+            .iter()
+            .any(|asset| asset.path == settings && asset.state == "updated"),
+        "{:?}",
+        plan.assets()
+    );
+    plan.apply().unwrap();
+    assert_eq!(fs::read(&settings).unwrap(), before);
+}
+
+#[test]
+fn readonly_permissions_do_not_recreate_a_deleted_settings_file() {
+    let (f, settings) = managed_readonly_fixture();
+    fs::remove_file(&settings).unwrap();
+    let (_, options) = fixture(vec![Agent::Claude]);
+    let options = readonly_options(options);
+    let error = install_with_hooks(
+        &options,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, Code::OwnershipConflict, "{error:?}");
+    assert!(!settings.exists());
+
+    let mut uninstall = options.clone();
+    uninstall.readonly_permissions = false;
+    uninstall.agents.clear();
+    uninstall.uninstall = true;
+    let error = install_with_hooks(
+        &uninstall,
+        &specgit::setup::HookOptions::default(),
+        &f.root,
+        &f.private,
+        &f.source,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, Code::OwnershipConflict, "{error:?}");
+    assert!(!settings.exists());
 }

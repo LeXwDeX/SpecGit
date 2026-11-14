@@ -70,6 +70,7 @@ fn catalog_is_available_offline_without_project_tools_and_leaves_directory_uncha
         "tool_context",
         "git_guard",
         "observation",
+        "readonly_permissions",
         "local_exclusions",
         "private_state",
     ] {
@@ -89,6 +90,8 @@ fn catalog_rejects_installation_selectors_before_any_work() {
         vec!["--hook-purpose", "context"],
         vec!["--opencode-claude-hooks"],
         vec!["--opencode-async-rewake"],
+        vec!["--readonly-permissions"],
+        vec!["--remove-readonly-permissions"],
     ] {
         let out = executable::command()
             .current_dir(temp.path())

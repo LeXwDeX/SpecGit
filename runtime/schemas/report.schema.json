@@ -12,6 +12,7 @@
         "tool_context",
         "git_guard",
         "observation",
+        "readonly_permissions",
         "local_exclusions",
         "private_state"
       ]
@@ -711,6 +712,33 @@
         "idle_wake": {"enum":["not_supported","configured_not_verified"]}
       }
     },
+    "readonly_permissions": {
+      "description": "Setup evidence for the managed read-only command allowlist. It describes written configuration, not host loading or observed prompting behavior.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "installed", "preexisting", "removal_requested", "removed", "removal_status", "declined"],
+      "properties": {
+        "requested": {"type":"array","uniqueItems":true,"items":{"enum":["claude"]}},
+        "installed": {"type":"array","uniqueItems":true,"items":{"enum":["claude"]}},
+        "preexisting": {"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":256}},
+        "removal_requested": {"type":"array","uniqueItems":true,"items":{"enum":["claude"]}},
+        "removed": {"type":"array","uniqueItems":true,"items":{"enum":["claude"]}},
+        "removal_status": {"enum":["unchanged","removed"]},
+        "declined": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host", "status", "reason"],
+            "properties": {
+              "host": {"enum":["generic","claude","codex","opencode"]},
+              "status": {"const":"unsupported"},
+              "reason": {"type":"string","minLength":1}
+            }
+          }
+        }
+      }
+    },
     "milestone_scope": {
       "oneOf": [
         {"type":"object","additionalProperties":false,"required":["kind","project_id"],"properties":{
@@ -1375,6 +1403,7 @@
             "properties": {
               "hook_purposes": {"$ref":"#/$defs/hook_purposes"},
               "host_delivery": {"$ref":"#/$defs/setup_host_delivery"},
+              "readonly_permissions": {"$ref":"#/$defs/readonly_permissions"},
               "installation_catalog": {"$ref":"#/$defs/installation_catalog"}
             }
           }

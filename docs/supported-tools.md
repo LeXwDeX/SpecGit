@@ -41,7 +41,7 @@ omitted purpose leaves existing recorded choices unchanged. Use
 | Agent | Project assets |
 | --- | --- |
 | `generic` | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
-| `claude` | Root `CLAUDE.md` stable entry to the canonical `.agents` Skill; `.claude/skills/specgit-native/SKILL.md` copy for host discovery and selected `.claude/settings.json` hooks |
+| `claude` | Root `CLAUDE.md` stable entry to the canonical `.agents` Skill; `.claude/skills/specgit-native/SKILL.md` copy for host discovery, selected `.claude/settings.json` hooks and optional managed read-only `permissions.allow` rules with `--readonly-permissions` |
 | `codex` | Root `AGENTS.md` (or existing nonempty `AGENTS.override.md`) stable entry to the canonical `.agents` Skill, plus selected `.codex/hooks.json` hooks |
 | `opencode` (official) | Root `AGENTS.md` stable entry to `.agents/skills/specgit-native/SKILL.md`; no hooks |
 | `opencode` custom fork with `--opencode-claude-hooks` | Adds compatible SessionStart and PreToolUse hooks in `.opencode/hooks.json` with `inputFormat: claude-code` |
@@ -56,6 +56,22 @@ that recorded purpose, keeping the other purpose and unrelated host entries.
 Review/report all affected hosts' asset changes, even with `none`. Host hook entries depend on that selection and actual host support. Generic has no host callbacks; native Git guard is available separately. See
 the [purpose and receipt contract](../runtime/REFERENCE.md#select-project-hook-purposes)
 for per-host declined reasons and older-client downgrade limits.
+
+Claude Code additionally supports an optional managed read-only command
+allowlist: `setup --agent claude --readonly-permissions` appends a fixed set of
+`Bash(specgit <argv> *)` rules to project `.claude/settings.json`
+`permissions.allow`, preserving user rules and their order; refresh is
+idempotent and `--remove-readonly-permissions` removes only managed entries.
+This is prompt reduction, not a sandbox or an authorization boundary: write
+commands and excluded reads such as `pr --status` still prompt, and written
+rules do not prove that the host loaded them. Verify both that managed read-only
+commands stop prompting and that write commands still prompt in the real host.
+OpenCode, Codex and generic are not supported and keep per-invocation approval:
+OpenCode allows tools by default and a read-only allowlist would need global
+deny-by-default configuration with JSONC and multi-path ownership; Codex
+approval and sandbox configuration is still experimental and allow rules can be
+bypassed; generic has no host permission configuration. See the
+[read-only permission contract](../runtime/REFERENCE.md#select-read-only-host-permissions).
 
 Every entry point contains stable instructions pointing to the canonical
 `.agents/skills/specgit-native/SKILL.md`, without versioned declaration summaries

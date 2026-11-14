@@ -116,6 +116,13 @@ pass `--hook-purpose guard` and/or `--hook-purpose context` to add hooks; omitti
 purposes on refresh preserves existing choices. Use `--remove-hook-purpose guard`
 or `--remove-hook-purpose context` to remove one recorded purpose while keeping
 the rest. The selector affects `--agent` hosts, or all recorded hosts when omitted.
+An explicit `--agent claude --readonly-permissions` may also install a managed
+read-only command allowlist. It appends only missing managed rules, preserves
+user rules and their order, and is idempotent on refresh;
+`--remove-readonly-permissions` removes only managed entries. Other hosts and
+generic fall back to per-invocation approval. The allowlist reduces prompts; it
+is not a sandbox or an authorization boundary, and write commands still require
+confirmation.
 Existing projects follow the maintenance flow and refresh their recorded integration. Review each preview before applying. Add SessionStart or PreToolUse
 context delivery only when supported by the installed CLI and host.
 PostToolUse, Stop and idle-wake integration are unsupported. Preview Git guard
@@ -133,10 +140,16 @@ Read back the generated Skill and guidance, then repeat the same dry-run. Writte
 files do not prove host loading; use the documented host trust flow and verify
 actual context delivery. Verify allow/deny behavior for Git guard only.
 Setup is project-only (`--scope project` is the default and only scope). It
-migrates consistent legacy receipts locally to v4 without reading or writing the
-retired global root. V4 receipts require CLI 2.13 or newer; recovering version 3
-transaction journals requires CLI 2.14 or newer. Check both formats before a
-binary downgrade, which does not undo receipt, journal or asset changes.
+migrates consistent legacy receipts locally to v4, or to v5 while a managed
+read-only permission registration exists, without reading or writing the
+retired global root. Version 5 appears only with managed read-only permissions;
+removing the last managed rule returns the receipt to v4. V4 receipts require
+CLI 2.13 or newer. V5 receipts require the CLI release that introduced managed
+read-only permissions, newer than 2.20.2; CLI 2.13–2.20.x reject v5 as a newer
+receipt. Recovering version 3 transaction journals requires CLI 2.14 or newer.
+A receipt newer than v5 requires an upgraded CLI; to downgrade, remove
+the managed read-only permissions with the newer CLI first. Check both formats
+before a binary downgrade, which does not undo receipt, journal or asset changes.
 Do not use v1 `init --force`, `finish` or npm installation instructions with v2.
 For a v1 project, follow the [migration guide](migration-v2.md): prepare a complete
 v2 declaration, inspect `specgit migrate --config-file <file> --json`, resolve old
@@ -221,7 +234,11 @@ hooks another worktree owns names that owner instead of changing the hooks.
 `setup --uninstall` removes this
 worktree's recorded project agent assets. `setup --remove-hook-purpose guard`
 and `setup --remove-hook-purpose context` remove only the selected recorded
-purpose, preserving the other purpose and unrelated host entries. Setup-owned guard blocks are retained
+purpose, preserving the other purpose and unrelated host entries.
+`setup --remove-readonly-permissions` removes only managed read-only rules from
+explicitly named recorded hosts. When hooks and read-only permissions share a
+settings file, uninstall, purpose removal, permission removal and rollback apply
+them in one transaction and one settings change. Setup-owned guard blocks are retained
 while an active setup or sibling worktree needs them, and independently owned
 guard blocks remain outside setup's uninstall scope. When a setup owner retires,
 remaining guard ownership and recovery evidence stay in shared Git metadata, so

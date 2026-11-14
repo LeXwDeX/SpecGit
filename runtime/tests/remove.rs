@@ -177,12 +177,39 @@ impl Fixture {
                     uninstall: false,
                     dry_run: false,
                     rollback: None,
+                    readonly_permissions: false,
+                    remove_readonly_permissions: false,
                 },
                 &specgit::setup::HookOptions {
                     purposes: vec![
                         specgit::setup::HookPurpose::Guard,
                         specgit::setup::HookPurpose::Context,
                     ],
+                    opencode_async_rewake: false,
+                },
+                &self.root,
+                &self.private.join("agent-assets"),
+                &executable::binary().canonicalize().unwrap(),
+                &specgit::process::Process::default(),
+            ))
+            .unwrap();
+    }
+
+    fn claude_with_readonly_permissions(&self) {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(specgit::setup::project::install_with_context(
+                &specgit::setup::project::Options {
+                    agents: vec![specgit::setup::Agent::Claude],
+                    opencode_claude_hooks: false,
+                    uninstall: false,
+                    dry_run: false,
+                    rollback: None,
+                    readonly_permissions: true,
+                    remove_readonly_permissions: false,
+                },
+                &specgit::setup::HookOptions {
+                    purposes: vec![specgit::setup::HookPurpose::Context],
                     opencode_async_rewake: false,
                 },
                 &self.root,
@@ -581,6 +608,8 @@ fn linked_worktrees_keep_shared_exclusions_hooks_and_private_agent_assets() {
                     uninstall: false,
                     dry_run: false,
                     rollback: None,
+                    readonly_permissions: false,
+                    remove_readonly_permissions: false,
                 },
                 &specgit::setup::HookOptions::default(),
                 &sibling,
@@ -1265,4 +1294,30 @@ fn removal_accepts_a_journal_shared_by_init_and_setup() {
             assert_eq!(after.get(path), Some(value), "{order}: {}", path.display());
         }
     }
+}
+
+#[test]
+fn whole_project_removal_combines_hooks_and_readonly_permissions() {
+    let f = Fixture::new(true);
+    f.claude_with_readonly_permissions();
+    let settings = f.root.join(".claude/settings.json");
+    let value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert!(
+        !value["permissions"]["allow"].as_array().unwrap().is_empty(),
+        "{value}"
+    );
+    assert!(value["hooks"]["SessionStart"].is_array(), "{value}");
+    let receipt: Value =
+        serde_json::from_slice(&fs::read(f.private.join("agent-assets/ownership.json")).unwrap())
+            .unwrap();
+    assert_eq!(receipt["version"], 5, "{receipt}");
+
+    let before = inventory(&f.base);
+    let preview = f.run(&["remove"]);
+    assert_eq!(preview["status"], "prepared", "{preview}");
+    assert_eq!(inventory(&f.base), before, "preview wrote");
+    let applied = f.apply(&preview);
+    assert_eq!(applied["status"], "removed", "{applied}");
+    assert!(!settings.exists());
+    assert!(!f.private.join("agent-assets/ownership.json").exists());
 }

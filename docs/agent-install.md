@@ -188,6 +188,7 @@ protocol contract. The catalog is offline and independent of project setup.
 | Static guidance | Stable entry into the Skill | Recommended `AGENTS.md` entry; may contain manual text and remain tracked |
 | Dynamic context | Current task or checkpoint context | Optional; delivered through SessionStart and PreToolUse where supported |
 | Agent event hooks | Host protocol that loads guidance/context | Optional; inspect host discovery and trust requirements; PostToolUse, Stop and idle wake are unsupported |
+| Read-only host permissions | Optional managed allowlist that reduces per-invocation approval for approved read-only commands | Optional; requires an explicit `--agent` and a supported host; not a sandbox, and write commands still prompt |
 | Git guard | Native commit/push checkpoint enforcement, independent of the Agent process | Optional unless project policy requires it; verify actual guard behavior |
 | Observation | Bounded `watch`/`inbox` and private event state | Optional; reads native forge state when requested, with no automatic host wake |
 | Local project files | `.specgit.yaml`, generated Skill paths and Git `info/exclude` entries | Exclude only exact local paths; ignore rules never untrack files; mixed guidance may be tracked |
@@ -233,6 +234,14 @@ written files do not prove that the host loaded them, and loading does not prove
 context delivery or enforcement. Follow host import/trust steps, read back the
 Skill and guidance, verify actual context delivery, and verify allow/deny behavior
 for Git guard only. Do not describe PreToolUse context delivery as an edit gate.
+
+When a supported host offers managed read-only permissions, read back the
+recorded managed rules, the preserved user rules and their order, and the
+receipt. In the real host, verify that managed read-only commands no longer
+prompt and that write commands still prompt. Unsupported hosts keep
+per-invocation approval for each read-only command. These rules are prompt
+reduction, not a sandbox or an authorization boundary.
+
 See the [maintenance guide](agent-project-refresh.md#5-review-the-full-host-refresh-scope)
 for refreshing existing host choices and ownership.
 
@@ -246,6 +255,12 @@ host selected with `--agent` receives guidance and the Skill only. Add supported
 hooks with explicit `--hook-purpose guard` and/or `--hook-purpose context`.
 Purpose changes affect the named hosts, or all recorded hosts when `--agent` is
 omitted; asset refresh still includes every recorded host.
+
+Managed read-only permissions are optional host assets selected explicitly with
+`--agent`; naming a host without that flag still adds guidance and the Skill
+only. Uninstall removes hooks and managed read-only permissions in one
+transaction; `setup --remove-readonly-permissions` removes only managed rules
+from named recorded hosts.
 
 `setup --uninstall` previews and removes only the current worktree's recorded
 setup assets. Setup-owned Git guard blocks remain while an active setup or sibling

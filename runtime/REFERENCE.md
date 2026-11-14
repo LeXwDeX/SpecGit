@@ -144,7 +144,7 @@ commands use the global input/output contract above.
 
 | Command | Purpose and options |
 | --- | --- |
-| `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; naming a new host selects its guidance and Skill only. Hooks require explicit `--hook-purpose guard|context`; an existing installation retains recorded choices when purposes are omitted. `--remove-hook-purpose guard|context` removes a purpose from the hosts named by `--agent`, or all recorded hosts if `--agent` is omitted; it cannot select a host not already recorded. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update, purpose removal or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
+| `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; naming a new host selects its guidance and Skill only. Hooks require explicit `--hook-purpose guard|context`; an existing installation retains recorded choices when purposes are omitted. `--remove-hook-purpose guard|context` removes a purpose from the hosts named by `--agent`, or all recorded hosts if `--agent` is omitted; it cannot select a host not already recorded. `--readonly-permissions` installs the managed read-only command allowlist for explicitly named supported hosts; `--remove-readonly-permissions` removes it from explicitly named recorded hosts. Both require an explicit `--agent`, are mutually exclusive, and conflict with `--catalog`, `--uninstall` and `--rollback`. Only Claude Code is supported; OpenCode, Codex and generic are reported as declined and fall back to per-invocation approval. The allowlist reduces prompts; it is not a sandbox or an authorization boundary. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update, purpose removal or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
 | `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. A new project without a setup receipt also installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, so every commit binds an Issue; `--dry-run` lists its hook paths. Tracked hook directories such as Husky and linked worktrees need explicit `setup --hook-purpose guard`. An external `core.hooksPath` outside the worktree and its common Git directory is not supported. When the default guard is selected and an existing hook cannot be safely wrapped, init fails closed and writes no files. A recorded installation keeps its purposes, including an explicit `setup --remove-hook-purpose guard`. |
 | `issue` | Adopt positive Issue IDs or create specifications from `type[(scope)][!]: summary` titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. A mutation without `--branch` on the delivery target branch is rejected with `invalid_input` and operation `issue_target_branch`; `--inspect` and `--dry-run` remain read-only there. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. A checkpoint recorded as delivered admits no new Issues on its branch; `--branch <name>` replaces it when it has no pending write. `--discard-uncertain` clears write-started intents only after complete native reads prove that no matching Issue candidate exists; it preserves the checkpoint and every native object. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title` (`type[(scope)][!]: summary`), `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. A checkpoint on this branch that already records `delivered_request` accepts no request mutation: `--inspect` and `--dry-run` remain read-only, while other request mutations fail as `invalid_input` (operation `pr`) and preserve the checkpoint; switch to the updated target branch and start the next delivery with `specgit issue <spec> --branch <name>`. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. When a verified read shows the current branch checkpoint's recorded request merged, `--status` records it as delivered in Git-private state and reports the `record_delivered_checkpoint` local effect. A failure while preparing the local record (Git, declaration or context) reports `delivered_checkpoint_prepare` and adds no write effect. A failed record attempt keeps the verified native request and Issue evidence but reports a non-success result, with `not_applied` or `unknown` effects and a `delivered_checkpoint` retry diagnostic; rerun `pr --status` after fixing the lock or permission problem. `--discard-uncertain` clears an uncertain request creation only when the native read proves no matching request exists; it preserves the checkpoint and native objects. |
@@ -965,14 +965,16 @@ of merge and closure of the associated Issues that should close.
 `evidence.installation_catalog`. Discovery is offline, needs no project or
 external CLI, and performs no project reads, host probes or writes. `--human`
 renders the same typed catalog. Catalog mode conflicts with `--agent`, `--hook-purpose`,
+`--readonly-permissions`, `--remove-readonly-permissions`,
 `--opencode-claude-hooks`, `--opencode-async-rewake`, `--uninstall`, `--rollback`
 and `--dry-run`.
 
-The versioned catalog describes eight capabilities: `project_skill`,
-`instruction_entry`, `session_context`, `tool_context`, `git_guard`, `observation`,
-`local_exclusions` and `private_state`. Each item records its purpose, requirement
-level, scope/location, prerequisites, commands, protocol, ownership, verification,
-fallback and lifecycle. `shared_baseline` groups the project Skill and stable
+The versioned catalog describes nine capabilities: `project_skill`,
+`instruction_entry`, `session_context`, `tool_context`, `git_guard`,
+`readonly_permissions`, `observation`, `local_exclusions` and `private_state`.
+Each item records its purpose, requirement level, scope/location, prerequisites,
+commands, protocol, ownership, verification, fallback and lifecycle.
+`shared_baseline` groups the project Skill and stable
 instruction entry; its members are installed and maintained together, not exposed
 as independent file switches. `.agents/` is the recommended shared project area;
 its presence does not prove that a host loads it. Verify written assets, host
@@ -1029,7 +1031,8 @@ Other receipts and transaction histories remain worktree-specific. Legacy
 `agent-assets` journals remain available as bounded ownership/recovery evidence. It writes the canonical
 `.agents/skills/specgit-native/SKILL.md`; Claude adds a managed
 `.claude/skills/specgit-native/SKILL.md`, root `CLAUDE.md` guidance and
-`.claude/settings.json` hooks; Codex adds root `AGENTS.md` guidance (or an
+`.claude/settings.json` hooks, plus managed `permissions.allow` read-only rules
+when `--readonly-permissions` is selected; Codex adds root `AGENTS.md` guidance (or an
 existing nonempty `AGENTS.override.md`) plus `.codex/hooks.json`; generic and
 official OpenCode add only the `.agents` skill and root `AGENTS.md` guidance,
 with no hooks. With `--opencode-claude-hooks` (requires `--agent opencode`),
@@ -1107,15 +1110,82 @@ All CLI rollback paths follow this order. The previous `config::worktree::rollba
 signature remains available but returns an actionable diagnostic before writes:
 an already locked asset store cannot safely establish the required lock order.
 
-Project receipts use version 4, explicit per-host purposes and a unique install
-generation. Refresh retains that generation; a later install gets a new one. Valid v1-v3
-ownership evidence can migrate. Permission or history ambiguity is an ownership
-conflict: older matching records cannot cancel newer evidence. Older published
-CLIs cannot verify the shared project transaction history introduced in 2.12.
-Use a 2.13-or-newer shared CLI after migration to v4 receipts; preserve the
-receipt and assets during any downgrade. Never force-overwrite ownership or delete the
-receipt to bypass it. These proof rules also apply to whole-project `remove`;
-its apply requires the reviewed preview digest.
+#### Select read-only host permissions
+
+`setup --agent claude --readonly-permissions` adds a managed allowlist of
+read-only SpecGit commands to the project `.claude/settings.json`
+`permissions.allow` array; Claude Code is the only supported host in this
+release. Rules have the exact form `Bash(specgit <argv> *)`. They reduce
+per-invocation prompts; they are not a sandbox or an authorization boundary, and
+write commands still prompt. `pr --status` stays outside the allowlist because a
+verified merged request makes it write a local `delivered_request` checkpoint.
+`watch`, `inbox`, `migrate`, `setup --rollback`, `remove --apply` and every
+write command are also excluded. The set is a compile-time security asset, not
+user configuration, so neither a receipt nor a refresh can widen write
+authority.
+
+The 17 managed rules are `status`, `--help`, `--version`, `--schema`,
+`setup --catalog`, `setup --dry-run`, `init --dry-run`,
+`init --inspect`, `issue --dry-run`, `issue --inspect`, `pr --dry-run`,
+`pr --inspect`, `update --check`, `skill --user --dry-run`,
+`guard --install --dry-run`, `guard --uninstall --dry-run` and
+`remove --dry-run`. `doctor` is not allowlisted in any mode: `--offline` only
+skips probes and does not conflict with `--fix`, which repairs recorded project
+assets, so a `doctor --offline` prefix would authorize writes.
+
+Installation appends only missing managed rules at the end of the existing
+array and preserves user rules and their order. An existing same-named rule is
+recorded as `preexisting`: it is not claimed, added or removed. Removal deletes
+only managed rules, and only an `allow` array, `permissions` object or settings
+file that this tool created and that is empty after removal. A semantically
+unchanged result keeps the file bytes unchanged, so refresh is idempotent.
+Missing, duplicated or edited managed rules, a non-object `permissions` value, a
+non-array `allow` value or non-string entries are `ownership_conflict` (exit 3)
+and are not overwritten.
+
+Both flags require an explicit `--agent`; unlike hook purposes, omission is
+invalid input instead of selecting all recorded hosts. They are mutually
+exclusive, cannot combine with `--uninstall` or `--rollback`, and `--catalog`
+conflicts with both. Removal cannot name a host without a recorded
+registration. OpenCode is declined because it allows tools by default, so a
+read-only allowlist would require global deny-by-default configuration with
+JSONC and multi-path ownership; Codex is declined because approval and sandbox
+configuration is still experimental and allow rules can be bypassed; generic
+has no host permission configuration. These hosts fall back to per-invocation
+approval.
+
+When Claude hooks and read-only permissions share `.claude/settings.json`,
+install, refresh, removal, uninstall and rollback apply them in one asset
+transaction and one settings `Change`; the file's `created_file` ownership is
+shared. Setup reports `readonly_permissions` evidence with `requested`,
+`installed`, `preexisting`, `removal_requested`, `removed`, `removal_status`
+(`unchanged` or `removed`) and `declined` entries carrying `host`, `status` and
+`reason`. Written rules do not prove that the host loaded the file or stopped
+prompting; verify read-only and write behavior in the real host separately.
+
+Project receipts use version 4 or 5, explicit per-host purposes and a unique
+install generation. Version 5 is written exactly when a managed read-only
+permission registration exists; otherwise the receipt stays at version 4, and
+removing the last managed rule returns it to version 4. A v5 receipt has the
+single key `claude`, which must also be a selected agent; its settings path must
+be `root/.claude/settings.json`; `rules` is non-empty, at most 64 entries and at
+most 256 characters per entry; rules have the exact `Bash(specgit <argv> *)`
+shape with non-empty argv and no parentheses, and without line breaks, `;`, `|`,
+`&`, `$`, backticks or quotes; `created_rules` is a
+subset of `rules`; `rules` and `preexisting` are disjoint; and a same-host hooks
+registration uses the same settings path and `created_file`. Decoding does not
+check that recorded rules belong to the current constant set. Valid v1-v3
+ownership evidence migrates to version 4. A receipt above version 5 is an
+actionable ownership conflict (exit 3): upgrade the shared CLI, or use the newer
+CLI to remove the managed read-only permissions before downgrading. Refresh
+retains the generation; a later install gets a new one. Permission or history
+ambiguity is an ownership conflict: older matching records cannot cancel newer
+evidence. Older published CLIs cannot verify the shared project transaction
+history introduced in 2.12. Use a 2.13-or-newer shared CLI after migration to v4
+receipts; preserve the receipt and assets during any downgrade. Never
+force-overwrite ownership or delete the receipt to bypass it. These proof rules
+also apply to whole-project `remove`; its apply requires the reviewed preview
+digest.
 
 Project scope never installs a runtime binary inside the checkout and never
 edits global agent settings. Project hooks invoke the currently installed
