@@ -9,7 +9,7 @@ publication still has the recovery procedure below.
 After the intended changes are merged, dispatch the workflow on `main`:
 
 ```sh
-gh workflow run release-prepare.yml --ref main -f release_version=2.20.2
+gh workflow run release-prepare.yml --ref main -f release_version=2.21.0
 ```
 
 The version must match Cargo and the private development workspace. Before dispatch,
@@ -120,7 +120,7 @@ through the existing authenticated `gh` session:
 ```sh
 node runtime/distribution/publish.mjs \
   --directory /absolute/native-bundle \
-  --version 2.20.2 --source <current-main-sha> --build-run <qualified-run-id> \
+  --version 2.21.0 --source <current-main-sha> --build-run <qualified-run-id> \
   --github
 ```
 
