@@ -139,7 +139,7 @@
 specgit init --provider github --remote origin --dry-run --json
 specgit init --provider github --remote origin --json
 specgit setup --catalog --json</code></pre>
-        <p class="note">Already installed? Use the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">project maintenance guide</a>. GitHub Releases is the only distribution channel.</p>
+        <p class="note">Already installed? Use the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/agent-project-refresh.md">project maintenance guide</a>. The <code>specgit</code> CLI is distributed only through GitHub Releases.</p>
       </div>
     </div>
   </section>
@@ -193,7 +193,7 @@ specgit setup --agent opencode --json</code></pre><p class="note">Fallback: re-r
       <div class="section-head reveal">
         <p class="section-tag">Download</p>
         <h2>Signed, three-platform releases.</h2>
-        <p>SpecGit is distributed only through <a href="https://github.com/LeXwDeX/SpecGit/releases/latest">GitHub Releases</a>. The latest stable release provides:</p>
+        <p>The native <code>specgit</code> CLI is distributed only through <a href="https://github.com/LeXwDeX/SpecGit/releases/latest">GitHub Releases</a>. The latest stable release provides:</p>
       </div>
       <div class="dl-grid">
         <div class="dl-card reveal"><div class="os"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.8c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.8-3-.8c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.7-.1 0-2.5-1-2.5-3.7zM14.1 5.9c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.8 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.8-1.3z"/></svg></div><h3>macOS</h3><p class="arch">specgit-&lt;version&gt;-darwin-arm64.zip</p></div>
@@ -203,6 +203,20 @@ specgit setup --agent opencode --json</code></pre><p class="note">Fallback: re-r
       <div class="verify-box reveal">
         <p class="label"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Verify before installing</p>
         <p style="margin:0;color:var(--muted);font-size:0.92rem">Each release ships <code>SHA256SUMS</code> and <code>SHA256SUMS.sigstore.json</code>. The Cosign signature covers <code>SHA256SUMS</code> and therefore the ZIP bytes; cross-check the tag commit and the native build workflow run separately. See the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/docs/installation.md">release asset verification reference</a>.</p>
+      </div>
+      <div class="verify-box reveal">
+        <p class="label">Install as a plugin</p>
+        <p style="margin:0 0 0.75rem;color:var(--muted);font-size:0.92rem">The plugin bundles the <code>specgit-native</code> Skill and onboarding only; the native CLI still comes from GitHub Releases. See the <a href="https://github.com/LeXwDeX/SpecGit/blob/main/plugin/README.md">plugin installation guide</a>.</p>
+        <pre><code># Claude Code
+claude plugin marketplace add LeXwDeX/SpecGit
+claude plugin install specgit@specgit-marketplace
+
+# Codex: add the marketplace, then browse and install in /plugins
+codex plugin marketplace add LeXwDeX/SpecGit
+
+# Pi, OpenCode and other skill-only hosts
+specgit init
+specgit skill --user</code></pre>
       </div>
       <p class="actions reveal"><a class="button primary" href="https://github.com/LeXwDeX/SpecGit/releases/latest">Open the latest release</a></p>
     </div>

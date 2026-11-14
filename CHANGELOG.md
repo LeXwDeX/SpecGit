@@ -4,6 +4,10 @@ Entries describe their named versions. Historical commands, packaging and runner
 choices are not current instructions; see the [native reference](runtime/REFERENCE.md)
 and [release procedure](runtime/distribution/README.md).
 
+# Unreleased
+
+- Package the `specgit-native` Skill as a host-neutral plugin with self-hosted marketplace entries for Claude Code and Codex, plugin artwork, and CI checks that keep the manifest version and bundled Skill aligned with the release metadata. The plugin remains a thin wrapper with no native binary, hooks or global state; the `specgit` CLI binary is still distributed only through GitHub Releases. (#924)
+
 # 2.21.0
 
 - Search GitLab duplicate candidates by the title summary instead of the whole title. GitLab issue search is full-text and requires every term, so `feat: x` never matched a `fix: x` or `feat(dag): x` Issue with the same summary, and `feat(dag): x` never matched `feat: x`; duplicate Issues stayed hidden. A recognized `type[(scope)][!]: summary` header is now stripped from the open, closed-history and recovery queries, while a title without a recognized header is still searched whole. GitHub query bytes are unchanged. (#907)

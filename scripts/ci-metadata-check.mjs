@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -50,6 +51,13 @@ function main() {
   const root = fileURLToPath(new URL('../', import.meta.url));
   checkRepositoryMetadata(root);
   const documentCount = checkRepositoryDocumentation(root);
+  // Market package artifacts share this entry point so every metadata job run covers them.
+  const marketplace = spawnSync(process.execPath, [path.join(root, 'scripts/plugin-market-check.mjs')], { stdio: 'inherit' });
+  if (marketplace.error) throw marketplace.error;
+  if (marketplace.status !== 0) {
+    process.exitCode = marketplace.status ?? 1;
+    return;
+  }
   process.stdout.write(`Native repository metadata and ${documentCount} documentation files passed.\n`);
 }
 
