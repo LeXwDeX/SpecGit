@@ -109,7 +109,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: node runtime/distribution/native-release.mjs --assemble --input "$RUNNER_TEMP/specgit-release-input-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}" --version "$RELEASE_VERSION" --source "$GITHUB_SHA"
-      - uses: sigstore/cosign-installer@b9c35392b7c1401bcc77d30c9b07cf4b1c7a7b07
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
         with:
           cosign-release: v3.1.3
       - name: Verify required checks on the exact main source
