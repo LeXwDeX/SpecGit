@@ -8,6 +8,8 @@ export const targets = {
   'aarch64-apple-darwin': { key: 'darwin-arm64', os: 'darwin', cpu: 'arm64' },
   'x86_64-pc-windows-msvc': { key: 'win32-x64', os: 'win32', cpu: 'x64' },
 };
+// GitHub Releases ship only these targets; Windows still builds locally but is not released.
+export const releaseTargets = ['x86_64-unknown-linux-gnu', 'aarch64-apple-darwin'];
 const here = path.dirname(fileURLToPath(import.meta.url));
 const runtime = path.dirname(here);
 const repo = path.dirname(runtime);

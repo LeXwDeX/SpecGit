@@ -27,17 +27,19 @@ If `specgit --version` fails, install the latest stable release from
 
 ```sh
 # Download the ZIP for your system together with SHA256SUMS, then verify:
-shasum -a 256 specgit-<version>-darwin-arm64.zip                  # macOS
-sha256sum specgit-<version>-linux-x64-gnu.zip                     # Linux
-Get-FileHash .\specgit-<version>-win32-x64.zip -Algorithm SHA256  # Windows
+shasum -a 256 specgit-<version>-darwin-arm64.zip   # macOS
+sha256sum specgit-<version>-linux-x64-gnu.zip      # Linux
 ```
 
 The computed digest must match the corresponding row in `SHA256SUMS`. Stop and
 report the mismatch when the row is missing or does not match. Extract the
-archive, put the root-level `specgit` (`specgit.exe` on Windows) on a user-level
-directory in `PATH`, and confirm `specgit --version`. The `specgit` CLI binary is
+archive, put the root-level `specgit` on a user-level directory in `PATH`, and
+confirm `specgit --version`. The `specgit` CLI binary is
 distributed only through GitHub Releases; the Skill/plugin is distributed through
 plugin marketplaces and `.agents/skills`. Do not use npm or unofficial mirrors.
+
+No native Windows package is published. On Windows, install WSL (Windows Subsystem for
+Linux) yourself and use the Linux x64 package inside WSL.
 
 The [release asset verification reference](../docs/installation.md) records the
 Cosign signature command, the signed checksum manifest and the full verification
@@ -94,9 +96,8 @@ instead:
 specgit skill --user
 ```
 
-That writes `~/.agents/skills/specgit-native/SKILL.md` (`%USERPROFILE%` on
-Windows). You can also copy `plugin/skills/specgit-native/` into a project's
-`.agents/skills/` directory.
+That writes `~/.agents/skills/specgit-native/SKILL.md`. You can also copy
+`plugin/skills/specgit-native/` into a project's `.agents/skills/` directory.
 
 ## Use
 

@@ -13,7 +13,9 @@ Rust 核心、watch 和 hooks 不执行合并、关闭 Issue、删除分支或�
 根 Node 工作区是私有工程工具，负责仓库验证。
 v1 TypeScript 运行时、Vitest、npm 发布和旧 acceptance controller 已退役。
 不要恢复旧命令作为 v2 的开发或交付路径。
-当前公开分发渠道仅为 GitHub Releases，提供三个平台的原生 ZIP、校验清单和签名。
+当前公开分发渠道仅为 GitHub Releases，提供 Linux x64 与 macOS arm64 两个平台的原生 ZIP、校验清单和签名。
+不再发布 Windows 包，CI 也不跑 Windows。源码保留 Windows 兼容代码，但不做 Windows 集成测试。
+Windows 用户需自行安装 WSL，在 WSL 内使用 Linux x64 发行包。
 
 ## 仓库结构
 
@@ -84,7 +86,7 @@ v1 TypeScript 运行时、Vitest、npm 发布和旧 acceptance controller 已退
   不完整读取、未知能力和过期检查不能作为成功或后续写入的依据。
   事件确认只记录传输收据，不证明用户已读或交付完成。
 - 必要的 `unsafe` 限于操作系统进程边界，并说明所有权和安全条件。
-  保留 Rust/Clippy 安全 lint，不靠扩大超时或跳过 Windows 测试掩盖缺陷。
+  保留 Rust/Clippy 安全 lint，不靠扩大超时或跳过测试掩盖缺陷。
 
 ### 回归与指导文本
 
@@ -188,13 +190,12 @@ cargo clippy --locked --all-targets --features test-fixtures --target x86_64-pc-
 cargo test --locked --all-targets --features test-fixtures
 ```
 
-Windows 交叉 clippy 只在本地运行，不链接、不执行，用于在提交前发现只在 Windows 上编译的 cfg、平台 API 和类型问题。
-缺少目标标准库时先运行 `rustup target add x86_64-pc-windows-msvc`。运行时行为仍以 main 的 Windows 原生任务为准。
+Windows 交叉 clippy 只在本地运行，不链接、不执行，用于保持 Windows 兼容代码可编译。
+缺少目标标准库时先运行 `rustup target add x86_64-pc-windows-msvc`。
 
 安装或发行变更还须执行相关原生分发测试。
 PR 事件只运行 Linux 矩阵；main push、merge group、手动运行与 release 构建
-保留 Linux x64、macOS arm64、Windows x64 三平台的源码和已安装入口验证。
-Windows 问题在发布前集中修复。
+保留 Linux x64、macOS arm64 两平台的源码和已安装入口验证。
 `Required verification` 汇总适用检查；`SpecGit Acceptance` 要求其成功且 PR 已 ready、目标为 main。
 本地编译、旧 head 或其他平台的成功不替代当前 head 的适用验证。
 

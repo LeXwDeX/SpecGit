@@ -38,10 +38,10 @@ export function requireChecks(source, request = api) {
 export function verifyBuildRun(run, source, { activeRun, jobs = [] } = {}) {
   const owned = run.head_sha === source && run.head_branch === 'main' && run.head_repository?.full_name === repository && run.repository?.full_name === repository && run.path === '.github/workflows/release-prepare.yml' && run.event === 'workflow_dispatch';
   const completed = run.status === 'completed' && run.conclusion === 'success';
-  const nativeJobsPassed = ['linux', 'macos', 'windows'].every(label => {
+  const nativeJobsPassed = ['linux', 'macos'].every(label => {
     const matches = jobs.filter(job => job.name === `Build native release (${label})`);
     const labels = matches[0]?.labels ?? [];
-    const expected = { linux: 'ubuntu-24.04', macos: 'macos-15', windows: 'windows-2025' }[label];
+    const expected = { linux: 'ubuntu-24.04', macos: 'macos-15' }[label];
     const routed = labels.includes(expected) && !labels.includes('self-hosted');
     return matches.length === 1 && matches[0].conclusion === 'success' && matches[0].status === 'completed' && routed;
   });
@@ -53,10 +53,10 @@ export function verifyBuildRun(run, source, { activeRun, jobs = [] } = {}) {
     assembly[0]?.status === 'completed' && assembly[0]?.conclusion === 'failure' && publish > 0 &&
     steps[publish].conclusion === 'failure' && steps.slice(0, publish).every(step => step.conclusion === 'success') &&
     steps.slice(0, publish).some(step => step.name === 'Sign and verify the ZIP checksum manifest');
-  need(owned && (completed || running || recoverable), 'Release requires the exact main build with three successful native smoke jobs; recovery also requires a verified signed bundle and failure confined to publication.');
+  need(owned && (completed || running || recoverable), 'Release requires the exact main build with two successful native smoke jobs; recovery also requires a verified signed bundle and failure confined to publication.');
 }
 export function githubFiles(release, directory) {
-  need(release.archives?.length === 3 && new Set(release.archives.map(a => a.filename)).size === 3, 'Three native ZIP archives are required.');
+  need(release.archives?.length === 2 && new Set(release.archives.map(a => a.filename)).size === 2, 'Two native ZIP archives are required.');
   for (const entry of release.archives) need(createHash('sha256').update(readFileSync(entry.file)).digest('hex') === entry.sha256, 'ZIP digest differs before publication.');
   need(readFileSync(path.join(directory, checksumsName), 'utf8') === checksums(release.archives), 'SHA256SUMS differs before publication.');
   need(readFileSync(path.join(directory, signatureName)).length > 0, 'Signature bundle is required.');

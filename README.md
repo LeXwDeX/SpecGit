@@ -41,7 +41,7 @@ It works with Codex, Claude Code and OpenCode through their supported integratio
 other agents can use the CLI and project guidance directly.
 
 The `specgit` CLI is distributed **only through GitHub Releases** as native macOS
-arm64, Linux x64 glibc and Windows x64 ZIP packages, accompanied by `SHA256SUMS` and its
+arm64 and Linux x64 glibc ZIP packages, accompanied by `SHA256SUMS` and its
 Sigstore signature bundle. The signature covers `SHA256SUMS` only; because that
 manifest lists the ZIP hashes, it covers the ZIP bytes, but not the source commit,
 version, build run or internal `native-release.json`. Verify the tag commit and
@@ -50,6 +50,11 @@ npm or Rust compiler. Repository work needs Git and an authenticated `gh` or `gl
 `specgit update` upgrades the shared executable from GitHub Releases with signature
 and checksum verification and keeps a backup. One user-level executable serves all
 repositories and worktrees; initialize each clone or worktree separately.
+
+**Windows:** no Windows package is published and CI does not test Windows. To use
+SpecGit on Windows, install WSL (Windows Subsystem for Linux) yourself, then install
+and use SpecGit inside WSL with the Linux x64 glibc package and the Linux
+installation steps.
 
 ## Install as a plugin
 
@@ -326,7 +331,7 @@ cargo test --locked --all-targets --features test-fixtures
 ```
 
 The [Release workflow](.github/workflows/release-prepare.yml) runs from `main` after
-an explicit dispatch with a stable version. GitHub-hosted standard Linux/Windows x64
+an explicit dispatch with a stable version. GitHub-hosted standard Linux x64
 and macOS ARM64 runners compile and smoke-test the native binaries. The final job creates ZIPs and signs only `SHA256SUMS`
 using the main Release workflow identity, which covers the ZIP bytes but not the
 source commit, version, build run or internal `native-release.json`. Publication

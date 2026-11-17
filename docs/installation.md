@@ -11,7 +11,10 @@ Release is listed at [GitHub Releases](https://github.com/LeXwDeX/SpecGit/releas
 | --- | --- |
 | macOS Apple Silicon | `specgit-<version>-darwin-arm64.zip` |
 | Linux x64 glibc | `specgit-<version>-linux-x64-gnu.zip` |
-| Windows x64 | `specgit-<version>-win32-x64.zip` |
+
+Native Windows has no package. Windows users install WSL (Windows Subsystem for
+Linux) themselves and use the Linux x64 glibc package inside WSL, with the Linux
+steps on this page and in the [agent installation guide](agent-install.md).
 
 The agent selects the matching ZIP, `SHA256SUMS` and
 `SHA256SUMS.sigstore.json` from one Release, using the version without its `v` tag.
@@ -25,20 +28,19 @@ cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity 'htt
 ```
 
 After successful signature verification, the agent calculates the ZIP SHA-256 using
-`shasum -a 256 <file.zip>` on macOS, `sha256sum <file.zip>` on Linux or
-`Get-FileHash <file.zip> -Algorithm SHA256` in PowerShell. Compare it with the exact
-filename's single row in the signed manifest. Stop on missing or mismatched
-signatures or hashes; do not disable verification.
+`shasum -a 256 <file.zip>` on macOS or `sha256sum <file.zip>` on Linux. Compare it
+with the exact filename's single row in the signed manifest. Stop on missing or
+mismatched signatures or hashes; do not disable verification.
 
 The Sigstore signature covers `SHA256SUMS` only. Because the manifest lists the
 ZIP hashes, it covers the ZIP bytes, but the release source commit, version,
 build run and internal `native-release.json` are not in the signed payload.
 Cross-check the tag's commit and the native build workflow run separately.
 
-The archive contains `specgit` (`specgit.exe` on Windows). The agent preserves any
-existing executable, installs the binary in a user-owned PATH directory, sets Unix
-execute permission, and confirms the installed executable hash matches the extracted
-binary hash. This hash differs from the ZIP archive hash.
+The archive contains `specgit`. The agent preserves any existing executable,
+installs the binary in a user-owned PATH directory, sets execute permission, and
+confirms the installed executable hash matches the extracted binary hash. This
+hash differs from the ZIP archive hash.
 
 Installation needs no Node.js, npm or Rust compiler. Git and an authenticated
 `gh` or `glab` session are required for repository work. Unsupported platform
@@ -70,18 +72,18 @@ specgit update --json
 `--check` only reads release metadata. `--dry-run` downloads and verifies the
 release without replacement. The default replaces only the running executable
 and reports the actual backup path (`specgit.backup-<previous-version>` beside
-it, or inside a unique `.specgit-backup-*` directory on Windows). Update never
-restores automatically: a readback failure preserves the target and backup and
-lists both paths and SHA-256 values for manual verification; an installation
-failure preserves any owned backup and reports the paths and hashes it has.
+it). Update never restores automatically: a readback failure preserves the target
+and backup and lists both paths and SHA-256 values for manual verification; an
+installation failure preserves any owned backup and reports the paths and hashes
+it has.
 Use `--version <x.y.z>` for an exact release, including a deliberate downgrade.
 See [self-update](../runtime/REFERENCE.md#self-update).
 For installed users, `specgit update` is the upgrade entry point; the agent guide
 covers legacy executable cases and permissions that block an update.
 
 After CLI upgrades, verify the executable and its selected PATH first:
-`command -v specgit` on Unix or `Get-Command specgit` in PowerShell. An older npm
-shim can otherwise continue selecting the retired CLI. The agent preserves the previous executable before any explicit replacement. A failed update does not restore it automatically; verify the reported paths and hashes before restoring manually.
+`command -v specgit`. An older npm shim can otherwise continue selecting the
+retired CLI. The agent preserves the previous executable before any explicit replacement. A failed update does not restore it automatically; verify the reported paths and hashes before restoring manually.
 
 After installing or upgrading the shared CLI, use the [agent installation guide](agent-install.md#4-choose-project-integration-by-capability)
 to discover host constraints and choose project integration. The catalog is

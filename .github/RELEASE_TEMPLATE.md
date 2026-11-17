@@ -6,7 +6,7 @@ This comment is removed from the published notes.
 -->
 # SpecGit {{version}}
 
-Native Rust CLI for macOS arm64, Linux x64 (glibc) and Windows x64. No Node.js, npm or Rust installation is required to run SpecGit.
+Native Rust CLI for macOS arm64 and Linux x64 (glibc). No Node.js, npm or Rust installation is required to run SpecGit. No native Windows package is published: install WSL (Windows Subsystem for Linux) yourself and use the Linux x64 package inside WSL.
 
 ## Changes
 
@@ -20,13 +20,13 @@ Native Rust CLI for macOS arm64, Linux x64 (glibc) and Windows x64. No Node.js, 
 
 ## Verification
 
-Required verification and SpecGit Acceptance passed on the exact release source commit [`{{source}}`](https://github.com/LeXwDeX/SpecGit/commit/{{source}}) before signing. Each binary passed version, help and schema smoke checks on its GitHub-hosted runner (`ubuntu-24.04`, `macos-15` or `windows-2025`). Before this release became latest, the publisher verified the checksum signature against the main Release workflow identity and downloaded every asset again to compare its bytes.
+Required verification and SpecGit Acceptance passed on the exact release source commit [`{{source}}`](https://github.com/LeXwDeX/SpecGit/commit/{{source}}) before signing. Each binary passed version, help and schema smoke checks on its GitHub-hosted runner (`ubuntu-24.04` or `macos-15`). Before this release became latest, the publisher verified the checksum signature against the main Release workflow identity and downloaded every asset again to compare its bytes.
 
-The Sigstore signature covers `SHA256SUMS` only, and therefore the SHA-256 values of the three ZIPs. It does not sign the source commit, version, build run or internal `native-release.json`. Verify those separately: compare the `v{{version}}` tag's commit with the source commit above, and confirm that native build run `{{build_run}}` is the workflow run that produced these assets.
+The Sigstore signature covers `SHA256SUMS` only, and therefore the SHA-256 values of the two ZIPs. It does not sign the source commit, version, build run or internal `native-release.json`. Verify those separately: compare the `v{{version}}` tag's commit with the source commit above, and confirm that native build run `{{build_run}}` is the workflow run that produced these assets.
 
 Native build run: [workflow run](https://github.com/LeXwDeX/SpecGit/actions/runs/{{build_run}})
 
-SHA-256 values for the three native ZIPs, matching the signed `SHA256SUMS` manifest:
+SHA-256 values for the two native ZIPs, matching the signed `SHA256SUMS` manifest:
 
 {{checksums}}
 

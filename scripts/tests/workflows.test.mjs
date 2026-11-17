@@ -12,7 +12,7 @@ const rustMatrixStep = () => {
   const { jobs } = parse(workflow('ci.yml'));
   return jobs.changes.steps.find(step => step.id === 'rust-matrix');
 };
-const rustMatrixRows = () => [...rustMatrixStep().run.matchAll(/^\s*(linux|macos|windows)='(.*)'$/gm)].map(match => JSON.parse(match[2]));
+const rustMatrixRows = () => [...rustMatrixStep().run.matchAll(/^\s*([a-z]+)='(.*)'$/gm)].map(match => JSON.parse(match[2]));
 
 test('release is main-only, build-gated, actor-owned and signature-verified', () => {
   assertReleaseActorCredentials(release, 'Release');
@@ -39,7 +39,7 @@ test('every workflow uses pinned actions, approved runner routes and isolated ch
           : [job['runs-on']];
         assert(routes.length > 0, `${file}/${id}: missing native runner route`);
         for (const route of routes) {
-          assert(['ubuntu-24.04', 'macos-15', 'windows-2025'].includes(route),
+          assert(['ubuntu-24.04', 'macos-15'].includes(route),
             `${file}/${id}: runner must use a standard GitHub-hosted label`);
         }
       }
@@ -66,7 +66,7 @@ test('protected acceptance requires applicable native verification and a ready m
   assert(gate.includes('test "$VERIFICATION_RESULT" = success'));
   assert(gate.includes('test "$PR_DRAFT" = false'));
   assert(gate.includes('test "$PR_TARGET" = main'));
-  assert.deepEqual(rustMatrixRows().map(x => x.target).sort(), ['aarch64-apple-darwin', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu']);
+  assert.deepEqual(rustMatrixRows().map(x => x.target).sort(), ['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']);
   const commands = jobs.rust.steps.map(s => s.run ?? '').join('\n');
   for (const phase of ['lint', 'compile-tests', 'source-tests', 'distribution-tests', 'compile-release', 'install', 'profile']) assert(commands.includes(`--phase ${phase} `));
 });
@@ -87,14 +87,13 @@ test('CI native routes preserve owner and fork runner labels', () => {
   assert.deepEqual(rustMatrixRows().map(row => [row.label, JSON.parse(row.runs_on), JSON.parse(row.hosted_runs_on)]), [
     ['linux', ['self-hosted', 'Linux', 'X64', 'azure-f16'], ['ubuntu-24.04']],
     ['macos', ['macos-15'], ['macos-15']],
-    ['windows', ['self-hosted', 'Windows', 'X64', 'azure-win'], ['windows-2025']],
   ]);
   const step = rustMatrixStep();
   assert.equal(step.env.EVENT_NAME, '${{ github.event_name }}');
   assert.match(step.run, /if \[ "\$EVENT_NAME" = "pull_request" \]/);
   const prBranch = step.run.split('\n').find(line => line.includes('rust_matrix=') && line.includes('"$linux"') && !line.includes('$macos'));
   assert(prBranch, 'pull requests must receive only the Linux matrix');
-  const mainBranch = step.run.split('\n').find(line => line.includes('rust_matrix=') && line.includes('"$linux"') && line.includes('"$macos"') && line.includes('"$windows"'));
+  const mainBranch = step.run.split('\n').find(line => line.includes('rust_matrix=') && line.includes('"$linux"') && line.includes('"$macos"'));
   assert(mainBranch, 'main pushes must receive the full matrix');
 });
 
@@ -105,7 +104,6 @@ test('CI and release preserve native platform labels and hosted macOS checks', (
     assert.deepEqual(rows.map(row => [row.label, row.os]), [
       ['linux', 'ubuntu-24.04'],
       ['macos', 'macos-15'],
-      ['windows', 'windows-2025'],
     ]);
     const check = job.steps.find(step => step.name === 'Verify hosted macOS ARM64 toolchain');
     assert.equal(check.if, "runner.os == 'macOS'");

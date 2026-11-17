@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { buildNative, run, targets, verifyArchitecture } from './native-build.mjs';
+import { buildNative, releaseTargets, run, targets, verifyArchitecture } from './native-build.mjs';
 
 const need = (condition, message) => { if (!condition) throw new Error(message); };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -81,7 +81,7 @@ function platformArtifactDirectory(input, target) {
 export function assemble(input, output, version, source) {
   identity(version, source);
   need(!existsSync(output), 'Choose a fresh native bundle directory.');
-  const binaries = Object.keys(targets).map(target => {
+  const binaries = releaseTargets.map(target => {
     const directory = platformArtifactDirectory(input, target);
     const entry = JSON.parse(readFileSync(path.join(directory, 'smoke.json'), 'utf8'));
     need(entry.target === target, 'Platform artifact target mismatch.');
@@ -108,9 +108,9 @@ export function verifyNativeBundle(directory, version, source) {
   identity(version, source);
   const release = JSON.parse(readFileSync(path.join(directory, 'native-release.json'), 'utf8'));
   need(release.version === version && release.source === source, 'Native bundle source/version mismatch.');
-  need(Array.isArray(release.binaries) && release.binaries.length === 3 && new Set(release.binaries.map(b => b.target)).size === 3, 'Exactly three distinct native targets are required.');
+  need(Array.isArray(release.binaries) && release.binaries.length === releaseTargets.length && release.binaries.every(b => releaseTargets.includes(b.target)) && new Set(release.binaries.map(b => b.target)).size === releaseTargets.length, 'Exactly two distinct native targets are required.');
   const binaries = release.binaries.map(entry => verifiedBinary(entry, directory, version, source));
-  need(Array.isArray(release.archives) && release.archives.length === 3 && new Set(release.archives.map(a => a.target)).size === 3, 'Exactly three distinct ZIP targets are required.');
+  need(Array.isArray(release.archives) && release.archives.length === releaseTargets.length && release.archives.every(a => releaseTargets.includes(a.target)) && new Set(release.archives.map(a => a.target)).size === releaseTargets.length, 'Exactly two distinct ZIP targets are required.');
   const archives = release.archives.map(entry => {
     const binary = binaries.find(b => b.target === entry.target);
     need(binary && entry.filename === `specgit-${version}-${targets[entry.target].key}.zip`, 'ZIP filename/target mismatch.');

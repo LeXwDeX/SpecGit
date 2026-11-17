@@ -13,7 +13,7 @@ const changelog = '# Changelog\n\n# 2.0.0\n\n- Fixture change. (#1)\n\n# 1.9.0\n
 function fixture(t, { draft, existing = [], corrupt, otherSource, interruptUpload, missingTag } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'specgit-github-release-test-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const packages = ['specgit-2.0.0-darwin-arm64.zip', 'specgit-2.0.0-linux-x64-gnu.zip', 'specgit-2.0.0-win32-x64.zip'];
+  const packages = ['specgit-2.0.0-darwin-arm64.zip', 'specgit-2.0.0-linux-x64-gnu.zip'];
   for (const name of [...packages, 'wrapper.tgz']) writeFileSync(path.join(directory, name), `qualified ${name}`);
   const release = { version: '2.0.0', source, archives: packages.map(filename => ({ filename, file: path.join(directory, filename), sha256: createHash('sha256').update(readFileSync(path.join(directory, filename))).digest('hex') })) };
   writeFileSync(path.join(directory, 'SHA256SUMS'), release.archives.map(a => `${a.sha256}  ${a.filename}\n`).join(''));
@@ -69,10 +69,10 @@ test('new release is created as draft and only published after all byte readback
   const f = fixture(t);
   const result = publishGithub(f.release, f.directory, f.io);
   assert.deepEqual(result.assets_verified, f.names);
-  assert.equal(f.names.length, 5);
+  assert.equal(f.names.length, 4);
   assert(!f.names.includes('wrapper.tgz'));
   assert(f.names.includes('SHA256SUMS.sigstore.json'));
-  assert(f.names.filter(name => name.endsWith('.zip')).length === 3);
+  assert(f.names.filter(name => name.endsWith('.zip')).length === 2);
   const notes = releaseNotes(f.release, '123', { changelog });
   assert.deepEqual(f.remote.notes, [notes, notes]);
   for (const binary of f.release.archives) assert(notes.includes(`| \`${binary.filename}\` | \`${binary.sha256}\` |`));
@@ -112,7 +112,7 @@ test('a matching pre-existing draft can be completed; a conflicting asset causes
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => call[1] === 'create'), false);
   assert.equal(f.calls.filter(call => call[1] === 'upload').length, f.names.length - 1);
-  const conflict = fixture(t, { draft: true, existing: ['specgit-2.0.0-win32-x64.zip'], corrupt: 'specgit-2.0.0-win32-x64.zip' });
+  const conflict = fixture(t, { draft: true, existing: ['specgit-2.0.0-linux-x64-gnu.zip'], corrupt: 'specgit-2.0.0-linux-x64-gnu.zip' });
   assert.throws(() => publishGithub(conflict.release, conflict.directory, conflict.io), /differs/);
   assert.equal(conflict.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
   const extra = fixture(t, { draft: true, existing: ['wrapper.tgz'] });
@@ -120,7 +120,7 @@ test('a matching pre-existing draft can be completed; a conflicting asset causes
   assert.equal(extra.calls.some(call => ['upload', 'edit', 'create'].includes(call[1])), false);
 });
 test('published releases are read back without duplicate uploads; foreign source tags are never changed', t => {
-  const f = fixture(t, { draft: false, existing: ['specgit-2.0.0-darwin-arm64.zip', 'specgit-2.0.0-linux-x64-gnu.zip', 'specgit-2.0.0-win32-x64.zip', 'SHA256SUMS', 'SHA256SUMS.sigstore.json'] });
+  const f = fixture(t, { draft: false, existing: ['specgit-2.0.0-darwin-arm64.zip', 'specgit-2.0.0-linux-x64-gnu.zip', 'SHA256SUMS', 'SHA256SUMS.sigstore.json'] });
   publishGithub(f.release, f.directory, f.io);
   assert.equal(f.calls.some(call => ['upload', 'create'].includes(call[1])), false);
   const foreign = fixture(t, { draft: true, otherSource: 'b'.repeat(40) });
@@ -140,7 +140,7 @@ test('missing or incomplete release notes stop publication before the tag write'
 });
 test('the repository template renders every placeholder for the current CHANGELOG version', () => {
   const version = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
-  const archives = ['darwin-arm64', 'linux-x64-gnu', 'win32-x64'].map(platform => ({ filename: `specgit-${version}-${platform}.zip`, sha256: 'c'.repeat(64) }));
+  const archives = ['darwin-arm64', 'linux-x64-gnu'].map(platform => ({ filename: `specgit-${version}-${platform}.zip`, sha256: 'c'.repeat(64) }));
   const notes = releaseNotes({ version, source, archives }, '456');
   assert(notes.startsWith(`# SpecGit ${version}\n`));
   assert(!notes.includes('<!--') && !/\{\{\w+\}\}/.test(notes));
