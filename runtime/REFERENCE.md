@@ -827,8 +827,8 @@ facts; successful setup is not verified host registration or delivery.
 authenticated `gh` CLI only. Without `--version` it selects the latest stable
 Release; drafts are never used. The same version is a no-op (`up_to_date`), and
 a running version newer than the latest Release reports `current_newer`.
-Unsupported platforms fail; Releases exist for macOS arm64, Linux x64 glibc and
-Windows x64.
+Unsupported platforms fail; Releases exist for macOS arm64 and Linux x64 glibc.
+Releases include no Windows package; Windows users run SpecGit inside WSL.
 
 `--dry-run` and apply download the platform ZIP, `SHA256SUMS` and
 `SHA256SUMS.sigstore.json` into a fresh temporary directory with bounded sizes.
@@ -1263,12 +1263,12 @@ GitHub Releases are the only public distribution channel. Download a native ZIP:
 |---|---|
 | Linux glibc x64 | `specgit-<version>-linux-x64-gnu.zip` |
 | macOS arm64 | `specgit-<version>-darwin-arm64.zip` |
-| Windows x64 MSVC | `specgit-<version>-win32-x64.zip` |
 
 Verify the same Release's `SHA256SUMS.sigstore.json` signature, then compare the
 ZIP hash against `SHA256SUMS` before extraction. Follow the exact signer identity
 and commands in the [installation guide](../docs/installation.md). Extract `specgit`
-(`specgit.exe` on Windows) and put it on PATH. Unix requires `chmod +x specgit`.
+and put it on PATH with `chmod +x specgit`. Windows users install WSL
+themselves and follow the Linux x64 steps inside WSL.
 Installation needs no Node.js, npm or Rust compiler. Each target receives native
 smoke checks during release and the complete installed CLI regression suite in CI.
 See [distribution](distribution/README.md) for publication and recovery.
