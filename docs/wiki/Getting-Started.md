@@ -17,8 +17,10 @@ delete private state to repair a project.
 ## 1. Install or update the shared CLI
 
 Use the Agent guide for install and PATH verification. GitHub Releases are the
-only public distribution channel, with signed macOS arm64, Linux x64 glibc and
-Windows x64 ZIPs. The release executable needs no Node.js, npm or Rust compiler.
+only public distribution channel, with signed macOS arm64 and Linux x64 glibc
+ZIPs. The release executable needs no Node.js, npm or Rust compiler. No native
+Windows package is published: install WSL (Windows Subsystem for Linux) yourself and
+use SpecGit inside WSL with the Linux x64 glibc package.
 For an installed CLI, use the maintenance guide's signed `specgit update` flow;
 the executable is shared across repositories and worktrees. Do not install a
 project-local copy or build source as an end-user substitute.

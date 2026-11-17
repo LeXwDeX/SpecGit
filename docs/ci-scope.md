@@ -22,37 +22,37 @@ verification exemptions. Unknown paths require product verification.
 CI and security classification execute the classifier from the event's base commit,
 not the pull request checkout. Missing base evidence fails closed.
 
-On `pull_request` events the Rust matrix runs Linux only; macOS and Windows do
-not run. Pushes to main, merge groups, manual runs and release builds
-keep all three platform jobs. Windows failures are therefore fixed in a single
-release-readiness pass, and ordinary PRs do not wait for Windows.
+On `pull_request` events the Rust matrix runs Linux only; macOS does not run.
+Pushes to main, merge groups, manual runs and release builds keep both platform
+jobs: Linux x64 and macOS arm64. CI and release builds no longer run on Windows,
+and no Windows package is published. The source keeps its Windows compatibility
+code, but it receives no Windows integration testing.
 
-Because PRs never compile Windows-only code, local product verification also
-runs a Windows cross-target lint before pushing:
+To keep that code compiling, local product verification also runs a Windows
+cross-target lint before pushing:
 `cargo clippy --locked --all-targets --features test-fixtures --target x86_64-pc-windows-msvc -- -D warnings`
 (install the target once with `rustup target add x86_64-pc-windows-msvc`). It type-checks
-and lints only, without linking or running, so it catches `cfg`, platform API and type
-errors but not runtime behavior. This check is local only; GitHub Actions does not run it.
+and lints only, without linking or running. This check is local only; GitHub Actions does not run it.
 
-Host load probes are also local only. `runtime/scripts/host-load-probe.py` starts real
+Host load probes are local only. `runtime/scripts/host-load-probe.py` starts real
 installed hosts against an isolated temporary project and reports `pass`, `fail` or
 `not-installed` per host. Run it before a release that changes setup, host registration,
 Skill or guidance assets, and read it as optional release evidence rather than a CI gate;
 a missing host is not a pass. See the [release checklist](../runtime/distribution/README.md#host-load-verification).
 
-For pushes to main, native CI routes Linux and Windows to the owner's
-self-hosted Azure runners; macOS uses GitHub-hosted `macos-15` ARM64.
+For pushes to main, native CI routes Linux to the owner's self-hosted Azure
+runners; macOS uses GitHub-hosted `macos-15` ARM64.
 Same-repository PRs use the same Linux route. Fork PRs use GitHub-hosted
 runners for the Linux job; merge groups and manual runs use GitHub-hosted
-runners for all three platforms. Other CI jobs and release builds use
+runners for both platforms. Other CI jobs and release builds use
 GitHub-hosted runners. This differs from the owner-runner-only decision in
 #528; a routing policy change needs owner review, not an implicit change here.
 Dependabot PRs are same-repository PRs, so third-party crate `build.rs` code can
-execute on the owner's Linux machine during the PR and on the owner's Windows
-machine once the change reaches main.
+execute on the owner's Linux machine, both during the PR and once the change
+reaches main.
 Review updates and runner isolation with that risk in mind.
 GitHub-managed CodeQL default setup is configured separately in security settings.
-The full native matrix covers Linux x64, macOS arm64 and Windows x64; PR runs
+The full native matrix covers Linux x64 and macOS arm64; PR runs
 execute only the Linux entry. Each platform job checks Rust formatting and lint,
 compiles and runs every source test, verifies native distribution tooling,
 compiles and installs the release executable, then repeats the public regression
@@ -67,7 +67,7 @@ classification.
 `Required verification` succeeds only when classification and repository contracts
 pass and every applicable Rust matrix job succeeds. On PRs only the Linux matrix
 job can apply, so a product-changing PR needs only that result; on main pushes
-all three platform jobs must succeed. Documentation-only changes must have the
+both platform jobs must succeed. Documentation-only changes must have the
 Rust job skipped. `SpecGit Acceptance` depends on that result and
 requires a ready PR targeting main; it inherits the same PR scope. The existing
 protected status name is retained.
@@ -82,9 +82,7 @@ before enabling it. Verify the ruleset and a failing high-severity test PR after
 configuration. Repository workflow changes alone do not enforce the ruleset.
 Scheduled audit examines the native
 Cargo dependency lockfile; private Node verification tooling is audited separately.
-Windows runners must provide Git for Windows/Bash and the MSVC C++ workload
-and Windows SDK. Missing tools or unavailable runner capacity leave verification
-pending or failed.
+Missing tools or unavailable runner capacity leave verification pending or failed.
 
 ## Delivery and release
 
@@ -96,12 +94,12 @@ selected Issue to appear in that request's native closing set and every associat
 Issue to be closed.
 
 Merging does not authorize publication. The explicitly dispatched Release workflow
-builds all three platforms from main, requires successful `Required verification` and
+builds both platforms from main, requires successful `Required verification` and
 `SpecGit Acceptance` checks on that exact source SHA before signing and again before
 publication. Those checks come from the main push run, which still exercises the full
-three-platform matrix. The release then signs SHA256SUMS with the trusted workflow
-identity, verifies the signature and uploaded bytes, and preserves immutable
-releases. The signature covers only `SHA256SUMS`, and therefore the ZIP bytes; the
+native matrix (Linux x64 and macOS arm64). The release then signs SHA256SUMS with
+the trusted workflow identity, verifies the signature and uploaded bytes, and
+preserves immutable releases. The signature covers only `SHA256SUMS`, and therefore the ZIP bytes; the
 source commit, version, build run and internal `native-release.json` are not in the
 signed payload, so cross-check the tag commit and the native build workflow run
 separately. See the [native release procedure](../runtime/distribution/README.md).

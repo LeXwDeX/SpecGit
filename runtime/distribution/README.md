@@ -24,29 +24,28 @@ cannot change the notes of a source commit. To change the Release layout, edit t
 template and its tests.
 
 The workflow
-builds on GitHub-hosted standard runners: Linux x64 glibc on `ubuntu-24.04`,
-macOS arm64 on `macos-15`, and Windows x64 on `windows-2025`, with pinned Rust.
+builds on GitHub-hosted standard runners: Linux x64 glibc on `ubuntu-24.04` and
+macOS arm64 on `macos-15`, with pinned Rust.
 The macOS job verifies the hosted environment, ARM64 architecture and the image-provided
 compiler without changing system Xcode selection. Missing tools fail the job.
 Each compiled binary runs three simple smoke checks:
 `--human --version`, `--help` and `--schema`. Release does not repeat full source,
 installed native CLI regression suites; those remain in CI.
 
-When all three builds and smoke checks succeed, the final job verifies the source,
+When both builds and smoke checks succeed, the final job verifies the source,
 architecture and SHA-256, packages the tested executables using Python 3.13 ZIP
 support, and signs the checksum manifest with Cosign 3.1.3 using GitHub Actions
 OIDC. It publishes exactly these assets:
 
 - `specgit-<version>-darwin-arm64.zip`
 - `specgit-<version>-linux-x64-gnu.zip`
-- `specgit-<version>-win32-x64.zip`
 - `SHA256SUMS`
 - `SHA256SUMS.sigstore.json`
 
 Only the final job has repository write and OIDC token permissions, and only its publisher step
 and the read-only source check step receive the workflow's `GH_TOKEN`. The publishing runner needs GitHub CLI 2.99 or newer (including `gh api --slurp`).
 No custom release credential is needed. The
-publisher checks current `main` and the three successful build jobs before writing.
+publisher checks current `main` and the two successful build jobs before writing.
 Before signing and again before publication, the source check gate reads all check-run
 pages and requires exactly one successful `Required verification` and `SpecGit Acceptance`
 from GitHub Actions for the exact source SHA. Missing, pending, failed, ambiguous or
@@ -54,13 +53,13 @@ incomplete checks stop the release. The main CI run supplies both checks. It the
 verifies the signature against the exact main Release workflow identity, creates a
 draft, uploads missing assets, verifies downloaded bytes, then makes the Release
 stable/latest. Checksums, the source commit and the build run appear in the rendered Release notes.
-The Sigstore signature covers only `SHA256SUMS`, and therefore the three ZIP bytes
+The Sigstore signature covers only `SHA256SUMS`, and therefore the two ZIP bytes
 listed there. The source commit, version, build run and internal
 `native-release.json` are outside the signed payload; cross-check the tag commit
 and the build run separately. Re-signing creates different signature bytes and
 cannot overwrite an existing immutable signature asset. The internal
 `native-release.json` and smoke reports remain Actions artifacts, not Release
-attachments. The five published assets are unchanged. A branch dispatch cannot
+attachments. The four published assets are unchanged. A branch dispatch cannot
 publish.
 
 ## Host load verification
@@ -107,7 +106,7 @@ For failed publication, reuse the retained signed bundle from the original attem
 Re-signing creates different signature bytes and cannot overwrite an existing
 immutable signature asset. Do not rerun the assembly job: it signs again. Retry
 only the publisher with the original retained signed bundle, even after a partial upload.
-For a failed run, manual recovery requires all three native build jobs and every
+For a failed run, manual recovery requires both native build jobs and every
 assembly step before publication, including signing, to have succeeded. A build
 or signing failure is not recoverable publication evidence. The retained signature
 and archive hashes are verified again before any write.

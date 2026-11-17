@@ -29,23 +29,11 @@ jobs:
           - os: macos-15
             label: macos
             target: aarch64-apple-darwin
-          - os: windows-2025
-            label: windows
-            target: x86_64-pc-windows-msvc
     defaults:
       run:
         shell: bash
         working-directory: runtime
     steps:
-      - name: Locate the existing Git Bash installation
-        if: runner.os == 'Windows'
-        shell: powershell
-        working-directory: .
-        run: |-
-          $git = Get-Command git -ErrorAction Stop
-          $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) "bin"
-          if (-not (Test-Path (Join-Path $gitBash "bash.exe"))) { throw "Install Git Bash and the MSVC C++ workload before retrying." }
-          $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -105,7 +93,7 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.13'
-      - name: Assemble the three smoke-tested binaries
+      - name: Assemble the two smoke-tested binaries
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: node runtime/distribution/native-release.mjs --assemble --input "$RUNNER_TEMP/specgit-release-input-${{ github.run_id }}-${{ github.run_attempt }}" --output "$RUNNER_TEMP/specgit-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}" --version "$RELEASE_VERSION" --source "$GITHUB_SHA"

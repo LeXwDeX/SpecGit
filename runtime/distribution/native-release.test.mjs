@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assemble, binaryName, prepareBinary, smoke, verifyNativeBundle } from './native-release.mjs';
-import { targets } from './native-build.mjs';
+import { releaseTargets, targets } from './native-build.mjs';
 
 const version = '2.0.0';
 const source = 'a'.repeat(40);
@@ -16,12 +16,12 @@ function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const input = path.join(root, 'input');
   mkdirSync(input);
-  for (const [target, platform] of Object.entries(targets)) {
+  for (const target of releaseTargets) {
+    const platform = targets[target];
     // Synthetic headers exercise validation; runner smoke tests execute real binaries.
     const bytes = Buffer.alloc(128);
     if (platform.os === 'linux') { Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(bytes); bytes.writeUInt16LE(62, 18); }
     else if (platform.os === 'darwin') { bytes.writeUInt32LE(0xfeedfacf, 0); bytes.writeUInt32LE(0x0100000c, 4); }
-    else { bytes.writeUInt16LE(0x5a4d, 0); bytes.writeUInt32LE(64, 0x3c); bytes.writeUInt32LE(0x00004550, 64); bytes.writeUInt16LE(0x8664, 68); }
     const binary = path.join(root, binaryName(target));
     writeFileSync(binary, bytes);
     prepareBinary(binary, path.join(input, `release-platform-${target}`), version, source, target, { platform: platform.os, arch: platform.cpu, execute });
@@ -36,14 +36,14 @@ test('smoke validates version, help and schema without a forge or package manage
   assert.throws(() => smoke('/native/specgit', version, () => ({ status: 0, stdout: 'specgit 1.0.0' })), /version differs/);
   assert.throws(() => smoke('/native/specgit', version, (binary, args) => args.includes('--schema') ? { status: 0, stdout: '{}' } : execute(binary, args)), /schema report differs/);
 });
-test('assembles three native executables and rejects changed bytes or duplicate targets', t => {
+test('assembles two native executables and rejects changed bytes or duplicate targets', t => {
   const f = fixture(t);
   const release = assemble(f.input, f.output, version, source);
-  assert.equal(release.binaries.length, 3);
-  assert.equal(verifyNativeBundle(f.output, version, source).binaries.length, 3);
+  assert.equal(release.binaries.length, 2);
+  assert.equal(verifyNativeBundle(f.output, version, source).binaries.length, 2);
   assert.throws(() => verifyNativeBundle(f.output, version, 'b'.repeat(40)), /source\/version/);
   const manifest = path.join(f.output, 'native-release.json');
-  writeFileSync(manifest, JSON.stringify({ ...release, binaries: [release.binaries[0], release.binaries[0], release.binaries[2]] }));
+  writeFileSync(manifest, JSON.stringify({ ...release, binaries: [release.binaries[0], release.binaries[0]] }));
   assert.throws(() => verifyNativeBundle(f.output, version, source), /distinct native targets/);
   writeFileSync(manifest, JSON.stringify(release));
   const file = path.join(f.output, release.binaries[0].filename);
@@ -52,11 +52,11 @@ test('assembles three native executables and rejects changed bytes or duplicate 
 });
 test('assembles artifacts from per-attempt directories', t => {
   const f = fixture(t);
-  for (const target of Object.keys(targets)) {
+  for (const target of releaseTargets) {
     renameSync(path.join(f.input, `release-platform-${target}`), path.join(f.input, `release-platform-${target}-2`));
   }
   const release = assemble(f.input, f.output, version, source);
-  assert.equal(release.binaries.length, 3);
+  assert.equal(release.binaries.length, 2);
 });
 test('rejects duplicate artifact directories for one target', t => {
   const f = fixture(t);

@@ -25,15 +25,18 @@ shell when selecting the native CPU. Supported Release assets are:
 | --- | --- | --- |
 | macOS Apple Silicon | `specgit-<version>-darwin-arm64.zip` | `specgit` |
 | Linux x64 with glibc | `specgit-<version>-linux-x64-gnu.zip` | `specgit` |
-| Windows x64 | `specgit-<version>-win32-x64.zip` | `specgit.exe` |
+
+Native Windows has no package. Tell a Windows user to install WSL (Windows
+Subsystem for Linux) themselves and run these steps inside WSL with the Linux x64
+glibc package. Do not look for a Windows ZIP.
 
 Unsupported architectures and Linux musl do not have a matching binary. Report
 that concrete gap; npm, a different architecture and unofficial mirrors are not
 fallback distribution channels.
 
 Use an existing user-owned bin directory on PATH. If none exists, use a user-local
-directory such as `~/.local/bin` or `%USERPROFILE%\.local\bin`, add it to the user's
-PATH without replacing existing entries, and retain the previous PATH setting.
+directory such as `~/.local/bin`, add it to the user's PATH without replacing
+existing entries, and retain the previous PATH setting.
 Use this shared user-level binary for all repositories and worktrees; do not create
 a project-local operational CLI copy. Preserve an existing executable before replacement. Do not uninstall an old npm
 package, alter a system-owned executable or remove other PATH entries as a shortcut.
@@ -76,15 +79,15 @@ internal `native-release.json` are not in the signed payload. Cross-check the
 tag's commit and the native build workflow run before treating provenance as
 verified.
 Match exactly one SHA-256 row for the selected ZIP in the verified manifest.
-Compare it with `shasum -a 256`, `sha256sum` or PowerShell
-`Get-FileHash -Algorithm SHA256`. If GitHub's asset digest is present it must agree.
+Compare it with `shasum -a 256` or `sha256sum`. If GitHub's asset digest is
+present it must agree.
 Missing, mismatching or unverified evidence stops installation before extraction.
 
-Extract the verified ZIP into a fresh directory using `unzip` or PowerShell
-`Expand-Archive`. Require exactly the expected root-level `specgit` / `specgit.exe`
-regular file. Copy it to the chosen bin directory, preserving an existing executable
-first. On Unix give it executable permission. Compare the installed binary hash
-with the extracted binary hash; the ZIP hash identifies the archive, not the binary.
+Extract the verified ZIP into a fresh directory using `unzip`. Require exactly the
+expected root-level `specgit` regular file. Copy it to the chosen bin directory,
+preserving an existing executable first. Give it executable permission. Compare
+the installed binary hash with the extracted binary hash; the ZIP hash identifies
+the archive, not the binary.
 Run the absolute installed path before testing the PATH-selected command:
 
 ```sh
@@ -95,9 +98,9 @@ specgit --schema
 
 The version must match the selected Release. Read this installed executable's
 `--help` and `--schema` for the available commands and options; do not apply v1
-flags or remembered options. Confirm `command -v specgit` / `Get-Command specgit`
-selects the verified file. Report an unresolved older shim or PATH conflict as
-incomplete setup, even if the absolute-path smoke checks pass.
+flags or remembered options. Confirm `command -v specgit` selects the verified
+file. Report an unresolved older shim or PATH conflict as incomplete setup, even
+if the absolute-path smoke checks pass.
 
 ## 3. Initialize the selected repository
 
@@ -341,10 +344,10 @@ specgit skill --user --dry-run --json
 specgit skill --user --json
 ```
 
-This writes only `~/.agents/skills/specgit-native/SKILL.md` (Windows uses
-`%USERPROFILE%`). The embedded Skill ends with a SHA-256 managed marker. Foreign
-files conflict; edited managed files are refreshed with a transactional backup
-reported by the CLI. Symlink paths below home are refused.
+This writes only `~/.agents/skills/specgit-native/SKILL.md`. The embedded Skill
+ends with a SHA-256 managed marker. Foreign files conflict; edited managed files
+are refreshed with a transactional backup reported by the CLI. Symlink paths
+below home are refused.
 `--remove` removes only managed, unedited content; preview it with `--dry-run`.
 `--refresh-only` never creates or adopts a missing or foreign Skill.
 

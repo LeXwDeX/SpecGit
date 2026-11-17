@@ -15,8 +15,9 @@
 ## 1. 安装或更新共享 CLI
 
 按 Agent 指南安装并验证 PATH。GitHub Releases 是唯一公开分发渠道，提供
-macOS arm64、Linux x64 glibc 和 Windows x64 的签名 ZIP。运行发行版不需要
-Node.js、npm 或 Rust 编译器。CLI 已安装时，按维护指南使用签名验证的
+macOS arm64 和 Linux x64 glibc 的签名 ZIP。运行发行版不需要
+Node.js、npm 或 Rust 编译器。不提供原生 Windows 包：请自行安装 WSL，在 WSL 内使用
+Linux x64 glibc 发行包。CLI 已安装时，按维护指南使用签名验证的
 `specgit update` 流程；同一可执行文件供本机所有仓库和 worktree 使用。
 不要在项目内安装运行用副本，也不要用源码构建代替终端用户的签名发行版。
 

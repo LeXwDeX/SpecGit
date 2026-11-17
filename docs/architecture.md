@@ -340,9 +340,8 @@ possible. Do not duplicate rule implementations across modules.
 The architecture contract is finite. It requires an acyclic full-source
 dependency graph, zero layer violations, read-only forge access limited to
 `GET` and fixed closing-reference GraphQL operations, and passing public API
-compatibility checks. Release qualification must also pass on Linux x64,
-macOS arm64, and Windows x64. These checks do not claim that all technical debt
-is absent.
+compatibility checks. Release qualification must also pass on Linux x64 and
+macOS arm64. These checks do not claim that all technical debt is absent.
 
 For documentation-only edits, review this page and run:
 
@@ -352,6 +351,6 @@ node scripts/ci-metadata-check.mjs
 
 For module or runtime changes, use the pinned Rust checks and the applicable
 native CI matrix in [CI scope](ci-scope.md). A diagram or a local compile does
-not replace the complete-source architecture test or three-platform CI.
+not replace the complete-source architecture test or two-platform CI.
 
 Native rollback acquires the shared native guard serialization lock before any asset-store lock. `config::worktree::lock_native_guard` returns the token required by `rollback_with_lock`; both locks remain held while consumers and transaction targets are rechecked. The old prelocked-store `rollback` signature returns an explicit migration diagnostic without writes because it cannot safely establish that order.

@@ -68,11 +68,10 @@ jobs:
         run: |
           linux='{"os":"ubuntu-24.04","label":"linux","target":"x86_64-unknown-linux-gnu","runs_on":"[\"self-hosted\",\"Linux\",\"X64\",\"azure-f16\"]","hosted_runs_on":"[\"ubuntu-24.04\"]"}'
           macos='{"os":"macos-15","label":"macos","target":"aarch64-apple-darwin","runs_on":"[\"macos-15\"]","hosted_runs_on":"[\"macos-15\"]"}'
-          windows='{"os":"windows-2025","label":"windows","target":"x86_64-pc-windows-msvc","runs_on":"[\"self-hosted\",\"Windows\",\"X64\",\"azure-win\"]","hosted_runs_on":"[\"windows-2025\"]"}'
           if [ "$EVENT_NAME" = "pull_request" ]; then
             printf 'rust_matrix={"include":[%s]}\n' "$linux" >> "$GITHUB_OUTPUT"
           else
-            printf 'rust_matrix={"include":[%s,%s,%s]}\n' "$linux" "$macos" "$windows" >> "$GITHUB_OUTPUT"
+            printf 'rust_matrix={"include":[%s,%s]}\n' "$linux" "$macos" >> "$GITHUB_OUTPUT"
           fi
 
   metadata:
@@ -97,55 +96,16 @@ jobs:
     if: needs.changes.outputs.build == 'true'
     # 可信事件用 Azure；fork PR 用 GitHub 托管 runner，不能让 fork 的代码上自托管机器。
     runs-on: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(matrix.runs_on) || fromJSON(matrix.hosted_runs_on) }}
-    # Allow the Windows VM to finish both source and installed regressions,
-    # including a slower shared runner, within one job budget.
-    timeout-minutes: ${{ matrix.label == 'windows' && 120 || 45 }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
-      # PR events receive only the Linux entry; main pushes receive all three.
+      # PR events receive only the Linux entry; main pushes receive Linux and macOS.
       matrix: ${{ fromJSON(needs.changes.outputs.rust_matrix) }}
     defaults:
       run:
         shell: bash
         working-directory: runtime
     steps:
-      - name: Verify native Windows build prerequisites
-        if: runner.os == 'Windows'
-        shell: powershell
-        working-directory: .
-        run: |
-          $git = Get-Command git -ErrorAction SilentlyContinue
-          if ($git) {
-            $gitBash = Join-Path (Split-Path (Split-Path $git.Source)) 'bin'
-            if (Test-Path (Join-Path $gitBash 'bash.exe')) {
-              $gitBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-              $env:Path = "$gitBash;$env:Path"
-            }
-          }
-          foreach ($tool in @('git', 'bash')) {
-            if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-              throw "Missing runner prerequisite: $tool. Install it and restart the runner service."
-            }
-          }
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $installation = if (Test-Path $vswhere) { & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
-          if (-not $installation) {
-            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-            $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-            if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-              throw 'MSVC build tools are missing. Install the C++ desktop workload and Windows SDK as administrator, then retry.'
-            }
-            $installer = Join-Path $env:RUNNER_TEMP 'vs-BuildTools-17.14.40.exe'
-            Invoke-WebRequest 'https://download.visualstudio.microsoft.com/download/pr/f8d58e41-102a-4347-a567-60d7235da3b5/aac092d0d839fd078e86b301d886130f1605891061242b36facf55ccbdd5a0a7/vs_BuildTools.exe' -OutFile $installer
-            if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne 'aac092d0d839fd078e86b301d886130f1605891061242b36facf55ccbdd5a0a7') {
-              throw 'MSVC installer checksum mismatch.'
-            }
-            $setup = Start-Process $installer -ArgumentList @('--quiet', '--wait', '--norestart', '--add', 'Microsoft.VisualStudio.Workload.VCTools', '--includeRecommended') -Wait -PassThru
-            if ($setup.ExitCode -eq 3010) { throw 'MSVC installation requires a Windows reboot before retrying native verification.' }
-            if ($setup.ExitCode -ne 0) { throw "MSVC installation failed with exit code $($setup.ExitCode)." }
-            $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-            if (-not $installation) { throw 'MSVC installation did not provide the required x64 build tools.' }
-          }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -167,13 +127,13 @@ jobs:
           node-version: '20.19.0'
           package-manager-cache: false
       - name: Rust formatting and lint
-        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
+        timeout-minutes: 15
         run: node scripts/native-resume.mjs --phase lint --target '${{ matrix.target }}'
       - name: Compile native test executables
-        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
+        timeout-minutes: 15
         run: node scripts/native-resume.mjs --phase compile-tests --target '${{ matrix.target }}'
       - name: Rust public interface and real subprocess regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
+        timeout-minutes: 15
         run: node scripts/native-resume.mjs --phase source-tests --target '${{ matrix.target }}'
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         if: runner.os != 'macOS'
@@ -183,16 +143,16 @@ jobs:
         if: runner.os == 'macOS'
         run: python3 -c 'import sys, zipfile; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
       - name: Native distribution regressions
-        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
+        timeout-minutes: 15
         run: node scripts/native-resume.mjs --phase distribution-tests --target '${{ matrix.target }}'
       - name: Compile remapped release executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
+        timeout-minutes: 15
         run: node scripts/native-resume.mjs --phase compile-release --target '${{ matrix.target }}'
       - name: Install native executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
+        timeout-minutes: 15
         run: node scripts/native-resume.mjs --phase install --target '${{ matrix.target }}'
       - name: Repeat public journeys through the installed native executable
-        timeout-minutes: ${{ matrix.label == 'windows' && 120 || 15 }}
+        timeout-minutes: 15
         run: node scripts/native-resume.mjs --phase profile --target '${{ matrix.target }}'
       # A failure before native-resume starts leaves both paths empty. An
       # empty upload path expands to `/` and scans the whole filesystem.

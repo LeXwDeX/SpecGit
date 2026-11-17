@@ -6,6 +6,7 @@ and [release procedure](runtime/distribution/README.md).
 
 # Unreleased
 
+- Stop building, testing and publishing Windows packages. GitHub Releases now ship only Linux x64 (glibc) and macOS arm64, and main-push, merge-group, manual and release builds no longer run Windows. The source keeps its Windows compatibility code and the local Windows cross-target lint, without Windows integration testing. Windows users should install WSL themselves and use the Linux x64 package and installation steps inside WSL. (#938)
 - Package the `specgit-native` Skill as a host-neutral plugin with self-hosted marketplace entries for Claude Code and Codex, plugin artwork, and CI checks that keep the manifest version and bundled Skill aligned with the release metadata. The plugin remains a thin wrapper with no native binary, hooks or global state; the `specgit` CLI binary is still distributed only through GitHub Releases. (#924)
 
 # 2.21.0
