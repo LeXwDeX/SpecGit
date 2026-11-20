@@ -48,6 +48,13 @@ setup 会刷新全部已记录宿主及任何 `--agent` 指定的新宿主，因
 `--agent` 时才作用于所有已记录宿主。`--remove-hook-purpose guard` 或 `context` 仅移除
 指定用途，宿主范围规则相同。
 
+Claude 的指导入口由项目现状决定：已有 `CLAUDE.md` 时受管块留在其中，没有时 Claude
+复用 `AGENTS.md` 的共享块，因此新的 setup 不再创建 `CLAUDE.md`；已记录的入口保持不变。
+若已记录的 `CLAUDE.md` 被删除，`doctor` 会把 `setup` 报为 `unknown` 并给出
+`migration_required`；先审阅 `specgit setup --dry-run`，它预览把 Claude 迁到 `AGENTS.md`。
+这一步本身不新增、删除或改写 Skill、hooks、Git guard，也不改人工内容；同一事务中到期的
+常规刷新仍会执行并出现在预览中。`init` 刷新执行同样的迁移，但没有这项证据。
+
 仅支持 SessionStart 和 PreToolUse 上下文 hooks。`observe` 用途会被识别但拒绝；改用有界
 `watch` 或 `inbox`。PostToolUse、Stop 回调和空闲唤醒已退役。`guard` 安装原生 Git
 pre-commit/pre-push checkpoint 检查。写入注册不代表宿主已加载或行为有效；依赖前要验证

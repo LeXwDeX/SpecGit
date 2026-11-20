@@ -1938,6 +1938,8 @@ fn selected_language_translates_diagnostics_without_changing_codes() {
 #[test]
 fn manual_declaration_edits_refresh_owned_blocks_and_rollback_receipt_together() {
     let f = Fixture::new();
+    // An existing CLAUDE.md carries the Claude block, so both files are refreshed.
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
     let first = f.run(&["init", "--provider", "github", "--mirror-claude"]);
     assert_eq!(first["exit"], 0, "{first}");
     let receipt_path = f.root.join(".git/specgit-v2/guidance.json");
@@ -1970,6 +1972,168 @@ fn manual_declaration_edits_refresh_owned_blocks_and_rollback_receipt_together()
     let refreshed = fs::read_to_string(agents).unwrap();
     assert!(refreshed.contains(".agents/skills/specgit-native/SKILL.md"));
     assert!(!refreshed.contains("用户编辑"));
+}
+
+#[test]
+fn mirror_claude_without_a_claude_md_shares_agents_md_and_is_not_moved_later() {
+    let f = Fixture::new();
+    let first = f.run(&["init", "--provider", "github", "--mirror-claude"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    // Claude is selected, but with no CLAUDE.md it uses the AGENTS.md block.
+    assert!(!f.root.join("CLAUDE.md").exists());
+    assert!(
+        fs::read_to_string(f.root.join("AGENTS.md"))
+            .unwrap()
+            .contains(".agents/skills/specgit-native/SKILL.md")
+    );
+    assert!(
+        f.root
+            .join(".claude/skills/specgit-native/SKILL.md")
+            .is_file()
+    );
+    let receipt_path = f.root.join(".git/specgit-v2/agent-assets/ownership.json");
+    let receipt: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    assert!(
+        receipt["agents"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("claude"))
+    );
+    assert!(receipt["instructions"].get("claude").is_none());
+    assert!(receipt["instructions"].get("generic").is_some());
+    // A CLAUDE.md that appears later does not move the recorded entry.
+    fs::write(f.root.join("CLAUDE.md"), "added later\n").unwrap();
+    let again = f.run(&["init", "--mirror-claude"]);
+    assert_eq!(again["exit"], 0, "{again}");
+    assert_eq!(again["evidence"]["transaction"]["changes"], 0, "{again}");
+    assert_eq!(
+        fs::read(f.root.join("CLAUDE.md")).unwrap(),
+        b"added later\n"
+    );
+    let unchanged: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    assert_eq!(unchanged, receipt);
+}
+
+#[test]
+fn init_aligns_a_deleted_recorded_claude_md_to_the_agents_md_block() {
+    let f = Fixture::new();
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    let first = f.run(&["init", "--provider", "github", "--mirror-claude"]);
+    assert_eq!(first["exit"], 0, "{first}");
+    let receipt_path = f.root.join(".git/specgit-v2/agent-assets/ownership.json");
+    let recorded: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    assert!(recorded["instructions"].get("claude").is_some());
+    // The project merged CLAUDE.md into AGENTS.md and deleted it.
+    fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+    let agents = fs::read(f.root.join("AGENTS.md")).unwrap();
+    let again = f.run(&["init"]);
+    assert_eq!(again["exit"], 0, "{again}");
+    assert!(!f.root.join("CLAUDE.md").exists());
+    assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), agents);
+    let aligned: Value = serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    assert!(aligned["instructions"].get("claude").is_none());
+    assert!(aligned["instructions"].get("generic").is_some());
+    assert!(
+        aligned["agents"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("claude"))
+    );
+    assert_eq!(aligned["hooks"], recorded["hooks"]);
+    let settled = f.run(&["init"]);
+    assert_eq!(
+        settled["evidence"]["transaction"]["changes"], 0,
+        "{settled}"
+    );
+}
+
+#[test]
+fn init_checks_the_claude_entry_again_under_the_lock() {
+    let f = Fixture::new();
+    let pause = f.root.parent().unwrap().join("pause");
+    fs::create_dir(&pause).unwrap();
+    let mut paths = vec![f.bin.clone()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    // The plan puts Claude on AGENTS.md because there is no CLAUDE.md. The
+    // writer pauses inside the locked transaction, before its first write; the
+    // pause needs the feature-enabled fixture binary, not an installed release.
+    let child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.root)
+        .env("PATH", std::env::join_paths(paths).unwrap())
+        .env("SPECGIT_FIXTURE_API_FILE", &f.state)
+        .env(
+            "SPECGIT_FIXTURE_FORWARD_GIT",
+            specgit::process::resolve_executable("git").unwrap(),
+        )
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE", "before-write:0")
+        .env("SPECGIT_FIXTURE_ASSET_PAUSE_DIR", &pause)
+        .args([
+            "init",
+            "--provider",
+            "github",
+            "--mirror-claude",
+            "--manual-observe",
+            "--json",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + std::time::Duration::from_secs(20);
+    while !pause.join("ready").exists() && Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(pause.join("ready").exists(), "init never reached its write");
+    fs::write(f.root.join("CLAUDE.md"), "created after planning\n").unwrap();
+    fs::write(pause.join("go"), b"go").unwrap();
+    let output = child.wait_with_output().unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("stderr={:?}", String::from_utf8_lossy(&output.stderr)));
+    assert_eq!(report["ok"], false, "{report}");
+    assert_eq!(
+        report["diagnostics"][0]["code"], "concurrent_edit",
+        "{report}"
+    );
+    // The racing file stands, and init wrote nothing of its own.
+    assert_eq!(
+        fs::read(f.root.join("CLAUDE.md")).unwrap(),
+        b"created after planning\n"
+    );
+    for file in [
+        "AGENTS.md",
+        ".agents",
+        ".claude",
+        ".specgit.yaml",
+        ".git/specgit-v2/agent-assets/ownership.json",
+    ] {
+        assert!(!f.root.join(file).exists(), "{file}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn init_refuses_a_symlinked_claude_md_without_writing() {
+    let f = Fixture::new();
+    fs::write(f.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+    std::os::unix::fs::symlink("AGENTS.md", f.root.join("CLAUDE.md")).unwrap();
+    let report = f.run(&["init", "--provider", "github", "--mirror-claude"]);
+    assert_eq!(report["ok"], false, "{report}");
+    assert_eq!(report["diagnostics"][0]["code"], "unsafe_path", "{report}");
+    assert_eq!(
+        fs::read(f.root.join("AGENTS.md")).unwrap(),
+        b"manual agents rules\n"
+    );
+    assert!(
+        fs::symlink_metadata(f.root.join("CLAUDE.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    for file in [".agents", ".claude", ".specgit.yaml"] {
+        assert!(!f.root.join(file).exists(), "{file}");
+    }
 }
 
 #[test]

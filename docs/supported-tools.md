@@ -50,7 +50,7 @@ omitted purpose leaves existing recorded choices unchanged. Use
 | --- | --- | --- | --- | --- | --- |
 | `generic` | `AGENTS.md` | `.agents/skills/specgit-native/SKILL.md` when the host reads `.agents` | none; declined | declined: no host permission configuration | Read guidance and the Skill directly |
 | Pi | `AGENTS.md` (also reads `CLAUDE.md` and `AGENTS.override.md`; `-nc`/`--no-context-files` disables discovery) | `.agents/skills` from the working directory through ancestors to the repository root, plus `~/.agents/skills` | none; not adapted (the host has TypeScript extensions, SpecGit installs no hook) | declined | Re-read guidance and Skill |
-| `claude` | `CLAUDE.md` | Canonical `.agents` Skill plus `.claude/skills/specgit-native/SKILL.md` | `.claude/settings.json` SessionStart/PreToolUse | `.claude/settings.json` `permissions.allow` with `--readonly-permissions` | Re-read guidance and Skill |
+| `claude` | An existing root `CLAUDE.md`; otherwise the shared `AGENTS.md` (created if missing). Setup never creates `CLAUDE.md`. Host loading, from the Claude Code memory documentation: v2.1.277 and later read `AGENTS.md` by default only while no `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` exists in the working directory or above, and read only `CLAUDE.md` once one exists unless the Project instructions setting is `claude-md-and-agents-md`; earlier versions need `@AGENTS.md` imported from `CLAUDE.md`. SpecGit checks only the root `CLAUDE.md` and manages neither the import nor that setting, so a `CLAUDE.md` added later makes the host stop reading `AGENTS.md` by default | Canonical `.agents` Skill plus `.claude/skills/specgit-native/SKILL.md` | `.claude/settings.json` SessionStart/PreToolUse | `.claude/settings.json` `permissions.allow` with `--readonly-permissions` | Re-read guidance and Skill |
 | `codex` | `AGENTS.md`, or an existing nonempty `AGENTS.override.md` | Canonical `.agents` Skill; Codex scans it from the working directory to the repository root and also reads `~/.agents/skills` | `.codex/hooks.json`; requires the host `/hooks` trust review | declined: experimental approval and sandbox | Re-read guidance and Skill |
 | `opencode` (official) | `AGENTS.md` | `.agents` Skill; the host also reads project `.opencode/` and `.claude/` skills | none; not adapted (the host has plugins, SpecGit installs no hook) | declined: default-allow, no portable allowlist | Re-read guidance and Skill; bounded `watch`/`inbox` |
 | `opencode` custom fork with `--opencode-claude-hooks` | `AGENTS.md` | Same as official OpenCode | `.opencode/hooks.json` with `inputFormat: claude-code`; requires `--agent opencode` plus an explicit hook purpose | declined | Same as official OpenCode |
@@ -74,7 +74,8 @@ Preview, then apply each host selection:
 specgit setup --agent generic --dry-run --json
 specgit setup --agent generic --json
 
-# Claude Code: guidance and both Skills, plus optional context and read-only rules
+# Claude Code: guidance (CLAUDE.md if it exists, else AGENTS.md) and both Skills,
+# plus optional context and read-only rules
 specgit setup --agent claude --dry-run --json
 specgit setup --agent claude --json
 specgit setup --agent claude --hook-purpose context --dry-run --json
@@ -97,6 +98,26 @@ specgit setup --agent opencode --opencode-claude-hooks --hook-purpose context --
 A new `--agent` host adds guidance and the Skill only. Hooks and managed
 read-only permissions are separate explicit choices. Written registration does
 not prove host import, context delivery or actual prompt behavior.
+
+The Claude guidance entry follows the project; no option selects it. A project
+root that already has `CLAUDE.md` gets the managed block there. Otherwise Claude
+shares the managed `AGENTS.md` block with generic and Codex, `AGENTS.md` is
+created when missing, and the receipt records no `CLAUDE.md`. Whether the host
+loads the chosen file depends on its version and settings; see the Claude row of
+the matrix. `init --mirror-claude` follows the same rule. A recorded entry is
+kept: one on `CLAUDE.md` stays while the file exists, and one on `AGENTS.md`
+stays even if a `CLAUDE.md` appears later. When a recorded `CLAUDE.md` is
+deleted, `doctor` reports `setup` as `unknown` with a `migration_required`
+diagnostic; read the `specgit setup --dry-run` preview first. It shows the move to
+`AGENTS.md`: the receipt drops the `CLAUDE.md` entry. The move itself adds,
+removes or rewrites no Skill, hook or Git guard asset and no byte outside the
+`AGENTS.md` block; a routine refresh that is due in the same transaction still
+runs and shows in the preview. A refresh by `init` performs the same move without
+`claude_instructions` evidence, so read the setup preview first. After applying it,
+`doctor` reports `setup` as `current`. A damaged or duplicated `AGENTS.md` block, or a marker block that is
+neither recorded as owned nor SpecGit's exact stable entry, remains an
+`ownership_conflict`; a symlinked `CLAUDE.md` is rejected with `unsafe_path`, and
+any other non-regular file with `ownership_conflict`.
 
 ## Hook and permission selection
 

@@ -55,6 +55,16 @@ the recorded selection. Explicit purposes apply only to hosts named by `--agent`
 or to all recorded hosts when `--agent` is omitted. `--remove-hook-purpose guard`
 or `context` removes only that purpose and follows the same host scope.
 
+Claude's guidance entry follows the project: an existing `CLAUDE.md` keeps the
+managed block, and without one Claude shares the `AGENTS.md` block, so a new
+setup no longer creates `CLAUDE.md`. Recorded entries stay as they are. If a
+recorded `CLAUDE.md` was deleted, `doctor` reports `setup` as `unknown` with
+`migration_required`; review `specgit setup --dry-run` first, which previews
+moving Claude to `AGENTS.md`. The move itself adds, removes or rewrites no Skill,
+hook or Git guard asset and no manual byte, though a routine refresh that is due
+in the same transaction still runs and shows in the preview. An `init` refresh
+performs the same move without that evidence.
+
 Only SessionStart and PreToolUse context hooks are supported. The `observe` purpose
 is recognized but declined; use bounded `watch` or `inbox` instead. PostToolUse,
 Stop callbacks and idle wake are retired. `guard` installs native Git pre-commit

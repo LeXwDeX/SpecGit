@@ -15,7 +15,7 @@ pub struct Options {
     pub remove_readonly_permissions: bool,
 }
 
-use crate::project_receipt::ProjectReceipt;
+use crate::project_receipt::{ProjectReceipt, shared_guidance};
 
 /// New init and setup transactions share one lock and history. Existing setup
 /// journals remain read-only evidence for installations created before migration.
@@ -381,6 +381,87 @@ fn host_for(agent: Agent) -> &'static str {
     }
 }
 
+/// Where the Claude host keeps its stable entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClaudeEntry {
+    /// A managed block in the project's `CLAUDE.md`, recorded under `claude`.
+    ClaudeMd,
+    /// The shared `AGENTS.md` block. The receipt selects Claude but records no
+    /// guidance file of its own; one `generic`/`codex` receipt owns the block.
+    AgentsMd,
+}
+impl ClaudeEntry {
+    fn file(self) -> &'static str {
+        match self {
+            Self::ClaudeMd => "CLAUDE.md",
+            Self::AgentsMd => "AGENTS.md",
+        }
+    }
+}
+
+/// The Claude entry and the `CLAUDE.md` state it was chosen from.
+struct ClaudeDecision {
+    entry: ClaudeEntry,
+    /// A `CLAUDE.md` that was missing when the choice put Claude on `AGENTS.md`.
+    /// The plan depends on it: the lock checks it again, so a file that appears
+    /// after planning is a `concurrent_edit` and never a silently wrong entry. A
+    /// chosen `CLAUDE.md` needs no such record because its own change holds the
+    /// snapshot it was planned from.
+    missing: Option<Change>,
+}
+
+/// Choose the Claude entry from what the project already has, never from a
+/// switch. A recorded `CLAUDE.md` is kept while the file exists. A deleted one
+/// is released and the shared `AGENTS.md` entry takes over. An entry recorded on
+/// `AGENTS.md` stays there even if `CLAUDE.md` appears later, so a refresh never
+/// flips it back and forth. A newly selected Claude uses an existing
+/// `CLAUDE.md`, otherwise `AGENTS.md`, which the shared host plan creates when
+/// it is missing. `Snapshot::read` refuses links and other non-regular files.
+fn claude_entry(root: &Path, previous: &ProjectReceipt) -> Result<ClaudeDecision, Diagnostic> {
+    let decide = |relative: &str| -> Result<ClaudeDecision, Diagnostic> {
+        let file = Change::new(root.join(relative), None)?;
+        Ok(if file.before.bytes.is_some() {
+            ClaudeDecision {
+                entry: ClaudeEntry::ClaudeMd,
+                missing: None,
+            }
+        } else {
+            // Nothing is written to an absent file, so the unchanged change is a
+            // read-only dependency.
+            ClaudeDecision {
+                entry: ClaudeEntry::AgentsMd,
+                missing: Some(file),
+            }
+        })
+    };
+    if let Some(old) = previous.instructions.get("claude") {
+        decide(&old.instructions)
+    } else if previous.agents.contains(&Agent::Claude) {
+        Ok(ClaudeDecision {
+            entry: ClaudeEntry::AgentsMd,
+            missing: None,
+        })
+    } else {
+        decide("CLAUDE.md")
+    }
+}
+
+/// Setup evidence for the planned Claude entry. It describes the receipt this
+/// plan writes, not whether the host loads the file.
+fn claude_instructions_evidence(previous: &ProjectReceipt, entry: Option<ClaudeEntry>) -> Value {
+    let status = match entry {
+        None => "not_selected",
+        Some(_) if !previous.agents.contains(&Agent::Claude) => "selected",
+        Some(entry)
+            if previous.instructions.contains_key("claude") != (entry == ClaudeEntry::ClaudeMd) =>
+        {
+            "aligned"
+        }
+        Some(_) => "unchanged",
+    };
+    json!({"entry": entry.map(ClaudeEntry::file), "status": status})
+}
+
 fn purposes_for(previous: &ProjectReceipt, host: &str) -> (BTreeSet<HookPurpose>, bool) {
     if previous.version >= 4 {
         (
@@ -521,8 +602,8 @@ pub(crate) fn verify_dependencies(dependencies: &[Change]) -> Result<(), Diagnos
             return Err(Diagnostic::new(
                 Code::ConcurrentEdit,
                 "setup",
-                "A native guard dependency changed after planning.",
-                "Preview again with the current Git configuration and ownership.",
+                "A Git or project file that the plan was based on changed after planning.",
+                "Preview again with the current Git configuration, ownership and project files.",
             ));
         }
     }
@@ -544,6 +625,8 @@ struct Prepared {
 
 pub(crate) struct Initialization {
     pub changes: Vec<Change>,
+    /// Files the plan read but does not write; the apply step checks them again.
+    pub dependencies: Vec<Change>,
     pub observations: Vec<PathBuf>,
     pub executable: Option<(PathBuf, Snapshot)>,
     pub guard_enabled: bool,
@@ -618,6 +701,7 @@ pub(crate) fn initialization_changes(
     let prepared = prepared.expect("initialization plan");
     Ok(Initialization {
         changes: prepared.changes,
+        dependencies: prepared.dependencies,
         observations: prepared.observations,
         executable: prepared.executable.map(|snapshot| (source, snapshot)),
         guard_enabled: prepared.guard_enabled,
@@ -953,6 +1037,14 @@ fn install_plan_with_removals(
     }
     // Plan Codex first so its override can coexist with AGENTS.md for other hosts.
     let mut hosts: BTreeSet<String> = previous.instructions.keys().cloned().collect();
+    let claude = (selected.contains(&Agent::Claude) && !options.uninstall)
+        .then(|| claude_entry(root, &previous))
+        .transpose()?;
+    let claude_entry = claude.as_ref().map(|decision| decision.entry);
+    let plan_dependencies: Vec<Change> = claude
+        .and_then(|decision| decision.missing)
+        .into_iter()
+        .collect();
     if !options.uninstall {
         if selected.contains(&Agent::Codex) {
             hosts.insert("codex".into());
@@ -960,14 +1052,26 @@ fn install_plan_with_removals(
         if selected.contains(&Agent::Generic) || selected.contains(&Agent::Opencode) {
             hosts.insert("generic".into());
         }
-        if selected.contains(&Agent::Claude) {
-            hosts.insert("claude".into());
+        match claude_entry {
+            Some(ClaudeEntry::ClaudeMd) => {
+                hosts.insert("claude".into());
+            }
+            // Claude shares the AGENTS.md block, so the shared host plans it.
+            Some(ClaudeEntry::AgentsMd) => {
+                hosts.insert("generic".into());
+            }
+            None => {}
         }
     }
     let mut observations = Vec::new();
     let mut planned_paths = BTreeSet::new();
     for host in ["codex", "generic", "claude"] {
         if !hosts.contains(host) {
+            continue;
+        }
+        // On AGENTS.md Claude records no guidance file. A released CLAUDE.md
+        // registration is dropped from the receipt without touching the path.
+        if host == "claude" && claude_entry == Some(ClaudeEntry::AgentsMd) {
             continue;
         }
         let old = previous.instructions.get(host);
@@ -990,10 +1094,7 @@ fn install_plan_with_removals(
         if host == "generic"
             && old.is_none()
             && (planned_paths.contains(&root.join("AGENTS.md"))
-                || previous
-                    .instructions
-                    .get("codex")
-                    .is_some_and(|g| g.instructions == "AGENTS.md"))
+                || shared_guidance(&previous.instructions))
         {
             continue;
         }
@@ -1009,6 +1110,16 @@ fn install_plan_with_removals(
             old.is_some() && !options.uninstall,
             migration_change,
         )?;
+        // `claude_entry` chose CLAUDE.md because the file existed; the plan reads
+        // it again, so a file removed in between must not be created from nothing.
+        if host == "claude" && old.is_none() && change.before.bytes.is_none() {
+            return Err(Diagnostic::new(
+                Code::ConcurrentEdit,
+                "setup",
+                "CLAUDE.md was removed while the Claude guidance entry was planned.",
+                "Preview setup again.",
+            ));
+        }
         if old.is_none() && change.unchanged() {
             observations.push(change.path.clone());
         }
@@ -1043,6 +1154,11 @@ fn install_plan_with_removals(
         }
         changes.retain(|c| c.path != change.path);
         changes.push(change);
+    }
+    if claude_entry == Some(ClaudeEntry::AgentsMd) && !shared_guidance(&receipt.instructions) {
+        return Err(conflict(
+            "Claude guidance on AGENTS.md has no shared guidance receipt.",
+        ));
     }
     let permission_requested: BTreeSet<&str> = if options.readonly_permissions {
         options
@@ -1187,6 +1303,7 @@ fn install_plan_with_removals(
     let summary: Vec<_> = changes.iter().map(|c| json!({"path":c.path,"state":if c.unchanged(){"unchanged"}else if c.after.is_none(){"removed"}else if c.before.bytes.is_none(){"created"}else{"updated"}})).collect();
     let mut evidence = json!({"schema_version":2,"version":VERSION,"scope":"project","root":root,"private":private,"agents":selected,"opencode_claude_hooks":custom_opencode,"assets":summary,"written":false,"manifest_exported":false,"operation":if options.uninstall{"uninstall"}else if snapshot.bytes.is_some(){"update"}else{"install"},"registration":if options.uninstall{"removal_planned"}else{"write_planned"},"codex_trust":if selected.contains(&Agent::Codex){"review_in_host_required"}else{"not_applicable"},"host_delivery":{"imported_event":"not_checked","context_injection":"not_checked","visible_message":"not_checked","next_turn":"not_checked","idle_wake":"not_supported"}});
     evidence["hook_purposes"] = Value::Object(purpose_evidence);
+    evidence["claude_instructions"] = claude_instructions_evidence(&previous, claude_entry);
     let installed_permissions: BTreeSet<&str> = receipt
         .readonly_permissions
         .keys()
@@ -1210,7 +1327,7 @@ fn install_plan_with_removals(
             snapshot,
             executable,
             allowed,
-            dependencies: Vec::new(),
+            dependencies: plan_dependencies,
             guard_enabled,
             native_serialization: None,
             native_inventory: None,
@@ -1242,7 +1359,7 @@ fn install_plan_with_removals(
             snapshot,
             executable,
             allowed,
-            dependencies: Vec::new(),
+            dependencies: plan_dependencies,
             guard_enabled,
             native_serialization: None,
             native_inventory: None,
@@ -1514,10 +1631,18 @@ fn health_plan_inner(
         );
         changes.push(change);
     }
+    let mut released_claude_guidance = false;
     for (host, old) in &previous.instructions {
         let path = root.join(&old.instructions);
         let current = Snapshot::read(&path)?;
         if current.bytes.is_none() {
+            // Setup can move Claude to the shared AGENTS.md entry. Report it after
+            // every other recorded asset, hooks and settings included, proved its
+            // ownership, so a damaged asset still surfaces as the conflict it is.
+            if host == "claude" {
+                released_claude_guidance = true;
+                continue;
+            }
             return Err(conflict_at(
                 host,
                 &path,
@@ -1638,6 +1763,20 @@ fn health_plan_inner(
                 .insert(host.to_owned(), registration);
         }
         changes.push(outcome.change);
+    }
+    if released_claude_guidance {
+        // Without a recorded shared entry, setup plans AGENTS.md like a new
+        // generic host. Surface that plan's conflict here instead of promising
+        // a preview that fails.
+        if !shared_guidance(&previous.instructions) {
+            instruction_change("generic", root, None, false, false)?;
+        }
+        return Err(Diagnostic::new(
+            Code::MigrationRequired,
+            "setup",
+            "The recorded Claude guidance file CLAUDE.md no longer exists; Claude can use the shared AGENTS.md entry instead.",
+            "Preview `specgit setup --dry-run`. Applying it moves Claude to AGENTS.md without writing CLAUDE.md. The move itself adds, removes or rewrites no Skill, hook or Git guard, but a routine refresh that is due runs in the same transaction and shows in the preview. It still stops with an ownership conflict when the AGENTS.md block is damaged, duplicated, or a marker block that is neither recorded as owned nor SpecGit's exact stable entry.",
+        ));
     }
     next.version = if next.readonly_permissions.is_empty() {
         4

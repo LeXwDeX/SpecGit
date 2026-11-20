@@ -38,6 +38,16 @@ pub(crate) struct HostRegistration {
     pub(crate) block: String,
     pub(crate) created_instructions: bool,
 }
+
+/// Whether a receipt records one `AGENTS.md` block that Claude can share:
+/// `generic`, or `codex` when it owns `AGENTS.md` rather than the override file.
+pub(crate) fn shared_guidance(instructions: &BTreeMap<String, HostRegistration>) -> bool {
+    instructions.contains_key("generic")
+        || instructions
+            .get("codex")
+            .is_some_and(|registration| registration.instructions == "AGENTS.md")
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Registration {
@@ -198,10 +208,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ProjectReceipt, Diagnostic> {
             "The project integration receipt is unsupported or unsafe.",
         ));
     }
-    let shared_guidance = r.instructions.contains_key("generic")
-        || r.instructions
-            .get("codex")
-            .is_some_and(|g| g.instructions == "AGENTS.md");
+    let shared = shared_guidance(&r.instructions);
     if !r
         .skills
         .contains_key(".agents/skills/specgit-native/SKILL.md")
@@ -210,7 +217,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ProjectReceipt, Diagnostic> {
             != r.agents.contains(&Agent::Claude)
         || (r.hooks.contains_key("claude") && !r.agents.contains(&Agent::Claude))
         || (r.hooks.contains_key("codex") && !r.agents.contains(&Agent::Codex))
-        || r.instructions.contains_key("claude") != r.agents.contains(&Agent::Claude)
+        // Claude records a `CLAUDE.md` block, or (receipt 4 and later) reuses the
+        // shared `AGENTS.md` block and records no guidance file of its own.
+        || if r.agents.contains(&Agent::Claude) {
+            !r.instructions.contains_key("claude") && !(r.version >= 4 && shared)
+        } else {
+            r.instructions.contains_key("claude")
+        }
         || (r.hooks.contains_key("opencode") && !r.agents.contains(&Agent::Opencode))
         || (r.version >= 4
             && (r.purposes.len() != r.agents.len()
@@ -227,10 +240,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<ProjectReceipt, Diagnostic> {
                         || (agent == Agent::Generic && purposes.contains(&HookPurpose::Context))
                 })))
         || (r.agents.contains(&Agent::Codex)
-            && !shared_guidance
+            && !shared
             && !r.instructions.contains_key("codex"))
         || ((r.agents.contains(&Agent::Generic) || r.agents.contains(&Agent::Opencode))
-            && !shared_guidance)
+            && !shared)
     {
         return Err(conflict(
             "The project receipt lacks required selected-agent ownership.",
@@ -437,6 +450,77 @@ mod tests {
         assert_eq!(error.code, Code::OwnershipConflict);
         value["hooks"]["claude"]["created_file"] = serde_json::json!(true);
         assert!(decode(&serde_json::to_vec(&value).unwrap()).is_ok());
+    }
+
+    fn shared_registration(host: &str, file: &str) -> Value {
+        serde_json::json!({host: {"root": "project", "skill_hash": "digest",
+            "instructions": file, "block": "owned", "created_instructions": false}})
+    }
+
+    #[test]
+    fn claude_may_reuse_the_shared_agents_guidance_without_its_own_registration() {
+        for (host, file) in [("generic", "AGENTS.md"), ("codex", "AGENTS.md")] {
+            let mut value = base(4);
+            value["instructions"] = shared_registration(host, file);
+            if host == "codex" {
+                value["agents"] = serde_json::json!(["claude", "codex"]);
+                value["purposes"]["codex"] = serde_json::json!([]);
+            }
+            let receipt = decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(receipt.agents.contains(&Agent::Claude), "{host}");
+            assert!(!receipt.instructions.contains_key("claude"), "{host}");
+            // Round trip keeps the shape: no field or version is added for it.
+            let serialized = serde_json::to_value(&receipt).unwrap();
+            assert_eq!(serialized["version"], 4);
+            assert!(serialized["instructions"].get("claude").is_none());
+        }
+        let mut value = readonly_receipt();
+        value["instructions"] = shared_registration("generic", "AGENTS.md");
+        assert!(decode(&serde_json::to_vec(&value).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn claude_without_its_own_registration_requires_a_shared_agents_entry() {
+        for instructions in [
+            serde_json::json!({}),
+            // An override file is not shared with Claude.
+            shared_registration("codex", "AGENTS.override.md"),
+        ] {
+            let mut value = base(4);
+            value["instructions"] = instructions;
+            if value["instructions"].get("codex").is_some() {
+                value["agents"] = serde_json::json!(["claude", "codex"]);
+                value["purposes"]["codex"] = serde_json::json!([]);
+            }
+            let error = decode(&serde_json::to_vec(&value).unwrap()).unwrap_err();
+            assert_eq!(error.code, Code::OwnershipConflict, "{value}");
+        }
+        // Legacy receipts never described this shape.
+        let mut legacy = base(3);
+        legacy["instructions"] = shared_registration("generic", "AGENTS.md");
+        legacy.as_object_mut().unwrap().remove("purposes");
+        assert_eq!(
+            decode(&serde_json::to_vec(&legacy).unwrap())
+                .unwrap_err()
+                .code,
+            Code::OwnershipConflict
+        );
+        // A Claude registration still requires the Claude agent.
+        let mut value = base(4);
+        value["agents"] = serde_json::json!(["generic"]);
+        value["skills"]
+            .as_object_mut()
+            .unwrap()
+            .remove(".claude/skills/specgit-native/SKILL.md");
+        value["purposes"] = serde_json::json!({"generic": []});
+        value["instructions"]["generic"] =
+            shared_registration("generic", "AGENTS.md")["generic"].clone();
+        assert_eq!(
+            decode(&serde_json::to_vec(&value).unwrap())
+                .unwrap_err()
+                .code,
+            Code::OwnershipConflict
+        );
     }
 
     #[test]

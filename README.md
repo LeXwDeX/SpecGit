@@ -105,7 +105,8 @@ Preview, then apply each host selection:
 specgit setup --agent generic --dry-run --json
 specgit setup --agent generic --json
 
-# Claude Code: guidance and both Skills, plus optional context and read-only rules
+# Claude Code: guidance (CLAUDE.md if it exists, else AGENTS.md) and both Skills,
+# plus optional context and read-only rules
 specgit setup --agent claude --dry-run --json
 specgit setup --agent claude --json
 specgit setup --agent claude --hook-purpose context --dry-run --json
@@ -130,6 +131,10 @@ read-only permissions are separate explicit choices. Only Claude Code supports
 the managed read-only allowlist; OpenCode, Codex and generic are reported as
 declined and keep per-invocation approval. Written registration does not prove
 host import, context delivery or actual prompt behavior.
+
+Claude's guidance goes into an existing `CLAUDE.md`; without one it shares the
+managed `AGENTS.md` block and setup creates no `CLAUDE.md`. A recorded entry is
+kept; see the [support matrix](docs/supported-tools.md#support-matrix).
 
 ## Already installed? Inspect and refresh your project
 
