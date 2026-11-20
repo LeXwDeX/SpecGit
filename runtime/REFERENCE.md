@@ -144,8 +144,8 @@ commands use the global input/output contract above.
 
 | Command | Purpose and options |
 | --- | --- |
-| `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; naming a new host selects its guidance and Skill only. Hooks require explicit `--hook-purpose guard|context`; an existing installation retains recorded choices when purposes are omitted. `--remove-hook-purpose guard|context` removes a purpose from the hosts named by `--agent`, or all recorded hosts if `--agent` is omitted; it cannot select a host not already recorded. `--readonly-permissions` installs the managed read-only command allowlist for explicitly named supported hosts; `--remove-readonly-permissions` removes it from explicitly named recorded hosts. Both require an explicit `--agent`, are mutually exclusive, and conflict with `--catalog`, `--uninstall` and `--rollback`. Only Claude Code is supported; OpenCode, Codex and generic are reported as declined and fall back to per-invocation approval. The allowlist reduces prompts; it is not a sandbox or an authorization boundary. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update, purpose removal or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
-| `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. A new project without a setup receipt also installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, so every commit binds an Issue; `--dry-run` lists its hook paths. Tracked hook directories such as Husky and linked worktrees need explicit `setup --hook-purpose guard`. An external `core.hooksPath` outside the worktree and its common Git directory is not supported. When the default guard is selected and an existing hook cannot be safely wrapped, init fails closed and writes no files. A recorded installation keeps its purposes, including an explicit `setup --remove-hook-purpose guard`. |
+| `setup` | Inspect the offline capability catalog or install/update project agent assets. SpecGit 2.4 is permanently project-only: `--scope project` is the default and the only scope value; global/host-integration setup is removed. `--catalog` returns the versioned installation capability catalog without project reads or writes. On a new installation, omitting the repeatable compatibility selector `--agent generic|claude|codex|opencode` selects the shared Skill/entry without new hooks; naming a new host selects its guidance and Skill only. Claude's guidance entry is chosen from the project, never by an option: an existing root `CLAUDE.md` carries the managed block, otherwise Claude shares the managed `AGENTS.md` block (created when missing) and no `CLAUDE.md` is created (see [Claude guidance entry](#claude-guidance-entry)). Hooks require explicit `--hook-purpose guard|context`; an existing installation retains recorded choices when purposes are omitted. `--remove-hook-purpose guard|context` removes a purpose from the hosts named by `--agent`, or all recorded hosts if `--agent` is omitted; it cannot select a host not already recorded. `--readonly-permissions` installs the managed read-only command allowlist for explicitly named supported hosts; `--remove-readonly-permissions` removes it from explicitly named recorded hosts. Both require an explicit `--agent`, are mutually exclusive, and conflict with `--catalog`, `--uninstall` and `--rollback`. Only Claude Code is supported; OpenCode, Codex and generic are reported as declined and fall back to per-invocation approval. The allowlist reduces prompts; it is not a sandbox or an authorization boundary. `--opencode-claude-hooks` is an explicit custom-host opt-in that requires `--agent opencode`. The retired global selectors `--root`, `--provider`, `--api-host`, the legacy `--register-claude|--register-codex|--register-opencode` forms and the per-host `--claude-settings`, `--codex-root`, `--opencode-root` paths are rejected input. `--dry-run` previews install/update, purpose removal or `--uninstall` without writes or a lock. Uninstall omits `--agent` and removes exactly this worktree's recorded project assets. `--rollback <transaction>` restores owned local assets from the project journal and conflicts with dry-run/uninstall. Written registration is not verified host import or event delivery; Codex trust review remains a user action. |
+| `init` | Inspect native capabilities and write the local declaration/guidance. Select `--remote`, `--provider`, `--api-host`, `--target`, `--language`, `--config-file`, `--mirror-claude`; the last selects the Claude host and follows the same [Claude guidance entry](#claude-guidance-entry) rule as setup, so it writes the Claude block only into an existing `CLAUDE.md` and never creates that file. `--check` (alias of `--inspect`) is read-only; `--dry-run` also previews asset paths. `--native-auto-merge true\|false` records an explicit preference; `--manual-observe` selects the manual fallback. `--rollback <transaction>` restores a local transaction. A new project without a setup receipt also installs the native Git guard in its main worktree when Git uses hooks inside the common Git directory, so every commit binds an Issue; `--dry-run` lists its hook paths. Tracked hook directories such as Husky and linked worktrees need explicit `setup --hook-purpose guard`. An external `core.hooksPath` outside the worktree and its common Git directory is not supported. When the default guard is selected and an existing hook cannot be safely wrapped, init fails closed and writes no files. A recorded installation keeps its purposes, including an explicit `setup --remove-hook-purpose guard`. |
 | `issue` | Adopt positive Issue IDs or create specifications from `type[(scope)][!]: summary` titles. Repeat `--body-file` in new-title order; optional `--tags` and `--branch`. `--inspect` or `--dry-run` reports preparation and duplicate candidates without local/native writes. A mutation without `--branch` on the delivery target branch is rejected with `invalid_input` and operation `issue_target_branch`; `--inspect` and `--dry-run` remain read-only there. After comparing different WHYs, repeat `--reviewed-candidates <review_digest>` for the exact reviewed candidate sets. `--create-labels` explicitly permits missing selected catalog labels to be created. A checkpoint recorded as delivered admits no new Issues on its branch; `--branch <name>` replaces it when it has no pending write. `--discard-uncertain` clears write-started intents only after complete native reads prove that no matching Issue candidate exists; it preserves the checkpoint and every native object. |
 | `pr` | Create/resume/discover a PR/MR or adopt `--request <id>` after real pushed changes. Optional `--title` (`type[(scope)][!]: summary`), `--body-file`, `--tags`; explicit `--ready` preserves deliberate associations. `--update-body` and `--update-references` support read-only previews; differing native bodies require platform editing because atomic conditional updates are unavailable. `--inspect` reads preparation; `--dry-run` previews a mutation. `--create-labels` permits missing catalog labels. A checkpoint on this branch that already records `delivered_request` accepts no request mutation: `--inspect` and `--dry-run` remain read-only, while other request mutations fail as `invalid_input` (operation `pr`) and preserve the checkpoint; switch to the updated target branch and start the next delivery with `specgit issue <spec> --branch <name>`. `--status` reads native lifecycle facts and conflicts with mutation options; `--status --request <id>` permits an exact same-repository read from another checkout. When a verified read shows the current branch checkpoint's recorded request merged, `--status` records it as delivered in Git-private state and reports the `record_delivered_checkpoint` local effect. A failure while preparing the local record (Git, declaration or context) reports `delivered_checkpoint_prepare` and adds no write effect. A failed record attempt keeps the verified native request and Issue evidence but reports a non-success result, with `not_applied` or `unknown` effects and a `delivered_checkpoint` retry diagnostic; rerun `pr --status` after fixing the lock or permission problem. `--discard-uncertain` clears an uncertain request creation only when the native read proves no matching request exists; it preserves the checkpoint and native objects. |
 | `watch` | Bounded native observation. Requires `--request`, `--session`, `--goal checks\|lifecycle`; optional `--once`, `--timeout-seconds` (1–86,400; default from project configuration), `--poll-seconds` (1–3,600; default from project configuration). CLI values override configuration. State is always Git-private; the retired `--state-root` selector is rejected. A verified merged request retires the current checkpoint as described under commit binding; a successful retirement reports the applied `record_delivered_checkpoint` effect with scope `local`. A failed local record keeps the published event and adds the `delivered_checkpoint` retry diagnostic without changing the event state or transport receipt. The CLI and refreshing `inbox` keep that evidence and report `not_applied` or `unknown` effects; library `observe_subscription` and `observe_until_attention` keep the published event and return the same diagnostic as `Err`. A failed lease release keeps the published event and adds a `release_watch_lease` diagnostic; the CLI stays successful unless the event state itself is non-success. |
@@ -1030,7 +1030,8 @@ list before each write, so a worktree added concurrently aborts the change.
 Other receipts and transaction histories remain worktree-specific. Legacy
 `agent-assets` journals remain available as bounded ownership/recovery evidence. It writes the canonical
 `.agents/skills/specgit-native/SKILL.md`; Claude adds a managed
-`.claude/skills/specgit-native/SKILL.md`, root `CLAUDE.md` guidance and
+`.claude/skills/specgit-native/SKILL.md`, guidance in an existing root `CLAUDE.md`
+or else in the shared `AGENTS.md` block, and
 `.claude/settings.json` hooks, plus managed `permissions.allow` read-only rules
 when `--readonly-permissions` is selected; Codex adds root `AGENTS.md` guidance (or an
 existing nonempty `AGENTS.override.md`) plus `.codex/hooks.json`; generic and
@@ -1050,8 +1051,68 @@ The entry points to the project Skill and includes an initialization command and
 an official installation link for a missing shared CLI. Runtime versions,
 declaration summaries and dynamic hashes are not embedded in the entry.
 `init` creates the generic project Skill/entry without adding hooks; `--mirror-claude`
-also creates the Claude entry and Skill. Later `setup` selects additional hosts
-and preserves existing hook choices.
+also selects the Claude host and its Skill, with the entry chosen as described
+under [Claude guidance entry](#claude-guidance-entry). Later `setup` selects
+additional hosts and preserves existing hook choices.
+
+#### Claude guidance entry
+
+No option selects Claude's guidance file; setup and `init --mirror-claude` read the
+project. A newly selected Claude uses an existing root `CLAUDE.md`. A symbolic
+link there, including one that points to `AGENTS.md`, is rejected with
+`unsafe_path` by setup, init and doctor, and any other non-regular file is an
+`ownership_conflict`; neither is followed or replaced. Without a `CLAUDE.md`,
+Claude shares the managed `AGENTS.md` block with `generic`, `opencode` and
+`codex`, and the shared host plan creates `AGENTS.md` when it is missing. Whether
+the host loads the chosen file is outside setup; see the
+[support matrix](../docs/supported-tools.md#support-matrix). The receipt keeps its
+version and fields: it lists Claude in `agents`, with its Skill and hooks, but
+records no `claude` entry under `instructions`, and it must also record a
+`generic` or `codex` `AGENTS.md` registration. A 2.21.0 or earlier CLI rejects
+such a receipt as an `ownership_conflict` because it lacks the selected-agent
+ownership it expects: update the shared CLI first, preserve the receipt and
+assets during any downgrade, and never force-overwrite ownership or delete the
+receipt to bypass it, as in the downgrade rules for project receipts below. Setup
+reports the planned file and state as `claude_instructions` evidence: `entry`
+is `CLAUDE.md`, `AGENTS.md` or `null` (Claude not selected, or uninstall), and
+`status` is `selected` (newly selected host), `unchanged` (recorded entry kept),
+`aligned` (see below) or `not_selected`. The `init` report has no such evidence.
+
+The choice rests on whether `CLAUDE.md` exists. The apply step checks that again
+under the project lock: a `CLAUDE.md` that appeared or disappeared after planning
+stops setup and init with `concurrent_edit` and writes nothing, so preview again.
+
+A recorded entry is kept. One on `CLAUDE.md` stays while that file exists. One on
+`AGENTS.md` stays even if a `CLAUDE.md` appears later, so refresh never flips it
+and the new file is left untouched. Setup has no switch back to `CLAUDE.md`;
+uninstall, create the file and run setup again to choose it.
+
+When a recorded `CLAUDE.md` no longer exists, setup aligns Claude to the shared
+`AGENTS.md` entry instead of reporting a lost block: the `claude` registration
+leaves the receipt (`status: aligned`), nothing is written to `CLAUDE.md`, and
+`--dry-run` previews it. `init` performs the same alignment when it refreshes a
+recorded installation, without `claude_instructions` evidence or any change to
+its report schema, so read the `setup --dry-run` preview first. A recorded
+`generic`/`codex` `AGENTS.md` receipt must still prove ownership and contain
+exactly one complete block; a damaged or duplicated block remains an
+`ownership_conflict`. Without such a receipt, `AGENTS.md` is planned like a new
+generic host: the block is appended or created, an exact stable entry already
+present is recorded as owned without writing the file (the registration has
+`created_instructions: false`, so uninstall removes only the block), and any
+other marker block is an `ownership_conflict`.
+
+Until the alignment is applied, `doctor` reports `setup` as `unknown` with a
+`migration_required` diagnostic whose remedy names `specgit setup --dry-run`;
+read that preview first. `doctor` checks every other recorded asset first,
+including hooks, settings and the shared executable, and reports their conflicts
+instead; it returns `migration_required` only when the deleted file is the one
+remaining problem. Afterwards `setup` is `current`. The alignment itself adds,
+removes or rewrites no Skill, hook or Git guard asset and no byte outside the
+`AGENTS.md` block; a routine refresh that is due in the same transaction, such as
+an updated Skill after a CLI upgrade, still runs and shows in the preview.
+`setup --uninstall` and `remove` still require the recorded `CLAUDE.md`: they
+report an `ownership_conflict` whose remedy names `specgit setup --dry-run`, so
+align first, then retry.
 
 #### Select project hook purposes
 

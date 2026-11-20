@@ -137,6 +137,7 @@ commit/push 前，用 `issue --inspect` 查找重复的 WHY，并用 `issue` 选
 唯一的用户级资产是用户显式用 `specgit skill --user` 安装的 Skill，位于 `~/.agents/skills/specgit-native/SKILL.md`（Windows 为 `%USERPROFILE%`）。`specgit update` 仅在其受管时刷新它，默认不安装。不安装全局 hooks 或全局状态。
 
 用 `--agent` 选择的新宿主只获得指导和 Skill；受支持的 hooks 需显式选择。只选当前任务所需的最少 hook 用途。`setup --hook-purpose guard` 配置原生 pre-commit/pre-push 检查；`specgit guard --install --dry-run` 和 `specgit guard --uninstall --dry-run` 预览独立 guard 的变更。
+claude 宿主的指导入口由项目现状决定，没有选项：项目根已有 `CLAUDE.md` 时用其中的块；没有时复用 `AGENTS.md` 的共享块（缺失则创建），不创建 `CLAUDE.md`；已记录的入口保持不变。已记录的 `CLAUDE.md` 被删除后，doctor 报 `migration_required`：先看 `setup --dry-run` 的预览，`setup` 与 `init` 刷新都会把 claude 对齐到 `AGENTS.md`。对齐本身不新增、删除或改写 Skill、hooks、guard，也不改块外字节；同一事务中到期的常规刷新照常执行并出现在预览中。块损坏、重复，或是既未登记为自有、又不是精确稳定入口的标记块，仍是冲突。
 可选能力 `readonly_permissions`：对显式指定的受支持宿主，setup 可写入受管只读命令白名单，减少只读命令的逐次审批；不支持该能力的宿主仍逐次审批。白名单只是提示收敛，不是沙箱或授权边界，写命令仍需确认；写入文件不证明宿主已加载或不再提示。
 setup 验证并复用独立 guard，但不接管其归属。保留不受支持的非 shell hooks。卸载保留仍在使用的消费者；已退役的 setup-guard 归属留在共享 Git 元数据中，直到最后一个 setup 消费者离开。
 

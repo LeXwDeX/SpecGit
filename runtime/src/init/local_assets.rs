@@ -151,6 +151,7 @@ pub(super) async fn apply(
     let mut changes = vec![declaration_change];
     let crate::setup::project::Initialization {
         changes: integration,
+        dependencies: integration_dependencies,
         mut observations,
         executable,
         guard_enabled,
@@ -171,7 +172,10 @@ pub(super) async fn apply(
     observations.extend(guard_plan.observations());
     let custody_store = guard_plan.transaction_store;
     changes.extend(guard_plan.changes);
-    let native_dependencies = guard_plan.dependencies;
+    // The integration plan's own file reads, such as the Claude entry choice,
+    // are checked again under the lock together with the native guard's.
+    let mut native_dependencies = guard_plan.dependencies;
+    native_dependencies.extend(integration_dependencies);
     let native_allowed = guard_plan.allowed;
     let native_inventory = guard_plan.inventory;
     let native_serialization = guard_plan.serialization;

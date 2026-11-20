@@ -208,12 +208,18 @@ fn instruction_change_after(
             || before.contains(other_end)
             || (before.matches(&old.block).count() != 1 && (uninstall || !refresh_proven))
         {
-            return Err(conflict_at(
+            let mut diagnostic = conflict_at(
                 host,
                 &guidance.path,
                 None,
                 "The managed host instruction block was edited or removed.",
-            ));
+            );
+            // Setup moves Claude to the shared AGENTS.md entry when its file is gone;
+            // removal and uninstall need that alignment first.
+            if host == "claude" && guidance.before.bytes.is_none() {
+                diagnostic.remedy = "The recorded CLAUDE.md no longer exists. Preview `specgit setup --dry-run` to move Claude to the shared AGENTS.md entry, apply it, then retry this command.".into();
+            }
+            return Err(diagnostic);
         }
         let start_at = before.find(start).expect("unique start checked");
         let end_at = before.find(end).expect("unique end checked") + end.len();

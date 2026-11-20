@@ -368,11 +368,18 @@ pub fn catalog() -> InstallationCatalog {
             scope: "项目内共享指导",
             owner: "SpecGit managed block; manual content owned by project",
             bundle: Some("shared_baseline"),
-            locations: vec!["AGENTS.md 中唯一完整 SpecGit 项目标记块"],
+            locations: vec![
+                "AGENTS.md 中唯一完整 SpecGit 项目标记块",
+                "claude 宿主：项目根已有 CLAUDE.md 时为其中的唯一完整标记块；没有 CLAUDE.md 时复用上面的 AGENTS.md 块，不创建 CLAUDE.md",
+            ],
             recommendations: vec![
                 "随 project_skill 作为 shared_baseline 安装；手工项目约束放在标记块外。",
+                "claude 宿主的入口由项目现状决定，没有选项；已记录的入口保持不变，之后新增的 CLAUDE.md 不会改变已记录的 AGENTS.md 入口。宿主是否及何时加载所选入口不由 setup 证明，以 docs/supported-tools.md 的支持矩阵为准。",
             ],
-            conditions: vec!["所有权已核实；标记损坏、重复或来源未知时先解决冲突。"],
+            conditions: vec![
+                "所有权已核实；标记损坏、重复或来源未知时先解决冲突。",
+                "已记录的 CLAUDE.md 被删除时，doctor 报 migration_required，先看 setup --dry-run 的预览；setup 与 init 刷新把 claude 对齐到 AGENTS.md 共享块。对齐本身不新增、删除或改写 Skill、hooks、Git guard，也不改块外字节；同一事务中到期的常规刷新照常执行并出现在预览中。AGENTS.md 块损坏、重复，或是既未登记为自有、又不是 SpecGit 精确稳定入口的标记块，仍是冲突。",
+            ],
             depends_on: vec![InstallationId::ProjectSkill],
             commands: baseline_commands(),
             protocol: "UTF-8 项目指导；稳定入口指向固定 Skill，不代表宿主信任授权。",
@@ -553,7 +560,7 @@ pub fn catalog() -> InstallationCatalog {
         compatibility: Compatibility {
             catalog_contract: "catalog_version=1；稳定 item IDs，新增字段或能力以当前运行时清单为准。",
             runtime_contract: "本清单描述当前运行时的原生事件与安装契约；runtime_version 是实际编译版本。当前共享 CLI --help/--schema 是可执行契约，不用清单名称证明旧二进制支持新参数。",
-            existing_installations: "保留已有受管选择、旧 named-host 入口与可证明所有权的收据兼容路径；必要时按原生计划迁移；未知版本、权限或所有权冲突不自动认领。",
+            existing_installations: "保留已有受管选择、旧 named-host 入口与可证明所有权的收据兼容路径；必要时按原生计划迁移；未知版本、权限或所有权冲突不自动认领。已记录的 claude CLAUDE.md 入口保持不变；新选择的 claude 在没有 CLAUDE.md 时使用 AGENTS.md，不再创建 CLAUDE.md。",
         },
         entrypoints: vec![
             InstallationCommand {

@@ -1332,10 +1332,9 @@ fn health_plan_reports_exact_orphan_host_registration() {
         fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
         if agent == Agent::Claude {
             fs::remove_file(f.root.join(".claude/skills/specgit-native/SKILL.md")).unwrap();
-            fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
-        } else {
-            fs::remove_file(f.root.join("AGENTS.md")).unwrap();
         }
+        // Without a CLAUDE.md, Claude shares the AGENTS.md block like the other hosts.
+        fs::remove_file(f.root.join("AGENTS.md")).unwrap();
         let before = files(&f.base);
         let error = health_plan(&f.root, &f.private, &f.source).err().unwrap();
         assert_eq!(error.code, Code::OwnershipConflict, "{agent:?}: {error}");
@@ -1453,10 +1452,9 @@ fn health_plan_reports_orphan_hook_after_shared_cli_moves() {
         fs::remove_file(f.root.join(".agents/skills/specgit-native/SKILL.md")).unwrap();
         if agent == Agent::Claude {
             fs::remove_file(f.root.join(".claude/skills/specgit-native/SKILL.md")).unwrap();
-            fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
-        } else {
-            fs::remove_file(f.root.join("AGENTS.md")).unwrap();
         }
+        // Without a CLAUDE.md, Claude shares the AGENTS.md block like the other hosts.
+        fs::remove_file(f.root.join("AGENTS.md")).unwrap();
         let replacement = f.base.join("replacement");
         fs::create_dir(&replacement).unwrap();
         let moved_source = source_fixture(&replacement);
@@ -1605,6 +1603,8 @@ fn selected_agents_are_isolated_and_project_never_installs_an_executable() {
 fn codex_refresh_migrates_owned_argv_hooks_without_changing_claude_or_foreign_hooks() {
     for through_doctor in [false, true] {
         let (f, mut options) = fixture(vec![Agent::Codex, Agent::Claude]);
+        // A real v3 receipt records Claude's CLAUDE.md block, so the file exists first.
+        fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
         install(&options, &f).unwrap();
         let settings_path = f.root.join(".codex/hooks.json");
         let receipt_path = f.private.join("ownership.json");
@@ -2720,6 +2720,8 @@ fn a_clone_adopts_only_the_exact_stable_entry_and_records_its_permissions() {
 #[test]
 fn fresh_clone_adopts_stable_guidance_with_mixed_line_endings() {
     let (f, mut options) = fixture(vec![Agent::Generic, Agent::Claude]);
+    // An existing CLAUDE.md keeps the Claude block, so both files carry a block.
+    fs::write(f.root.join("CLAUDE.md"), "").unwrap();
     install(&options, &f).unwrap();
     let guidance = [
         ("generic", f.root.join("AGENTS.md")),
@@ -3056,9 +3058,10 @@ fn default_setup_refresh_preserves_existing_named_host_selection() {
             .join(".claude/skills/specgit-native/SKILL.md")
             .is_file()
     );
-    assert!(f.root.join("CLAUDE.md").is_file());
+    // With no CLAUDE.md, Claude shares the created AGENTS.md block.
+    assert!(!f.root.join("CLAUDE.md").exists());
     assert!(!f.root.join(".claude/settings.json").exists());
-    assert!(!f.root.join("AGENTS.md").exists());
+    assert!(f.root.join("AGENTS.md").is_file());
 }
 
 #[cfg(windows)]
@@ -3214,7 +3217,13 @@ fn cli_removes_each_hook_purpose_without_removing_guidance_or_foreign_hooks() {
                 .join(".agents/skills/specgit-native/SKILL.md")
                 .exists()
         );
-        assert!(f.root.join("CLAUDE.md").exists());
+        // The shared AGENTS.md block is the Claude entry; no CLAUDE.md is created.
+        assert!(!f.root.join("CLAUDE.md").exists());
+        assert!(
+            fs::read_to_string(f.root.join("AGENTS.md"))
+                .unwrap()
+                .contains("<!-- specgit:project:v2:start -->")
+        );
         assert_eq!(
             f.root.join(".git/hooks/pre-commit").exists(),
             first == "context"
@@ -4621,4 +4630,913 @@ fn readonly_permissions_do_not_recreate_a_deleted_settings_file() {
     .unwrap_err();
     assert_eq!(error.code, Code::OwnershipConflict, "{error:?}");
     assert!(!settings.exists());
+}
+
+// Claude guidance entry (#940): an existing CLAUDE.md, otherwise the shared
+// AGENTS.md block. There is no option; the receipt records no Claude guidance
+// file when Claude shares AGENTS.md.
+
+const BLOCK_START: &str = "<!-- specgit:project:v2:start -->";
+const BLOCK_END: &str = "<!-- specgit:project:v2:end -->";
+
+fn receipt_of(f: &Fixture) -> Value {
+    serde_json::from_slice(&fs::read(f.private.join("ownership.json")).unwrap()).unwrap()
+}
+
+fn instruction_hosts(receipt: &Value) -> Vec<String> {
+    receipt["instructions"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect()
+}
+
+fn block_count(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .unwrap()
+        .matches(BLOCK_START)
+        .count()
+}
+
+fn claude_entry(report: &Value) -> Value {
+    report["evidence"]["claude_instructions"].clone()
+}
+
+fn assert_valid_report(report: &Value) {
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    assert!(
+        jsonschema::draft202012::validate(&schema, report).is_ok(),
+        "{report}"
+    );
+}
+
+/// `doctor --offline` and its `setup` health check.
+fn doctor_setup(root: &Path) -> Value {
+    let output = executable::command()
+        .current_dir(root)
+        .args(["doctor", "--offline", "--json"])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("stdout={:?}; stderr={:?}", output.stdout, output.stderr));
+    report["evidence"]["health"]["checks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{report}"))
+        .iter()
+        .find(|check| check["id"] == "setup")
+        .unwrap_or_else(|| panic!("no setup check: {report}"))
+        .clone()
+}
+
+fn assert_conflict(report: &Value, code: &str) {
+    assert_eq!(report["ok"], false, "{report}");
+    assert_eq!(report["diagnostics"][0]["code"], code, "{report}");
+}
+
+#[test]
+fn claude_without_claude_md_creates_agents_md_and_never_creates_claude_md() {
+    let (f, _) = fixture(vec![]);
+    let args = [
+        "--agent",
+        "claude",
+        "--hook-purpose",
+        "context",
+        "--hook-purpose",
+        "guard",
+    ];
+    let before = files(&f.base);
+    let preview = cli(&f.root, &[&args[..], &["--dry-run"]].concat());
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_valid_report(&preview);
+    assert_eq!(
+        claude_entry(&preview),
+        json!({"entry": "AGENTS.md", "status": "selected"})
+    );
+    let planned: Vec<&str> = preview["evidence"]["assets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|asset| asset["path"].as_str().unwrap())
+        .collect();
+    assert!(
+        planned.iter().any(|path| path.ends_with("AGENTS.md")),
+        "{planned:?}"
+    );
+    assert!(
+        planned.iter().all(|path| !path.ends_with("CLAUDE.md")),
+        "{planned:?}"
+    );
+    assert_eq!(files(&f.base), before);
+
+    let installed = cli(&f.root, &args);
+    assert_eq!(installed["ok"], true, "{installed}");
+    assert_eq!(
+        claude_entry(&installed),
+        json!({"entry": "AGENTS.md", "status": "selected"})
+    );
+    assert!(!f.root.join("CLAUDE.md").exists());
+    assert_eq!(block_count(&f.root.join("AGENTS.md")), 1);
+    // The Skills, hooks and Git guard are installed as usual.
+    let settings: Value =
+        serde_json::from_slice(&fs::read(f.root.join(".claude/settings.json")).unwrap()).unwrap();
+    assert!(settings["hooks"]["SessionStart"].is_array(), "{settings}");
+    assert!(settings["hooks"]["PreToolUse"].is_array(), "{settings}");
+    for file in [
+        ".claude/skills/specgit-native/SKILL.md",
+        ".agents/skills/specgit-native/SKILL.md",
+        ".git/hooks/pre-commit",
+        ".git/hooks/pre-push",
+    ] {
+        assert!(f.root.join(file).is_file(), "{file}");
+    }
+    // Claude is selected without a guidance file of its own; the receipt keeps
+    // its version and shape.
+    let receipt = receipt_of(&f);
+    assert_eq!(receipt["version"], 4, "{receipt}");
+    assert_eq!(receipt["agents"], json!(["claude"]));
+    assert_eq!(instruction_hosts(&receipt), ["generic"]);
+    assert_eq!(
+        receipt["instructions"]["generic"]["instructions"],
+        "AGENTS.md"
+    );
+    assert_eq!(
+        receipt["instructions"]["generic"]["created_instructions"],
+        true
+    );
+    assert!(receipt["hooks"]["claude"].is_object(), "{receipt}");
+    let check = doctor_setup(&f.root);
+    assert_eq!(check["status"], "current", "{check}");
+
+    // Refresh is idempotent and keeps the recorded entry.
+    let again = cli(&f.root, &[]);
+    assert_eq!(again["ok"], true, "{again}");
+    assert_eq!(again["evidence"]["transaction"]["changes"], 0, "{again}");
+    assert_eq!(
+        claude_entry(&again),
+        json!({"entry": "AGENTS.md", "status": "unchanged"})
+    );
+    let named = cli(&f.root, &["--agent", "claude", "--dry-run"]);
+    assert_eq!(
+        claude_entry(&named),
+        json!({"entry": "AGENTS.md", "status": "unchanged"})
+    );
+    assert!(!f.root.join("CLAUDE.md").exists());
+
+    // Uninstall leaves nothing behind.
+    let preview = cli(&f.root, &["--uninstall", "--dry-run"]);
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_valid_report(&preview);
+    assert_eq!(
+        claude_entry(&preview),
+        json!({"entry": null, "status": "not_selected"})
+    );
+    let removed = cli(&f.root, &["--uninstall"]);
+    assert_eq!(removed["ok"], true, "{removed}");
+    for file in [
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".agents",
+        ".claude",
+        ".git/hooks/pre-commit",
+        ".git/hooks/pre-push",
+    ] {
+        assert!(!f.root.join(file).exists(), "{file}");
+    }
+    assert!(!f.private.join("ownership.json").exists());
+}
+
+#[test]
+fn claude_uses_an_existing_claude_md_and_leaves_agents_md_alone() {
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    fs::write(f.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+    let preview = cli(&f.root, &["--agent", "claude", "--dry-run"]);
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_valid_report(&preview);
+    assert_eq!(
+        claude_entry(&preview),
+        json!({"entry": "CLAUDE.md", "status": "selected"})
+    );
+    let installed = cli_ok(&f.root, &["--agent", "claude", "--hook-purpose", "context"]);
+    assert_eq!(
+        claude_entry(&installed),
+        json!({"entry": "CLAUDE.md", "status": "selected"})
+    );
+    let claude = fs::read_to_string(f.root.join("CLAUDE.md")).unwrap();
+    assert!(claude.starts_with("manual claude rules\n"), "{claude}");
+    assert_eq!(block_count(&f.root.join("CLAUDE.md")), 1);
+    assert_eq!(
+        fs::read(f.root.join("AGENTS.md")).unwrap(),
+        b"manual agents rules\n"
+    );
+    let receipt = receipt_of(&f);
+    assert_eq!(instruction_hosts(&receipt), ["claude"]);
+    assert_eq!(
+        receipt["instructions"]["claude"]["instructions"],
+        "CLAUDE.md"
+    );
+    assert_eq!(doctor_setup(&f.root)["status"], "current");
+
+    let again = cli_ok(&f.root, &[]);
+    assert_eq!(again["evidence"]["transaction"]["changes"], 0, "{again}");
+    assert_eq!(
+        claude_entry(&again),
+        json!({"entry": "CLAUDE.md", "status": "unchanged"})
+    );
+    // Uninstall restores both files byte for byte.
+    let uninstalled = cli_ok(&f.root, &["--uninstall"]);
+    assert_eq!(uninstalled["ok"], true);
+    assert_eq!(
+        fs::read(f.root.join("CLAUDE.md")).unwrap(),
+        b"manual claude rules\n"
+    );
+    assert_eq!(
+        fs::read(f.root.join("AGENTS.md")).unwrap(),
+        b"manual agents rules\n"
+    );
+}
+
+#[test]
+fn claude_appends_the_shared_block_to_an_existing_agents_md_and_uninstall_restores_it() {
+    let (f, _) = fixture(vec![]);
+    let manual = b"manual agents rules\r\n";
+    fs::write(f.root.join("AGENTS.md"), manual).unwrap();
+    cli_ok(&f.root, &["--agent", "claude"]);
+    assert!(!f.root.join("CLAUDE.md").exists());
+    let agents = fs::read(f.root.join("AGENTS.md")).unwrap();
+    assert!(agents.starts_with(manual));
+    assert_eq!(block_count(&f.root.join("AGENTS.md")), 1);
+    let receipt = receipt_of(&f);
+    assert_eq!(instruction_hosts(&receipt), ["generic"]);
+    assert_eq!(
+        receipt["instructions"]["generic"]["created_instructions"],
+        false
+    );
+    cli_ok(&f.root, &["--uninstall"]);
+    assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), manual);
+    assert!(!f.root.join("CLAUDE.md").exists());
+}
+
+#[test]
+fn claude_shares_the_codex_agents_md_block() {
+    let (f, _) = fixture(vec![]);
+    let installed = cli_ok(&f.root, &["--agent", "codex", "--agent", "claude"]);
+    assert_eq!(
+        claude_entry(&installed),
+        json!({"entry": "AGENTS.md", "status": "selected"})
+    );
+    assert!(!f.root.join("CLAUDE.md").exists());
+    assert_eq!(block_count(&f.root.join("AGENTS.md")), 1);
+    let receipt = receipt_of(&f);
+    assert_eq!(instruction_hosts(&receipt), ["codex"]);
+    assert_eq!(
+        receipt["instructions"]["codex"]["instructions"],
+        "AGENTS.md"
+    );
+    assert_eq!(
+        cli_ok(&f.root, &[])["evidence"]["transaction"]["changes"],
+        0
+    );
+    assert_eq!(doctor_setup(&f.root)["status"], "current");
+}
+
+#[test]
+fn a_claude_md_created_later_does_not_move_a_recorded_agents_md_entry() {
+    let (f, _) = fixture(vec![]);
+    cli_ok(&f.root, &["--agent", "claude", "--hook-purpose", "context"]);
+    let recorded = receipt_of(&f);
+    fs::write(f.root.join("CLAUDE.md"), "added later\n").unwrap();
+    for args in [&[][..], &["--agent", "claude"][..]] {
+        let before = files(&f.base);
+        let preview = cli(&f.root, &[args, &["--dry-run"]].concat());
+        assert_eq!(preview["ok"], true, "{preview}");
+        assert_eq!(
+            claude_entry(&preview),
+            json!({"entry": "AGENTS.md", "status": "unchanged"})
+        );
+        assert_eq!(files(&f.base), before);
+        let refreshed = cli_ok(&f.root, args);
+        assert_eq!(refreshed["evidence"]["transaction"]["changes"], 0);
+    }
+    assert_eq!(
+        fs::read(f.root.join("CLAUDE.md")).unwrap(),
+        b"added later\n"
+    );
+    assert_eq!(receipt_of(&f), recorded);
+    assert_eq!(doctor_setup(&f.root)["status"], "current");
+}
+
+#[test]
+fn deleted_claude_md_aligns_to_the_agents_md_block_without_touching_hooks_guard_or_manual_bytes() {
+    for shared in ["generic", "codex"] {
+        let (f, _) = fixture(vec![]);
+        fs::write(f.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+        fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+        cli_ok(
+            &f.root,
+            &[
+                "--agent",
+                shared,
+                "--agent",
+                "claude",
+                "--hook-purpose",
+                "context",
+                "--hook-purpose",
+                "guard",
+            ],
+        );
+        let recorded = receipt_of(&f);
+        assert_eq!(instruction_hosts(&recorded), ["claude", shared]);
+        assert_eq!(
+            recorded["instructions"]["claude"]["instructions"],
+            "CLAUDE.md"
+        );
+        // The #940 state: the project merged CLAUDE.md into AGENTS.md and deleted it.
+        fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+        let tracked = [
+            "AGENTS.md",
+            ".claude/settings.json",
+            ".claude/skills/specgit-native/SKILL.md",
+            ".agents/skills/specgit-native/SKILL.md",
+            ".git/hooks/pre-commit",
+            ".git/hooks/pre-push",
+        ];
+        let snapshot = |f: &Fixture| -> Vec<Vec<u8>> {
+            tracked
+                .iter()
+                .map(|file| fs::read(f.root.join(file)).unwrap())
+                .collect()
+        };
+        let unchanged = snapshot(&f);
+
+        // doctor: recoverable and pointing at the setup preview, not a lost block.
+        let check = doctor_setup(&f.root);
+        assert_eq!(check["status"], "unknown", "{shared}: {check}");
+        assert_eq!(
+            check["diagnostic"]["code"], "migration_required",
+            "{shared}: {check}"
+        );
+        assert!(
+            check["diagnostic"]["remedy"]
+                .as_str()
+                .unwrap()
+                .contains("specgit setup --dry-run"),
+            "{check}"
+        );
+        // Uninstall still needs the recorded file; the remedy is the alignment.
+        let refused = cli(&f.root, &["--uninstall", "--dry-run"]);
+        assert_conflict(&refused, "ownership_conflict");
+        assert!(
+            refused["diagnostics"][0]["remedy"]
+                .as_str()
+                .unwrap()
+                .contains("specgit setup --dry-run"),
+            "{refused}"
+        );
+
+        let before = files(&f.base);
+        let preview = cli(&f.root, &["--dry-run"]);
+        assert_eq!(preview["ok"], true, "{shared}: {preview}");
+        assert_valid_report(&preview);
+        assert_eq!(
+            claude_entry(&preview),
+            json!({"entry": "AGENTS.md", "status": "aligned"})
+        );
+        assert_eq!(files(&f.base), before);
+        assert!(!f.root.join("CLAUDE.md").exists());
+
+        let applied = cli(&f.root, &[]);
+        assert_eq!(applied["ok"], true, "{shared}: {applied}");
+        assert_eq!(
+            claude_entry(&applied),
+            json!({"entry": "AGENTS.md", "status": "aligned"})
+        );
+        assert!(!f.root.join("CLAUDE.md").exists());
+        assert_eq!(snapshot(&f), unchanged, "{shared}");
+        let aligned = receipt_of(&f);
+        assert_eq!(instruction_hosts(&aligned), [shared]);
+        assert!(
+            aligned["agents"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("claude"))
+        );
+        assert_eq!(aligned["hooks"], recorded["hooks"]);
+        assert_eq!(aligned["purposes"], recorded["purposes"]);
+        assert_eq!(aligned["skills"], recorded["skills"]);
+        assert_eq!(doctor_setup(&f.root)["status"], "current", "{shared}");
+
+        // Stable afterwards, and the uninstall removes everything it owns.
+        let again = cli(&f.root, &[]);
+        assert_eq!(again["evidence"]["transaction"]["changes"], 0, "{again}");
+        assert_eq!(
+            claude_entry(&again),
+            json!({"entry": "AGENTS.md", "status": "unchanged"})
+        );
+        cli_ok(&f.root, &["--uninstall"]);
+        assert!(!f.root.join("CLAUDE.md").exists());
+        assert_eq!(
+            fs::read(f.root.join("AGENTS.md")).unwrap(),
+            b"manual agents rules\n"
+        );
+        for file in [".claude", ".agents", ".git/hooks/pre-commit"] {
+            assert!(!f.root.join(file).exists(), "{shared}: {file}");
+        }
+        assert!(!f.private.join("ownership.json").exists());
+    }
+}
+
+#[test]
+fn deleted_claude_md_without_a_shared_receipt_plans_agents_md_like_a_new_host() {
+    for existing in [None, Some("manual agents rules\n")] {
+        let (f, _) = fixture(vec![]);
+        fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+        cli_ok(&f.root, &["--agent", "claude", "--hook-purpose", "context"]);
+        assert_eq!(instruction_hosts(&receipt_of(&f)), ["claude"]);
+        fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+        if let Some(text) = existing {
+            fs::write(f.root.join("AGENTS.md"), text).unwrap();
+        }
+        let settings = fs::read(f.root.join(".claude/settings.json")).unwrap();
+        let check = doctor_setup(&f.root);
+        assert_eq!(check["status"], "unknown", "{check}");
+        assert_eq!(check["diagnostic"]["code"], "migration_required", "{check}");
+
+        let before = files(&f.base);
+        let preview = cli(&f.root, &["--dry-run"]);
+        assert_eq!(preview["ok"], true, "{preview}");
+        assert_eq!(
+            claude_entry(&preview),
+            json!({"entry": "AGENTS.md", "status": "aligned"})
+        );
+        assert_eq!(files(&f.base), before);
+        let applied = cli_ok(&f.root, &[]);
+        assert_eq!(
+            claude_entry(&applied),
+            json!({"entry": "AGENTS.md", "status": "aligned"})
+        );
+        assert!(!f.root.join("CLAUDE.md").exists());
+        assert_eq!(block_count(&f.root.join("AGENTS.md")), 1);
+        if let Some(text) = existing {
+            let agents = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
+            assert!(agents.starts_with(text), "{agents}");
+        }
+        assert_eq!(
+            fs::read(f.root.join(".claude/settings.json")).unwrap(),
+            settings
+        );
+        let receipt = receipt_of(&f);
+        assert_eq!(instruction_hosts(&receipt), ["generic"]);
+        assert_eq!(
+            receipt["instructions"]["generic"]["created_instructions"],
+            existing.is_none()
+        );
+        assert_eq!(doctor_setup(&f.root)["status"], "current");
+        cli_ok(&f.root, &["--uninstall"]);
+        match existing {
+            Some(text) => assert_eq!(fs::read(f.root.join("AGENTS.md")).unwrap(), text.as_bytes()),
+            None => assert!(!f.root.join("AGENTS.md").exists()),
+        }
+    }
+}
+
+#[test]
+fn alignment_keeps_damaged_duplicate_and_unowned_agents_blocks_as_ownership_conflicts() {
+    for fault in ["duplicate", "damaged", "removed"] {
+        let (f, _) = fixture(vec![]);
+        fs::write(f.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+        fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+        cli_ok(
+            &f.root,
+            &[
+                "--agent",
+                "generic",
+                "--agent",
+                "claude",
+                "--hook-purpose",
+                "context",
+            ],
+        );
+        fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+        let text = fs::read_to_string(f.root.join("AGENTS.md")).unwrap();
+        let block =
+            &text[text.find(BLOCK_START).unwrap()..text.find(BLOCK_END).unwrap() + BLOCK_END.len()];
+        let faulty = match fault {
+            "duplicate" => format!("{text}\n{block}\n"),
+            "damaged" => text.replace(BLOCK_END, ""),
+            _ => "manual agents rules\n".to_owned(),
+        };
+        fs::write(f.root.join("AGENTS.md"), &faulty).unwrap();
+        let before = files(&f.base);
+        for args in [&["--dry-run"][..], &[][..]] {
+            let report = cli(&f.root, args);
+            assert_conflict(&report, "ownership_conflict");
+            assert_eq!(files(&f.base), before, "{fault}");
+        }
+        let check = doctor_setup(&f.root);
+        assert_eq!(check["status"], "unknown", "{fault}: {check}");
+        assert_eq!(
+            check["diagnostic"]["code"], "ownership_conflict",
+            "{fault}: {check}"
+        );
+        assert!(!f.root.join("CLAUDE.md").exists());
+    }
+
+    // With no shared receipt, a marker block SpecGit does not own is never adopted.
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    cli_ok(&f.root, &["--agent", "claude"]);
+    fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+    let foreign = format!("{BLOCK_START}\nforeign\n{BLOCK_END}\n");
+    fs::write(f.root.join("AGENTS.md"), &foreign).unwrap();
+    let before = files(&f.base);
+    for args in [&["--dry-run"][..], &[][..]] {
+        assert_conflict(&cli(&f.root, args), "ownership_conflict");
+        assert_eq!(files(&f.base), before);
+    }
+    let check = doctor_setup(&f.root);
+    assert_eq!(check["diagnostic"]["code"], "ownership_conflict", "{check}");
+    assert_eq!(
+        fs::read_to_string(f.root.join("AGENTS.md")).unwrap(),
+        foreign
+    );
+    assert!(!f.root.join("CLAUDE.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_or_non_regular_claude_md_is_still_refused_without_writes() {
+    use std::os::unix::fs::symlink;
+    // The workaround from #940: a recorded CLAUDE.md replaced by a link to AGENTS.md.
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    cli_ok(
+        &f.root,
+        &[
+            "--agent",
+            "generic",
+            "--agent",
+            "claude",
+            "--hook-purpose",
+            "context",
+        ],
+    );
+    fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+    symlink("AGENTS.md", f.root.join("CLAUDE.md")).unwrap();
+    let before = files(&f.base);
+    for args in [&["--dry-run"][..], &[][..]] {
+        assert_conflict(&cli(&f.root, args), "unsafe_path");
+        assert_eq!(files(&f.base), before);
+    }
+    let check = doctor_setup(&f.root);
+    assert_eq!(check["status"], "unknown", "{check}");
+    assert_eq!(check["diagnostic"]["code"], "unsafe_path", "{check}");
+    assert!(
+        fs::symlink_metadata(f.root.join("CLAUDE.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    // A new selection with a link neither falls back to AGENTS.md nor writes.
+    let (g, _) = fixture(vec![]);
+    fs::write(g.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+    symlink("AGENTS.md", g.root.join("CLAUDE.md")).unwrap();
+    let before = files(&g.base);
+    for args in [
+        &["--agent", "claude", "--dry-run"][..],
+        &["--agent", "claude"][..],
+    ] {
+        assert_conflict(&cli(&g.root, args), "unsafe_path");
+        assert_eq!(files(&g.base), before);
+    }
+    assert!(!g.private.join("ownership.json").exists());
+    assert!(!g.root.join(".claude").exists());
+
+    // So does any other non-regular file.
+    let (h, _) = fixture(vec![]);
+    fs::create_dir(h.root.join("CLAUDE.md")).unwrap();
+    let report = cli(&h.root, &["--agent", "claude"]);
+    assert_conflict(&report, "ownership_conflict");
+    assert!(!h.private.join("ownership.json").exists());
+    assert!(!h.root.join("AGENTS.md").exists());
+}
+
+#[test]
+fn claude_instructions_evidence_schema_is_typed() {
+    let (f, _) = fixture(vec![]);
+    let report = cli(&f.root, &["--agent", "claude", "--dry-run"]);
+    assert_valid_report(&report);
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/report.schema.json")).unwrap();
+    let validate = |value: &Value| jsonschema::draft202012::validate(&schema, value).is_ok();
+    for (status, entry) in [
+        ("selected", json!("CLAUDE.md")),
+        ("unchanged", json!("AGENTS.md")),
+        ("aligned", json!("AGENTS.md")),
+        ("not_selected", json!(null)),
+    ] {
+        let mut valid = report.clone();
+        valid["evidence"]["claude_instructions"] = json!({"entry": entry, "status": status});
+        assert!(validate(&valid), "{valid}");
+    }
+    for (status, entry) in [
+        ("moved", json!("AGENTS.md")),
+        ("selected", json!("GEMINI.md")),
+        // Not selected means no entry; any other status names one.
+        ("not_selected", json!("AGENTS.md")),
+        ("selected", json!(null)),
+        // Alignment always lands on the shared AGENTS.md entry.
+        ("aligned", json!("CLAUDE.md")),
+    ] {
+        let mut invalid = report.clone();
+        invalid["evidence"]["claude_instructions"] = json!({"entry": entry, "status": status});
+        assert!(!validate(&invalid), "accepted {status} with {entry}");
+    }
+    let mut invalid = report.clone();
+    invalid["evidence"]["claude_instructions"]["detail"] = json!("extra");
+    assert!(!validate(&invalid), "accepted an undeclared property");
+}
+
+#[cfg(unix)]
+#[test]
+fn alignment_requires_the_agents_md_ownership_and_permission_proof() {
+    use std::os::unix::fs::PermissionsExt;
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    cli_ok(&f.root, &["--agent", "generic", "--agent", "claude"]);
+    fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+    // The recorded permissions of the shared block's file no longer match.
+    fs::set_permissions(f.root.join("AGENTS.md"), fs::Permissions::from_mode(0o640)).unwrap();
+    let before = files(&f.base);
+    for args in [&["--dry-run"][..], &[][..]] {
+        let report = cli(&f.root, args);
+        assert_conflict(&report, "ownership_conflict");
+        assert!(
+            report["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("permissions"),
+            "{report}"
+        );
+        assert_eq!(files(&f.base), before);
+    }
+    let check = doctor_setup(&f.root);
+    assert_eq!(check["diagnostic"]["code"], "ownership_conflict", "{check}");
+    assert!(!f.root.join("CLAUDE.md").exists());
+}
+
+/// Plan setup with `args`, then change `CLAUDE.md` before the plan takes the
+/// project lock. Returns the failed report.
+#[cfg(feature = "test-fixtures")]
+fn setup_with_claude_md_changed_after_planning(
+    f: &Fixture,
+    args: &[&str],
+    change: impl FnOnce(&Path),
+) -> Value {
+    use std::{
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let lock = specgit::assets::AssetStore::lock(
+        &f.private.parent().unwrap().join("assets"),
+        &[f.root.clone(), f.private.clone()],
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let ready = f.base.join("planned");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.root)
+        .arg("setup")
+        .args(args)
+        .arg("--json")
+        .env("SPECGIT_FIXTURE_SETUP_PLAN_READY", &ready)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if !ready.exists() {
+        let _ = child.kill();
+        panic!("project setup never finished planning");
+    }
+    assert!(child.try_wait().unwrap().is_none());
+    change(&f.root.join("CLAUDE.md"));
+    drop(lock);
+    let output = child.wait_with_output().unwrap();
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("stderr={:?}", String::from_utf8_lossy(&output.stderr)))
+}
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn claude_entry_choice_is_checked_again_under_the_lock() {
+    // The plan was made for the opposite CLAUDE.md state than the one found
+    // when the lock is finally taken, in each direction and for each way
+    // the entry is chosen.
+    for (label, recorded, planned_with_file) in [
+        ("recorded entry aligned, file restored", true, false),
+        ("new entry on AGENTS.md, file created", false, false),
+        ("new entry on CLAUDE.md, file removed", false, true),
+        ("recorded entry kept, file removed", true, true),
+    ] {
+        let (f, _) = fixture(vec![]);
+        let claude = f.root.join("CLAUDE.md");
+        if recorded {
+            fs::write(&claude, "manual claude rules\n").unwrap();
+            cli_ok(&f.root, &["--agent", "claude", "--hook-purpose", "context"]);
+            if !planned_with_file {
+                fs::remove_file(&claude).unwrap();
+            }
+        } else if planned_with_file {
+            fs::write(&claude, "manual claude rules\n").unwrap();
+        }
+        let receipt = fs::read(f.private.join("ownership.json")).ok();
+        let settings = fs::read(f.root.join(".claude/settings.json")).ok();
+        let args: &[&str] = if recorded {
+            &[]
+        } else {
+            &["--agent", "claude"]
+        };
+        let result = setup_with_claude_md_changed_after_planning(&f, args, |path| {
+            if planned_with_file {
+                fs::remove_file(path).unwrap();
+            } else {
+                fs::write(path, "created after planning\n").unwrap();
+            }
+        });
+        assert_conflict(&result, "concurrent_edit");
+        // The racing edit stands, and nothing else was written.
+        assert_eq!(claude.exists(), !planned_with_file, "{label}");
+        if !planned_with_file {
+            assert_eq!(
+                fs::read(&claude).unwrap(),
+                b"created after planning\n",
+                "{label}"
+            );
+        }
+        assert_eq!(
+            fs::read(f.private.join("ownership.json")).ok(),
+            receipt,
+            "{label}"
+        );
+        assert_eq!(
+            fs::read(f.root.join(".claude/settings.json")).ok(),
+            settings,
+            "{label}"
+        );
+        assert!(!f.root.join("AGENTS.md").exists(), "{label}");
+        if !recorded {
+            assert!(!f.root.join(".claude").exists(), "{label}");
+            assert!(!f.root.join(".agents").exists(), "{label}");
+        }
+    }
+}
+
+#[test]
+fn doctor_reports_a_changed_claude_hook_before_the_alignment_hint() {
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("AGENTS.md"), "manual agents rules\n").unwrap();
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    cli_ok(
+        &f.root,
+        &[
+            "--agent",
+            "generic",
+            "--agent",
+            "claude",
+            "--hook-purpose",
+            "context",
+        ],
+    );
+    fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+    // Alone, the deleted file is recoverable and doctor points at the preview.
+    assert_eq!(
+        doctor_setup(&f.root)["diagnostic"]["code"],
+        "migration_required"
+    );
+    // A managed hook entry that was edited as well is a conflict to resolve first.
+    let settings = f.root.join(".claude/settings.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    let entry = value["hooks"]["SessionStart"][0].clone();
+    value["hooks"]["SessionStart"]
+        .as_array_mut()
+        .unwrap()
+        .push(entry);
+    fs::write(&settings, serde_json::to_vec(&value).unwrap()).unwrap();
+    let before = files(&f.base);
+    let check = doctor_setup(&f.root);
+    assert_eq!(check["status"], "unknown", "{check}");
+    assert_eq!(check["diagnostic"]["code"], "ownership_conflict", "{check}");
+    assert_conflict(&cli(&f.root, &["--dry-run"]), "ownership_conflict");
+    assert_eq!(files(&f.base), before);
+    assert!(!f.root.join("CLAUDE.md").exists());
+}
+
+#[test]
+fn remove_names_the_alignment_while_the_recorded_claude_md_is_gone() {
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    cli_ok(&f.root, &["--agent", "claude", "--hook-purpose", "context"]);
+    fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+    let before = files(&f.base);
+    for args in [&["remove"][..], &["remove", "--dry-run"][..]] {
+        let output = executable::command()
+            .current_dir(&f.root)
+            .args(args)
+            .arg("--json")
+            .output()
+            .unwrap();
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_conflict(&report, "ownership_conflict");
+        assert!(
+            report["diagnostics"][0]["remedy"]
+                .as_str()
+                .unwrap()
+                .contains("specgit setup --dry-run"),
+            "{report}"
+        );
+        assert_eq!(files(&f.base), before);
+    }
+    // After the alignment the project can be removed again.
+    cli_ok(&f.root, &[]);
+    let output = executable::command()
+        .current_dir(&f.root)
+        .args(["remove", "--json"])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["ok"], true, "{report}");
+}
+
+#[test]
+fn deleted_claude_md_adopts_the_exact_stable_agents_entry_without_a_shared_receipt() {
+    let (f, _) = fixture(vec![]);
+    fs::write(f.root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
+    cli_ok(&f.root, &["--agent", "claude", "--hook-purpose", "context"]);
+    assert_eq!(instruction_hosts(&receipt_of(&f)), ["claude"]);
+    // The project merged the block into AGENTS.md byte for byte and deleted CLAUDE.md.
+    let text = fs::read_to_string(f.root.join("CLAUDE.md")).unwrap();
+    let block = text
+        [text.find(BLOCK_START).unwrap()..text.find(BLOCK_END).unwrap() + BLOCK_END.len()]
+        .to_owned();
+    fs::remove_file(f.root.join("CLAUDE.md")).unwrap();
+    let agents = format!("manual agents rules\n\n{block}\nmore manual rules\n");
+    fs::write(f.root.join("AGENTS.md"), &agents).unwrap();
+
+    let check = doctor_setup(&f.root);
+    assert_eq!(check["diagnostic"]["code"], "migration_required", "{check}");
+    let before = files(&f.base);
+    let preview = cli(&f.root, &["--dry-run"]);
+    assert_eq!(preview["ok"], true, "{preview}");
+    assert_eq!(
+        claude_entry(&preview),
+        json!({"entry": "AGENTS.md", "status": "aligned"})
+    );
+    assert_eq!(files(&f.base), before);
+
+    // The block is recorded as owned without writing any project file.
+    let project = checkout_files(&f.root);
+    let applied = cli_ok(&f.root, &[]);
+    assert_eq!(
+        claude_entry(&applied),
+        json!({"entry": "AGENTS.md", "status": "aligned"})
+    );
+    assert_eq!(checkout_files(&f.root), project);
+    assert_eq!(
+        fs::read_to_string(f.root.join("AGENTS.md")).unwrap(),
+        agents
+    );
+    assert!(!f.root.join("CLAUDE.md").exists());
+    let receipt = receipt_of(&f);
+    assert_eq!(instruction_hosts(&receipt), ["generic"]);
+    assert_eq!(
+        receipt["instructions"]["generic"]["created_instructions"],
+        false
+    );
+    assert_eq!(receipt["instructions"]["generic"]["block"], block.as_str());
+    assert_eq!(doctor_setup(&f.root)["status"], "current");
+    assert_eq!(
+        cli_ok(&f.root, &[])["evidence"]["transaction"]["changes"],
+        0
+    );
+
+    // Uninstall removes the recorded block and nothing around it.
+    cli_ok(&f.root, &["--uninstall"]);
+    assert_eq!(
+        fs::read_to_string(f.root.join("AGENTS.md")).unwrap(),
+        agents.replacen(&block, "", 1)
+    );
+    assert!(!f.root.join("CLAUDE.md").exists());
+    for file in [".claude", ".agents"] {
+        assert!(!f.root.join(file).exists(), "{file}");
+    }
+    assert!(!f.private.join("ownership.json").exists());
 }

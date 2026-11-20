@@ -57,13 +57,21 @@ specgit setup --agent claude --readonly-permissions --dry-run --json
 specgit setup --agent claude --readonly-permissions --json
 ```
 
-Claude Code 获得根 `CLAUDE.md` 入口、规范 `.agents` Skill，以及供宿主发现的
-`.claude/skills/specgit-native/SKILL.md` 副本。上下文 hooks 写入
-`.claude/settings.json`。可选受管白名单把固定的 `Bash(specgit <argv> *)` 规则
+Claude Code 获得指导入口、规范 `.agents` Skill，以及供宿主发现的
+`.claude/skills/specgit-native/SKILL.md` 副本。入口是项目根已有 `CLAUDE.md` 中的
+受管块；没有 `CLAUDE.md` 时，Claude 复用 `AGENTS.md` 的共享受管块（缺失则创建），
+setup 从不创建 `CLAUDE.md`。宿主是否及何时加载该文件取决于 Claude Code 的版本与设置，
+细节见[支持的编码 Agent](https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix)
+的支持矩阵。已记录的入口保持不变。已记录的 `CLAUDE.md` 被删除后，
+`doctor` 把 `setup` 报为 `unknown` 并给出 `migration_required` 诊断；先看
+`specgit setup --dry-run`，它预览迁到 `AGENTS.md`：这一步本身不新增、删除或改写 Skill、
+hooks、Git guard，也不改 `AGENTS.md` 块外任何字节，同一事务中到期的常规刷新仍会执行并出现在
+预览中。`init` 刷新执行同样的迁移，但没有这项证据。块损坏或重复仍是 `ownership_conflict`。
+上下文 hooks 写入 `.claude/settings.json`。可选受管白名单把固定的 `Bash(specgit <argv> *)` 规则
 追加到 `permissions.allow`，保留用户规则及其顺序。它只减少提示，不是沙箱或授权
 边界：写命令仍会提示，`pr --status`、`doctor`、`watch`、`inbox`、`migrate` 和
 `remove --apply` 不在白名单内；写入规则也不证明宿主已加载。回退：hooks 不可用时
-直接重读 `CLAUDE.md` 与 Skill；CLI 和 guard 仍然有效。
+直接重读指导文件与 Skill；CLI 和 guard 仍然有效。
 
 ### Codex
 

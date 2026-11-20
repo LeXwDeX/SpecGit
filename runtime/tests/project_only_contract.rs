@@ -413,6 +413,8 @@ fn patch_text_and_move_destinations_do_not_gate_host_edits() {
 fn legacy_project_receipt_refresh_and_removal_never_require_the_global_root() {
     for refresh in [false, true] {
         let (temp, root, private, source) = fixture();
+        // A legacy receipt records Claude's own CLAUDE.md block, so the file exists first.
+        fs::write(root.join("CLAUDE.md"), "manual claude rules\n").unwrap();
         let mut opts = options(vec![Agent::Claude, Agent::Opencode], false);
         install_with_hooks(
             &opts,

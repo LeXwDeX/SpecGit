@@ -5,7 +5,7 @@
 | 命令 | 用途 |
 | --- | --- |
 | `init` | 初始化或检查单个项目的声明和本地指导；新项目安装原生 Git guard，不安装宿主 hooks |
-| `setup` | 安装/刷新项目 Skill 和指导基线；新选 `--agent` 只添加指导，hooks 须显式指定 `--hook-purpose guard` 和/或 `--hook-purpose context`；`--readonly-permissions`/`--remove-readonly-permissions` 为显式指定的宿主管理 Claude Code 只读白名单 |
+| `setup` | 安装/刷新项目 Skill 和指导基线；新选 `--agent` 只添加指导（Claude 用已有的 `CLAUDE.md`，否则复用共享 `AGENTS.md`），hooks 须显式指定 `--hook-purpose guard` 和/或 `--hook-purpose context`；`--readonly-permissions`/`--remove-readonly-permissions` 为显式指定的宿主管理 Claude Code 只读白名单 |
 | `update` | 检查、验证或应用签名 GitHub Release，以更新共享可执行文件 |
 | `issue` / `pr` | 选择完整规格 / 汇聚原生草稿请求；新标题使用 `type[(scope)][!]: summary`；写入须已有授权 |
 | `pr --status` / `watch` | 当前原生状态 / 有界观察；不合并或关闭 Issue |

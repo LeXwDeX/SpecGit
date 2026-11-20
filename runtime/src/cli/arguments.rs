@@ -57,6 +57,7 @@ pub(super) enum Commands {
         language: Option<specgit::config::Language>,
         #[arg(long)]
         config_file: Option<PathBuf>,
+        /// Select the Claude host and its Skill; its guidance goes into an existing CLAUDE.md, otherwise the shared AGENTS.md block.
         #[arg(long)]
         mirror_claude: bool,
         /// Explicit preference; native capability must be proven before enabling.
@@ -80,7 +81,7 @@ pub(super) enum Commands {
         /// Project is the only supported scope, permanently; the shared CLI is installed separately.
         #[arg(long, value_enum, default_value = "project")]
         scope: specgit::setup::Scope,
-        /// Select named project guidance; hooks require an explicit --hook-purpose, including for new hosts.
+        /// Select named project guidance; hooks require an explicit --hook-purpose, including for new hosts. Claude's guidance goes into an existing CLAUDE.md, otherwise the shared AGENTS.md block.
         #[arg(long, value_enum, action = clap::ArgAction::Append)]
         agent: Vec<specgit::setup::Agent>,
         /// Opt in only on a custom OpenCode supporting Claude-compatible command hooks.

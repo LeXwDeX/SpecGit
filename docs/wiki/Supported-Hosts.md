@@ -62,15 +62,27 @@ specgit setup --agent claude --readonly-permissions --dry-run --json
 specgit setup --agent claude --readonly-permissions --json
 ```
 
-Claude Code gets the root `CLAUDE.md` entry, the canonical `.agents` Skill and a
-`.claude/skills/specgit-native/SKILL.md` copy for host discovery. Context hooks
-use `.claude/settings.json`. The optional managed allowlist appends fixed
-`Bash(specgit <argv> *)` rules to `permissions.allow` and preserves user rules
-and their order. It reduces prompts; it is not a sandbox or an authorization
+Claude Code gets its guidance entry, the canonical `.agents` Skill and a
+`.claude/skills/specgit-native/SKILL.md` copy for host discovery. The entry is
+the managed block in an existing root `CLAUDE.md`; without one, Claude shares the
+managed `AGENTS.md` block (created if missing) and setup never creates
+`CLAUDE.md`. Whether and when the host loads that file depends on the Claude Code
+version and settings; the
+[support matrix](https://github.com/LeXwDeX/SpecGit/blob/main/docs/supported-tools.md#support-matrix)
+holds the details. A recorded entry is kept. If a recorded `CLAUDE.md` is deleted,
+`doctor` reports `setup` as `unknown` with a `migration_required` diagnostic; read
+`specgit setup --dry-run` first. It previews the move to `AGENTS.md`, which adds,
+removes or rewrites no Skill, hook or Git guard asset and no byte outside the
+`AGENTS.md` block, though a routine refresh that is due in the same transaction
+still runs and shows in the preview. An `init` refresh performs the same move
+without that evidence. A damaged or duplicated block stays an `ownership_conflict`.
+Context hooks use `.claude/settings.json`. The optional managed allowlist appends
+fixed `Bash(specgit <argv> *)` rules to `permissions.allow` and preserves user
+rules and their order. It reduces prompts; it is not a sandbox or an authorization
 boundary. Write commands still prompt, `pr --status`, `doctor`, `watch`, `inbox`,
 `migrate` and `remove --apply` stay outside the allowlist, and written rules do
-not prove that the host loaded them. Fallback: re-read `CLAUDE.md` and the Skill
-directly if hooks are unavailable; the CLI and guard remain.
+not prove that the host loaded them. Fallback: re-read the guidance file and the
+Skill directly if hooks are unavailable; the CLI and guard remain.
 
 ### Codex
 

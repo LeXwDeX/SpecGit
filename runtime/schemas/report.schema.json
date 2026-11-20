@@ -739,6 +739,20 @@
         }
       }
     },
+    "claude_instructions": {
+      "description": "Setup evidence for the planned Claude guidance entry: an existing CLAUDE.md, otherwise the shared AGENTS.md. It describes the receipt this plan writes, not whether the host loads the file.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry", "status"],
+      "properties": {
+        "entry": {"enum":["CLAUDE.md","AGENTS.md",null]},
+        "status": {"enum":["selected","unchanged","aligned","not_selected"]}
+      },
+      "allOf": [
+        {"if":{"properties":{"status":{"const":"not_selected"}},"required":["status"]},"then":{"properties":{"entry":{"const":null}}},"else":{"properties":{"entry":{"enum":["CLAUDE.md","AGENTS.md"]}}}},
+        {"if":{"properties":{"status":{"const":"aligned"}},"required":["status"]},"then":{"properties":{"entry":{"const":"AGENTS.md"}}}}
+      ]
+    },
     "milestone_scope": {
       "oneOf": [
         {"type":"object","additionalProperties":false,"required":["kind","project_id"],"properties":{
@@ -1404,6 +1418,7 @@
               "hook_purposes": {"$ref":"#/$defs/hook_purposes"},
               "host_delivery": {"$ref":"#/$defs/setup_host_delivery"},
               "readonly_permissions": {"$ref":"#/$defs/readonly_permissions"},
+              "claude_instructions": {"$ref":"#/$defs/claude_instructions"},
               "installation_catalog": {"$ref":"#/$defs/installation_catalog"}
             }
           }

@@ -5,7 +5,7 @@ Use the shared native CLI's `specgit --help` and offline `specgit --schema` as t
 | Commands | Purpose |
 | --- | --- |
 | `init` | Initialize or inspect one project's declaration and local guidance; installs the native Git guard on a new project, not host hooks |
-| `setup` | Install/refresh the project Skill and guidance baseline; a new `--agent` adds guidance only, hooks need explicit `--hook-purpose guard` and/or `--hook-purpose context`, and `--readonly-permissions`/`--remove-readonly-permissions` manage the Claude Code allowlist for explicitly named hosts |
+| `setup` | Install/refresh the project Skill and guidance baseline; a new `--agent` adds guidance only (Claude uses an existing `CLAUDE.md`, otherwise the shared `AGENTS.md`), hooks need explicit `--hook-purpose guard` and/or `--hook-purpose context`, and `--readonly-permissions`/`--remove-readonly-permissions` manage the Claude Code allowlist for explicitly named hosts |
 | `update` | Check, verify or apply a signed GitHub Release to the shared executable |
 | `issue` / `pr` | Select complete specifications / aggregate a native draft; new titles use `type[(scope)][!]: summary`; writes require existing authorization |
 | `pr --status` / `watch` | Current native facts / bounded observation; neither merges nor closes Issues |
