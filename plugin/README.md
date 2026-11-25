@@ -60,13 +60,13 @@ Add the marketplace, then install the plugin:
 
 ```sh
 claude plugin marketplace add LeXwDeX/SpecGit
-claude plugin install specgit@specgit-marketplace
+claude plugin install specgit-workflow@specgit-marketplace
 ```
 
 Inside a Claude Code session, the one-step form is:
 
 ```text
-/plugin install specgit --marketplace LeXwDeX/SpecGit
+/plugin install specgit-workflow --marketplace LeXwDeX/SpecGit
 ```
 
 The one-step form requires Claude Code v2.1.275 or newer; on older versions use
@@ -80,7 +80,7 @@ The repository also hosts a marketplace entry in the documented Codex format:
 codex plugin marketplace add LeXwDeX/SpecGit
 ```
 
-Then use `/plugins` in Codex to browse and install `specgit`. This entry has not
+Then use `/plugins` in Codex to browse and install `specgit-workflow`. This entry has not
 yet been exercised with a local Codex installation, so verify that the host
 loads the Skill before relying on it.
 

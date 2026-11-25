@@ -66,7 +66,7 @@ is still required.
 ```sh
 # Claude Code: self-hosted marketplace
 claude plugin marketplace add LeXwDeX/SpecGit
-claude plugin install specgit@specgit-marketplace
+claude plugin install specgit-workflow@specgit-marketplace
 
 # Codex: self-hosted marketplace; browse and install in the host's /plugins view
 codex plugin marketplace add LeXwDeX/SpecGit

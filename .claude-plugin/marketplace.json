@@ -6,7 +6,7 @@
   },
   "plugins": [
     {
-      "name": "specgit",
+      "name": "specgit-workflow",
       "source": "./plugin",
       "description": "SpecGit delivery workflow Skill for GitHub and GitLab: native Issue specifications, PR/MR delivery, checkpoints, and verified completion.",
       "category": "productivity",
