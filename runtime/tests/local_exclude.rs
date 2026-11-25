@@ -123,6 +123,53 @@ fn project_refresh_keeps_sibling_skill_rules_and_retires_instruction_exclusions(
     assert!(local_exclude::project_change(&root, &exclude, &changes).is_err());
 }
 
+#[test]
+fn non_utf8_user_rules_survive_refresh_and_removal() {
+    use specgit::assets::Change;
+    use std::fs;
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().canonicalize().unwrap();
+    let exclude = root.join("exclude");
+    let mut original = b"# user\n/cache\n".to_vec();
+    original.extend_from_slice(b"/tmp/\xff\xfe\n");
+    fs::write(&exclude, &original).unwrap();
+
+    let first = local_exclude::change(&exclude, &[".specgit.yaml"])
+        .unwrap()
+        .after
+        .unwrap();
+    assert!(first.starts_with(&original));
+    fs::write(&exclude, &first).unwrap();
+    assert!(
+        local_exclude::change(&exclude, &[".specgit.yaml"])
+            .unwrap()
+            .unchanged()
+    );
+
+    let changes = vec![
+        Change::new(
+            root.join(".agents/skills/specgit-native/SKILL.md"),
+            Some(b"generated".to_vec()),
+        )
+        .unwrap(),
+    ];
+    let planned = local_exclude::project_change(&root, &exclude, &changes).unwrap();
+    let after = planned.after.clone().unwrap();
+    assert!(after.starts_with(&original));
+    assert!(String::from_utf8_lossy(&after).contains("/.agents/skills/specgit-native/SKILL.md"));
+    fs::write(&exclude, &after).unwrap();
+    assert!(
+        local_exclude::project_change(&root, &exclude, &changes)
+            .unwrap()
+            .unchanged()
+    );
+    assert!(
+        local_exclude::project_change(&root, &exclude, &[])
+            .unwrap()
+            .unchanged()
+    );
+}
+
 #[tokio::test]
 async fn tracked_generated_skill_is_reported_without_changing_the_index() {
     use specgit::{assets::Change, process::Process};

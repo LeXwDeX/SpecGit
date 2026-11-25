@@ -19,24 +19,26 @@ fn allowed(name: &str) -> bool {
     [".specgit.yaml", "AGENTS.md", "CLAUDE.md"].contains(&name) || SKILL_PATHS.contains(&name)
 }
 
-fn owned_body(text: &str) -> Option<&str> {
-    text.split_once(START)?
-        .1
-        .split_once(END)
-        .map(|(body, _)| body)
+fn owned_body(text: &[u8]) -> Option<&[u8]> {
+    let start = positions(text, START.as_bytes()).into_iter().next()?;
+    let end = positions(text, END.as_bytes())
+        .into_iter()
+        .find(|end| *end > start)?;
+    Some(&text[start + START.len()..end])
 }
 
 pub(crate) fn excluded_paths(change: &Change) -> Vec<&'static str> {
     let body = change
         .after
         .as_deref()
-        .and_then(|bytes| std::str::from_utf8(bytes).ok())
         .and_then(owned_body)
         .unwrap_or_default();
     let mut names = vec![".specgit.yaml"];
     names.extend(SKILL_PATHS.into_iter().filter(|name| {
-        body.lines()
-            .any(|line| line.strip_prefix('/') == Some(*name))
+        body.split(|byte| *byte == b'\n').any(|line| {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            line.strip_prefix(b"/") == Some(name.as_bytes())
+        })
     }));
     names
 }
@@ -58,14 +60,14 @@ pub(crate) fn project_change_with_shared(
     shared_skills: &[String],
 ) -> Result<Change, Diagnostic> {
     let current = Change::new(exclude.to_owned(), None)?;
-    let text = std::str::from_utf8(current.before.bytes.as_deref().unwrap_or_default())
-        .map_err(|_| conflict())?;
-    let body = owned_body(text).unwrap_or_default();
+    let body = owned_body(current.before.bytes.as_deref().unwrap_or_default()).unwrap_or_default();
     let mut names = vec![".specgit.yaml"];
     for name in SKILL_PATHS {
-        if body
-            .lines()
-            .any(|line| line.strip_prefix('/') == Some(name))
+        let owned = body.split(|byte| *byte == b'\n').any(|line| {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            line.strip_prefix(b"/") == Some(name.as_bytes())
+        });
+        if owned
             || shared_skills.iter().any(|skill| skill == name)
             || changes
                 .iter()
@@ -236,79 +238,75 @@ fn change_from(mut change: Change, names: &[&str]) -> Result<Change, Diagnostic>
     if names.iter().any(|name| !allowed(name)) {
         return Err(conflict());
     }
-    let before = std::str::from_utf8(change.before.bytes.as_deref().unwrap_or_default())
-        .map_err(|_| conflict())?;
-    let starts: Vec<_> = before.match_indices(START).collect();
-    let ends: Vec<_> = before.match_indices(END).collect();
-    let newline = if before.contains("\r\n") {
-        "\r\n"
+    let before = change.before.bytes.as_deref().unwrap_or_default();
+    let starts = positions(before, START.as_bytes());
+    let ends = positions(before, END.as_bytes());
+    let newline: &[u8] = if before.windows(2).any(|pair| pair == b"\r\n".as_slice()) {
+        b"\r\n"
     } else {
-        "\n"
+        b"\n"
     };
     let mut rules = names.to_vec();
     rules.sort_unstable();
     rules.dedup();
-    let block = format!(
-        "{START}{newline}{}{newline}{END}",
-        rules
-            .iter()
-            .map(|n| format!("/{n}"))
-            .collect::<Vec<_>>()
-            .join(newline)
-    );
+    let mut block = Vec::new();
+    block.extend_from_slice(START.as_bytes());
+    block.extend_from_slice(newline);
+    for (index, name) in rules.iter().enumerate() {
+        if index > 0 {
+            block.extend_from_slice(newline);
+        }
+        block.extend_from_slice(b"/");
+        block.extend_from_slice(name.as_bytes());
+    }
+    block.extend_from_slice(newline);
+    block.extend_from_slice(END.as_bytes());
     let after = match (starts.as_slice(), ends.as_slice()) {
-        ([], []) => format!(
-            "{before}{}{block}{newline}",
-            if before.is_empty() || before.ends_with('\n') {
-                ""
-            } else {
-                newline
+        ([], []) => {
+            let mut after = before.to_vec();
+            if !after.is_empty() && !after.ends_with(b"\n") {
+                after.extend_from_slice(newline);
             }
-        ),
-        ([(start, _)], [(end, _)]) if start < end => {
-            let current = &before[*start..*end + END.len()];
-            let lines: Vec<_> = current.lines().collect();
-            if lines.first() != Some(&START)
-                || lines.last() != Some(&END)
-                || lines[1..lines.len() - 1]
-                    .iter()
-                    .any(|line| !line.strip_prefix('/').is_some_and(allowed))
-                || (*start > 0 && !before[..*start].ends_with('\n'))
-                || !before[*end + END.len()..].starts_with(['\r', '\n'])
-                    && *end + END.len() != before.len()
-            {
-                return Err(conflict());
-            }
-            format!(
-                "{}{block}{}",
-                &before[..*start],
-                &before[*end + END.len()..]
-            )
+            after.extend_from_slice(&block);
+            after.extend_from_slice(newline);
+            after
+        }
+        ([start], [end]) if start < end => {
+            // Reuse the strict block check: damaged or edited blocks are conflicts.
+            let _ = managed_body(before)?;
+            let mut after = before[..*start].to_vec();
+            after.extend_from_slice(&block);
+            after.extend_from_slice(&before[*end + END.len()..]);
+            after
         }
         _ => return Err(conflict()),
     };
-    change.after = Some(after.into_bytes());
+    change.after = Some(after);
     Ok(change)
 }
 
 pub(crate) fn removal(path: &Path) -> Result<Change, Diagnostic> {
     let mut c = Change::new(path.to_owned(), None)?;
-    let text = std::str::from_utf8(c.before.bytes.as_deref().unwrap_or_default())
-        .map_err(|_| conflict())?;
-    if !text.contains(START) && !text.contains(END) {
+    let before = c.before.bytes.as_deref().unwrap_or_default();
+    let starts = positions(before, START.as_bytes());
+    let ends = positions(before, END.as_bytes());
+    if starts.is_empty() && ends.is_empty() {
         c.after = c.before.bytes.clone();
         return Ok(c);
     }
     // Refresh already checks marker count, line boundaries and the rule whitelist.
     change(path, &[".specgit.yaml"])?;
-    let start = text.find(START).ok_or_else(conflict)?;
-    let end = text.find(END).ok_or_else(conflict)? + END.len();
-    let suffix = &text[end..];
-    let suffix = suffix
-        .strip_prefix("\r\n")
-        .or_else(|| suffix.strip_prefix('\n'))
-        .unwrap_or(suffix);
-    c.after = Some(format!("{}{suffix}", &text[..start]).into_bytes());
+    let start = starts.first().copied().ok_or_else(conflict)?;
+    let end = ends.first().copied().ok_or_else(conflict)? + END.len();
+    let mut suffix: &[u8] = &before[end..];
+    if suffix.starts_with(b"\r\n") {
+        suffix = &suffix[2..];
+    } else if suffix.starts_with(b"\n") {
+        suffix = &suffix[1..];
+    }
+    let mut after = before[..start].to_vec();
+    after.extend_from_slice(suffix);
+    c.after = Some(after);
     Ok(c)
 }
 
