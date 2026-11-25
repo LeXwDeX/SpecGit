@@ -1041,7 +1041,7 @@ fn install_plan_with_removals(
         .then(|| claude_entry(root, &previous))
         .transpose()?;
     let claude_entry = claude.as_ref().map(|decision| decision.entry);
-    let plan_dependencies: Vec<Change> = claude
+    let mut plan_dependencies: Vec<Change> = claude
         .and_then(|decision| decision.missing)
         .into_iter()
         .collect();
@@ -1101,6 +1101,11 @@ fn install_plan_with_removals(
         // This is a pure plan. Any recorded asset must prove this exact
         // before-snapshot before the plan can be returned or applied.
         let target = root.join(instruction_target(host, root, old)?);
+        if host == "codex" && !options.uninstall && target != root.join("AGENTS.override.md") {
+            // The entry choice read AGENTS.override.md; a concurrent write would
+            // shadow the planned AGENTS.md block, so recheck it under the lock.
+            plan_dependencies.push(Change::new(root.join("AGENTS.override.md"), None)?);
+        }
         let migration_change = changes.iter().find(|change| change.path == target);
         let (change, registration) = instruction_change_after(
             host,

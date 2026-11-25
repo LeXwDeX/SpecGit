@@ -397,7 +397,7 @@ fn manifest_for(
     let codex = (agent == Agent::Codex)
         .then(|| codex_executable(binary))
         .transpose()?;
-    let handler = |event: &str, observe: bool| {
+    let handler = |event: &str, observe: bool| -> Result<Value, Diagnostic> {
         let mut args = vec!["hook", "--event", event];
         if observe {
             args.push("--observe");
@@ -405,27 +405,30 @@ fn manifest_for(
         let mut hook = if let Some(quoted) = &codex {
             json!({"type":"command","command":format!("{quoted} {}", args.join(" "))})
         } else {
-            json!({"type":"command","command":binary,"args":args})
+            let command = binary
+                .to_str()
+                .ok_or_else(|| Diagnostic::input("Hook executable path must be UTF-8."))?;
+            json!({"type":"command","command":command,"args":args})
         };
         hook["timeout"] = json!(if observe { 1830 } else { 5 });
         if observe {
             hook["async"] = json!(true);
         }
-        hook
+        Ok(hook)
     };
-    Ok(events
+    events
         .iter()
-        .map(|&event| {
-            let mut hooks = vec![handler(event, false)];
+        .map(|&event| -> Result<(String, Value), Diagnostic> {
+            let mut hooks = vec![handler(event, false)?];
             if event == "PostToolUse" {
-                hooks.push(handler(event, true));
+                hooks.push(handler(event, true)?);
             }
-            (
+            Ok((
                 event.into(),
                 json!({"matcher":if matches!(event, "PreToolUse" | "PostToolUse"){ TOOL_MATCHER }else{""},"hooks":hooks}),
-            )
+            ))
         })
-        .collect())
+        .collect()
 }
 
 fn codex_executable(binary: &Path) -> Result<String, Diagnostic> {

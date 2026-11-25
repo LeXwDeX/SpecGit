@@ -5540,3 +5540,49 @@ fn deleted_claude_md_adopts_the_exact_stable_agents_entry_without_a_shared_recei
     }
     assert!(!f.private.join("ownership.json").exists());
 }
+
+#[cfg(feature = "test-fixtures")]
+#[test]
+fn codex_entry_choice_rechecks_a_concurrent_override_under_the_lock() {
+    use std::{
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let (f, _) = fixture(vec![]);
+    let lock = specgit::assets::AssetStore::lock(
+        &f.private.parent().unwrap().join("assets"),
+        &[f.root.clone(), f.private.clone()],
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let ready = f.base.join("planned");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_specgit"))
+        .current_dir(&f.root)
+        .args(["setup", "--agent", "codex", "--json"])
+        .env("SPECGIT_FIXTURE_SETUP_PLAN_READY", &ready)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if !ready.exists() {
+        let _ = child.kill();
+        panic!("project setup never finished planning");
+    }
+    assert!(child.try_wait().unwrap().is_none());
+    fs::write(f.root.join("AGENTS.override.md"), "# user override\n").unwrap();
+    drop(lock);
+    let output = child.wait_with_output().unwrap();
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["ok"], false, "{result}");
+    assert_eq!(
+        result["diagnostics"][0]["code"], "concurrent_edit",
+        "{result}"
+    );
+    if let Ok(text) = fs::read_to_string(f.root.join("AGENTS.md")) {
+        assert!(!text.contains("specgit"), "{text}");
+    }
+}

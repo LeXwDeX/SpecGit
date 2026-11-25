@@ -341,8 +341,8 @@ impl Inventory {
                 })?);
                 ownership = "marked_routing";
                 action = "restore_business";
-                writer = String::from_utf8_lossy(after.as_deref().unwrap_or_default())
-                    .contains("specgit");
+                // The restored business document is user content returned verbatim,
+                // not a SpecGit writer; only the retired router header was SpecGit's.
             } else if relative == ".gitlab/specgit-accept.mjs"
                 && normalized.starts_with("// Managed by SpecGit: acceptance checkout adapter.\n")
             {

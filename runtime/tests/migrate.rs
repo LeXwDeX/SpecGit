@@ -1195,3 +1195,22 @@ fn migration_interrupted_before_completion_preserves_user_edit_then_rolls_back()
     fs::write(agents, migrated).unwrap();
     rollback_interrupted_migration(&f, &id);
 }
+
+#[test]
+fn gitlab_business_document_mentioning_specgit_does_not_block_the_migration() {
+    let (f, path) = fixture("gitlab");
+    fs::create_dir_all(f.root.join(".gitlab")).unwrap();
+    // The restored document is user content; the word only appears in a script.
+    let business = "build:\n  script: echo specgit business\n";
+    fs::write(f.root.join(".gitlab/specgit-business.yml"), business).unwrap();
+    let routing = include_str!("fixtures/v1-gitlab-router.yml");
+    fs::write(f.root.join(".gitlab-ci.yml"), routing).unwrap();
+    let p = preview(&f, &path, &[]);
+    assert_eq!(p["exit"], 0, "{p}");
+    let a = apply(&f, &path, &p, &[]);
+    assert_eq!(a["exit"], 0, "{a}");
+    assert_eq!(
+        fs::read_to_string(f.root.join(".gitlab-ci.yml")).unwrap(),
+        business
+    );
+}
